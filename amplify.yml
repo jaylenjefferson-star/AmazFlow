@@ -11,7 +11,7 @@ applications:
             - pnpm install --no-frozen-lockfile
         build:
           commands:
-            - node_modules/.bin/next build
+            - pnpm exec next build
             - test -f out/index.html
       artifacts:
         baseDirectory: out
