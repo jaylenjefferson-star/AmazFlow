@@ -11,8 +11,11 @@ pnpm install
 pnpm dev
 ```
 
-- Console: http://localhost:3000
+- Marketing site: http://localhost:3000
+- Product console: http://localhost:3000/app
 - API: http://localhost:4000
+
+The public experience includes the homepage plus Product, Solutions, Security, Pricing, Company, Contact, Privacy, Terms, and Subprocessors pages. The product console is intentionally separated at `/app`; its current public mode is a clearly labeled, interactive synthetic-data demonstration. The three product access levels are Frontline User, Client Operations Admin, and AmazFlow Super Admin.
 
 Local development uses synthetic data and in-memory persistence. AWS hosts the protected control-plane foundation in `us-east-1`; Amplify Hosting builds the web application from the private GitHub repository. When the protected API is unavailable, the web application remains a clearly labeled synthetic product preview rather than failing blank.
 

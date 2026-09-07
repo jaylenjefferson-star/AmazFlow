@@ -1,0 +1,15 @@
+import Link from "next/link";
+
+export function Logo() { return <Link className="site-logo" href="/" aria-label="AmazFlow home"><span>A</span><b>AmazFlow</b></Link>; }
+
+export function MarketingNav() { return <header className="site-nav"><div className="wrap nav-inner"><Logo /><nav><Link href="/product">Product</Link><Link href="/solutions">Solutions</Link><Link href="/security">Security</Link><Link href="/pricing">Pricing</Link><Link href="/company">Company</Link></nav><div className="nav-actions"><Link href="/app">Product demo</Link><Link className="button nav-cta" href="/contact">Find a workflow <b>↗</b></Link></div></div></header>; }
+
+export function MarketingFooter() { return <footer className="site-footer"><div className="wrap footer-grid"><div><Logo /><p>Automate the work between your systems.</p><small>© 2026 AmazFlow. All rights reserved.</small></div><div><b>Platform</b><Link href="/product">Product</Link><Link href="/solutions">Solutions</Link><Link href="/pricing">Pricing</Link><Link href="/app">Product demo</Link></div><div><b>Trust</b><Link href="/security">Security</Link><Link href="/subprocessors">Subprocessors</Link><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link></div><div><b>Company</b><Link href="/company">About</Link><Link href="/contact">Contact</Link><a href="mailto:sales@amazflow.com">sales@amazflow.com</a><a href="mailto:security@amazflow.com">security@amazflow.com</a></div></div></footer>; }
+
+export function WorkflowVisual() { return <div className="workflow-visual" aria-label="Example AmazFlow employee offboarding workflow"><div className="visual-top"><span className="live-dot" /> LIVE EXECUTION <b>AF-2048</b></div><div className="source-row"><div><small>EMPLOYEE</small><b>Sarah Chen</b></div><div><small>ACTION</small><b>Offboard</b></div><mark>NEW</mark></div><div className="packet">A</div><div className="route"><div className="route-line" /><Node icon="▦" label="Sheet" done /><Node icon="A" label="AmazFlow" core /><Node icon="H" label="HRIS" done /><Node icon="◎" label="Identity" done /><Node icon="#" label="Slack" done /></div><div className="visual-result"><div><span>6</span><small>systems updated</small></div><div><span>0</span><small>manual handoffs</small></div><div><span>43s</span><small>total time</small></div><mark>COMPLETE ✓</mark></div></div>; }
+
+function Node({ icon, label, done, core }: { icon: string; label: string; done?: boolean; core?: boolean }) { return <div className={`route-node ${core ? "core" : ""}`}><span>{icon}</span><b>{label}</b>{done && <i>✓</i>}</div>; }
+
+export function PageHero({ eyebrow, title, accent, copy }: { eyebrow: string; title: string; accent: string; copy: string }) { return <section className="page-hero wrap"><div className="kicker"><span /> {eyebrow}</div><h1>{title}<br /><em>{accent}</em></h1><p>{copy}</p></section>; }
+
+export function StandardPage({ children }: { children: React.ReactNode }) { return <div className="marketing-site"><MarketingNav /><main>{children}</main><MarketingFooter /></div>; }
