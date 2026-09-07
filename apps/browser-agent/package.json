@@ -1,0 +1,7 @@
+{
+  "name": "@amazflow/browser-agent",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": { "build": "tsc -p tsconfig.json && cp manifest.json popup.html dist/", "typecheck": "tsc -p tsconfig.json", "test": "node --test" },
+  "devDependencies": { "@types/chrome": "^0.0.306", "typescript": "^5.7.3" }
+}

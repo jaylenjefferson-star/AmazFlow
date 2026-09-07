@@ -16,6 +16,10 @@ pnpm dev
 
 Local development uses synthetic data and in-memory persistence. The AWS CDK stack provisions the production-shaped control-plane storage and API foundation without deploying it automatically.
 
+Set `BEDROCK_MODEL_ID` and AWS credentials to replace the deterministic local AI provider with bounded Amazon Bedrock inference. The provider enforces JSON output, confidence bounds, and configured allowed values.
+
+The Chrome agent source lives in `apps/browser-agent`. It polls for short-lived tasks and only executes an explicit local operation allowlist. Its host permissions are intentionally limited to the local control plane in this build.
+
 ## Core API
 
 - `GET /health`

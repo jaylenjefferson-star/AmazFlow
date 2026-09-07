@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { DemoAiProvider, WorkflowEngine, type AgentTask, type Approval, type Store } from "@amazflow/engine";
 import { sampleWorkflow, workflowDefinitionSchema, type WorkflowDefinition, type WorkflowRun } from "@amazflow/workflow-schema";
+import { BedrockAiProvider } from "./bedrock-ai.js";
 
 const workflows = new Map<string, WorkflowDefinition>([[sampleWorkflow.id, sampleWorkflow]]);
 const runs = new Map<string, WorkflowRun>();
@@ -12,7 +13,8 @@ const store: Store = {
   getWorkflow: async id => workflows.get(id), saveRun: async run => { runs.set(run.id, structuredClone(run)); }, getRun: async id => runs.get(id),
   saveTask: async task => { tasks.set(task.id, task); }, saveApproval: async approval => { approvals.set(`${approval.runId}:${approval.stepId}`, approval); }
 };
-const engine = new WorkflowEngine(store, new DemoAiProvider());
+const ai = process.env.BEDROCK_MODEL_ID ? new BedrockAiProvider(process.env.BEDROCK_MODEL_ID) : new DemoAiProvider();
+const engine = new WorkflowEngine(store, ai);
 const app = new Hono();
 app.use("*", cors());
 app.onError((error,c)=>c.json({error:error.message},400));

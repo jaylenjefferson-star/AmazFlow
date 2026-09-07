@@ -6,3 +6,4 @@ dist
 cdk.out
 coverage
 *.log
+*.tsbuildinfo

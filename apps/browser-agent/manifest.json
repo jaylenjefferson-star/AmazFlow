@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "AmazFlow Agent",
+  "version": "0.1.0",
+  "description": "Executes narrowly scoped AmazFlow operations tasks in authorized browser tabs.",
+  "permissions": ["activeTab", "storage", "alarms", "scripting"],
+  "host_permissions": ["http://localhost:4000/*"],
+  "background": { "service_worker": "service-worker.js", "type": "module" },
+  "content_scripts": [{ "matches": ["http://localhost/*"], "js": ["content.js"] }],
+  "action": { "default_popup": "popup.html", "default_title": "AmazFlow Agent" }
+}
