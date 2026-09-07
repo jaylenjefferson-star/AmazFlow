@@ -14,7 +14,7 @@ pnpm dev
 - Console: http://localhost:3000
 - API: http://localhost:4000
 
-Local development uses synthetic data and in-memory persistence. The AWS CDK stack provisions the production-shaped control-plane storage and API foundation without deploying it automatically.
+Local development uses synthetic data and in-memory persistence. AWS hosts the protected control-plane foundation in `us-east-1`; Amplify Hosting builds the web application from the private GitHub repository. When the protected API is unavailable, the web application remains a clearly labeled synthetic product preview rather than failing blank.
 
 Set `BEDROCK_MODEL_ID` and AWS credentials to replace the deterministic local AI provider with bounded Amazon Bedrock inference. The provider enforces JSON output, confidence bounds, and configured allowed values.
 
@@ -32,4 +32,4 @@ The Chrome agent source lives in `apps/browser-agent`. It polls for short-lived 
 - `POST /agent-tasks/:id/result`
 - `POST /runs/:id/approvals/:stepId`
 
-No production resources are deployed by this repository without an explicit CDK deploy.
+Production AI is routed through Amazon Bedrock from the AWS control plane. Direct browser-to-model calls are prohibited: workflow AI steps are bounded by configured operations, structured output, allowlists, confidence thresholds, policy checks, and audit events.

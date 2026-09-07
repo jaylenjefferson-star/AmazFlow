@@ -1,6 +1,12 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: AmazFlow development control plane with tenant-scoped RBAC (synthetic data only)
 
+Parameters:
+  BedrockModelId:
+    Type: String
+    Default: amazon.nova-lite-v1:0
+    Description: Amazon Bedrock model used for bounded workflow AI steps
+
 Resources:
   ControlPlaneTable:
     Type: AWS::DynamoDB::Table
@@ -87,6 +93,9 @@ Resources:
               - Effect: Allow
                 Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
                 Resource: '*'
+              - Effect: Allow
+                Action: [bedrock:InvokeModel]
+                Resource: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}
 
   ControlPlaneFunction:
     Type: AWS::Lambda::Function
@@ -101,13 +110,15 @@ Resources:
         Variables:
           TABLE_NAME: !Ref ControlPlaneTable
           DATA_BOUNDARY: synthetic-only
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
       Code:
         ZipFile: |
           const {DynamoDBClient,ScanCommand,PutItemCommand}=require('@aws-sdk/client-dynamodb');
-          const db=new DynamoDBClient({}); const table=process.env.TABLE_NAME;
+          const {BedrockRuntimeClient,ConverseCommand}=require('@aws-sdk/client-bedrock-runtime');
+          const db=new DynamoDBClient({}); const bedrock=new BedrockRuntimeClient({}); const table=process.env.TABLE_NAME;
           const reply=(s,b)=>({statusCode:s,headers:{'content-type':'application/json','access-control-allow-origin':'*'},body:JSON.stringify(b)});
           const auth=e=>{const c=e.requestContext?.authorizer?.jwt?.claims||{};const groups=String(c['cognito:groups']||'').split(',');const role=['SUPER_ADMIN','CLIENT_ADMIN','FRONTLINE'].find(r=>groups.includes(r));return {userId:c.sub,tenantId:c['custom:tenant_id'],role};};
-          exports.handler=async e=>{try{const route=e.routeKey||'';if(route==='GET /health')return reply(200,{ok:true,service:'amazflow-control-plane',boundary:process.env.DATA_BOUNDARY});const a=auth(e);if(!a.role)return reply(403,{error:'Role required'});if(route==='GET /me')return reply(200,a);if(route==='GET /workflows'){const out=await db.send(new ScanCommand({TableName:table,FilterExpression:'begins_with(pk,:p)',ExpressionAttributeValues:{':p':{S:'TENANT#'}}}));const items=(out.Items||[]).filter(i=>a.role==='SUPER_ADMIN'||i.tenantId?.S===a.tenantId).map(i=>JSON.parse(i.document.S));return reply(200,items);}if(route==='POST /workflows'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins configure workflows'});const body=JSON.parse(e.body||'{}');if(!body.id||!body.tenantId||!Array.isArray(body.steps))return reply(400,{error:'Invalid workflow definition'});await db.send(new PutItemCommand({TableName:table,Item:{pk:{S:`TENANT#${body.tenantId}`},sk:{S:`WORKFLOW#${body.id}#V${body.version||1}`},tenantId:{S:body.tenantId},document:{S:JSON.stringify(body)},createdAt:{S:new Date().toISOString()}}}));return reply(201,body);}return reply(404,{error:'Route not found'});}catch(err){console.error(err);return reply(500,{error:'Control plane error'});}};
+          exports.handler=async e=>{try{const route=e.routeKey||'';if(route==='GET /health')return reply(200,{ok:true,service:'amazflow-control-plane',boundary:process.env.DATA_BOUNDARY,aiRuntime:'amazon-bedrock'});const a=auth(e);if(!a.role)return reply(403,{error:'Role required'});if(route==='GET /me')return reply(200,a);if(route==='GET /workflows'){const out=await db.send(new ScanCommand({TableName:table,FilterExpression:'begins_with(pk,:p)',ExpressionAttributeValues:{':p':{S:'TENANT#'}}}));const items=(out.Items||[]).filter(i=>a.role==='SUPER_ADMIN'||i.tenantId?.S===a.tenantId).map(i=>JSON.parse(i.document.S));return reply(200,items);}if(route==='POST /workflows'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins configure workflows'});const body=JSON.parse(e.body||'{}');if(!body.id||!body.tenantId||!Array.isArray(body.steps))return reply(400,{error:'Invalid workflow definition'});await db.send(new PutItemCommand({TableName:table,Item:{pk:{S:`TENANT#${body.tenantId}`},sk:{S:`WORKFLOW#${body.id}#V${body.version||1}`},tenantId:{S:body.tenantId},document:{S:JSON.stringify(body)},createdAt:{S:new Date().toISOString()}}}));return reply(201,body);}if(route==='POST /ai/execute'){const body=JSON.parse(e.body||'{}');const allowedOps=['classify','extract','transform','summarize','choose'];if(!allowedOps.includes(body.operation)||typeof body.prompt!=='string')return reply(400,{error:'Invalid bounded AI request'});const allowed=Array.isArray(body.allowedValues)?body.allowedValues.map(String):[];const system='You are a bounded operations workflow component. Never choose or invent tools. Return JSON only with keys value and confidence. Confidence must be between 0 and 1.';const prompt=`Operation: ${body.operation}\nInstruction: ${body.prompt}\nAllowed values: ${allowed.length?allowed.join(', '):'not restricted'}\nContext: ${JSON.stringify(body.context||{})}`;const out=await bedrock.send(new ConverseCommand({modelId:process.env.BEDROCK_MODEL_ID,system:[{text:system}],messages:[{role:'user',content:[{text:prompt}]}],inferenceConfig:{maxTokens:800,temperature:0}}));const text=out.output?.message?.content?.find(x=>x.text)?.text||'';return reply(200,{model:process.env.BEDROCK_MODEL_ID,provider:'amazon-bedrock',result:text,usage:out.usage});}return reply(404,{error:'Route not found'});}catch(err){console.error(err);return reply(500,{error:'Control plane error'});}};
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
@@ -168,6 +179,14 @@ Resources:
       Target: !Sub integrations/${ApiIntegration}
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
+  AiExecuteRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /ai/execute'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
 
   Stage:
     Type: AWS::ApiGatewayV2::Stage
@@ -190,3 +209,4 @@ Outputs:
   UserPoolId: { Value: !Ref UserPool }
   UserPoolClientId: { Value: !Ref UserPoolClient }
   TableName: { Value: !Ref ControlPlaneTable }
+  BedrockModel: { Value: !Ref BedrockModelId }

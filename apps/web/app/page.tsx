@@ -1,16 +1,16 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import type { AmazFlowRole, WorkflowDefinition, WorkflowRun } from "@amazflow/workflow-schema";
+import { sampleWorkflow, type AmazFlowRole, type WorkflowDefinition, type WorkflowRun } from "@amazflow/workflow-schema";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
 const json = (value: unknown) => JSON.stringify(value,null,2);
 
 export default function Home() {
-  const [role,setRole]=useState<AmazFlowRole>("SUPER_ADMIN"); const [workflows,setWorkflows]=useState<WorkflowDefinition[]>([]); const [runs,setRuns]=useState<WorkflowRun[]>([]); const [selected,setSelected]=useState<WorkflowDefinition>(); const [draft,setDraft]=useState(""); const [input,setInput]=useState(json({employee:{id:"E-10042",name:"Sarah Chen"},request:"DISABLE"})); const [notice,setNotice]=useState("Loading control plane…");
+  const [role,setRole]=useState<AmazFlowRole>("SUPER_ADMIN"); const [workflows,setWorkflows]=useState<WorkflowDefinition[]>([sampleWorkflow]); const [runs,setRuns]=useState<WorkflowRun[]>([]); const [selected,setSelected]=useState<WorkflowDefinition>(sampleWorkflow); const [draft,setDraft]=useState(json(sampleWorkflow)); const [input,setInput]=useState(json({employee:{id:"E-10042",name:"Sarah Chen"},request:"DISABLE"})); const [notice,setNotice]=useState("Connecting to AmazFlow…");
   const authHeaders={"x-amazflow-role":role,"x-amazflow-tenant":"tenant-demo","x-amazflow-user":role==="SUPER_ADMIN"?"jay-founder":"client-user-demo"};
   const canConfigure=role==="SUPER_ADMIN";
   const refresh=async()=>{ const [w,r]=await Promise.all([fetch(`${API}/workflows`,{headers:authHeaders}).then(x=>x.json()),fetch(`${API}/runs`,{headers:authHeaders}).then(x=>x.json())]); setWorkflows(w);setRuns(r); const current=w.find((item:WorkflowDefinition)=>item.id===selected?.id)??w[0]; setSelected(current);if(current)setDraft(json(current)); setNotice(`${roleLabel(role)} access active`); };
-  useEffect(()=>{refresh().catch(()=>setNotice("Start the API on port 4000"));},[role]);
+  useEffect(()=>{refresh().catch(()=>setNotice("Interactive product preview · synthetic data"));},[role]);
   const stats=useMemo(()=>({active:workflows.filter(w=>w.status==="active").length,running:runs.filter(r=>r.status.startsWith("WAITING")||r.status==="RUNNING").length,completed:runs.filter(r=>r.status==="COMPLETED").length,exceptions:runs.filter(r=>r.status==="FAILED").length}),[workflows,runs]);
   const save=async()=>{try{const body=JSON.parse(draft);const res=await fetch(`${API}/workflows`,{method:"POST",headers:{"content-type":"application/json",...authHeaders},body:JSON.stringify(body)});if(!res.ok)throw new Error((await res.json()).error);setNotice("Workflow configuration saved");await refresh();}catch(e){setNotice(`Configuration error: ${e instanceof Error?e.message:e}`)}};
   const run=async()=>{if(!selected)return;try{const res=await fetch(`${API}/workflows/${selected.id}/runs`,{method:"POST",headers:{"content-type":"application/json",...authHeaders},body:input});if(!res.ok)throw new Error((await res.json()).error);const created=await res.json();setNotice(`Execution ${created.status.toLowerCase().replaceAll("_"," ")}`);await refresh();}catch(e){setNotice(`Run error: ${e instanceof Error?e.message:e}`)}};
