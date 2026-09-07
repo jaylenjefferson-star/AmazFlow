@@ -68,7 +68,7 @@ export type WorkflowRun = {
 
 export const sampleWorkflow: WorkflowDefinition = {
   id: "workflow-sample-ops",
-  tenantId: "tenant-demo",
+  tenantId: "amazflow",
   name: "Configurable employee status change",
   description: "A sample definition proving that business workflows are configuration, not application code.",
   version: 1,
