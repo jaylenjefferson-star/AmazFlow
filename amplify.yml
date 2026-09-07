@@ -12,6 +12,11 @@ applications:
             - pnpm install --no-frozen-lockfile
         build:
           commands:
+            - echo "--- pwd/whoami ---"; pwd; whoami; which pnpm; pnpm --version
+            - echo "--- apps/web/node_modules/.bin ---"; ls -la node_modules/.bin/ 2>&1 | head -60
+            - echo "--- apps/web/node_modules top-level (next?) ---"; ls -la node_modules/ | grep -i next
+            - echo "--- root node_modules/.bin ---"; ls -la ../../node_modules/.bin/ 2>&1 | head -60
+            - echo "--- find any 'next' bin anywhere ---"; find ../.. -maxdepth 6 -iname "next" 2>&1 | head -30
             - pnpm exec next build
             - test -f out/index.html
       artifacts:
