@@ -6,17 +6,12 @@ applications:
         preBuild:
           commands:
             - cd ../..
-            - rm -rf node_modules .pnpm-store apps/*/node_modules packages/*/node_modules services/*/node_modules
             - corepack enable
             - corepack prepare pnpm@11.26.0 --activate
             - pnpm install --no-frozen-lockfile
         build:
           commands:
-            - echo "--- pwd/whoami ---"; pwd; whoami; which pnpm; pnpm --version
-            - echo "--- apps/web/node_modules/.bin ---"; ls -la node_modules/.bin/ 2>&1 | head -60
-            - echo "--- apps/web/node_modules top-level (next?) ---"; ls -la node_modules/ | grep -i next
-            - echo "--- root node_modules/.bin ---"; ls -la ../../node_modules/.bin/ 2>&1 | head -60
-            - echo "--- find any 'next' bin anywhere ---"; find ../.. -maxdepth 6 -iname "next" 2>&1 | head -30
+            - cd apps/web
             - pnpm exec next build
             - test -f out/index.html
       artifacts:
