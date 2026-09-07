@@ -11,9 +11,8 @@ applications:
             - pnpm install --no-frozen-lockfile
         build:
           commands:
-            - cd ../..
-            - pnpm --filter @amazflow/web build
-            - test -f apps/web/out/index.html
+            - node_modules/.bin/next build
+            - test -f out/index.html
       artifacts:
         baseDirectory: out
         files:
