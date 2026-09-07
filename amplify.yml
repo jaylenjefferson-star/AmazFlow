@@ -6,6 +6,7 @@ applications:
         preBuild:
           commands:
             - cd ../..
+            - rm -rf node_modules .pnpm-store apps/*/node_modules packages/*/node_modules services/*/node_modules
             - corepack enable
             - corepack prepare pnpm@11.26.0 --activate
             - pnpm install --no-frozen-lockfile
