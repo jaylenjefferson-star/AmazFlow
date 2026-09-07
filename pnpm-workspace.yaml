@@ -5,3 +5,4 @@ packages:
   - infrastructure/*
 allowBuilds:
   esbuild: true
+verifyDepsBeforeRun: false
