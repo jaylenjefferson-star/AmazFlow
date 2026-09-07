@@ -1,6 +1,14 @@
 import { z } from "zod";
 
 export const dataClassSchema = z.enum(["PUBLIC", "INTERNAL", "CONFIDENTIAL", "PII", "PHI", "FINANCIAL", "RESTRICTED"]);
+export const roleSchema = z.enum(["FRONTLINE", "CLIENT_ADMIN", "SUPER_ADMIN"]);
+export type AmazFlowRole = z.infer<typeof roleSchema>;
+
+export const permissionsByRole: Record<AmazFlowRole, readonly string[]> = {
+  FRONTLINE: ["workflow:view_assigned", "run:create_assigned", "run:view_own"],
+  CLIENT_ADMIN: ["workflow:view_tenant", "run:create_tenant", "run:view_tenant", "approval:decide", "assignment:manage_tenant"],
+  SUPER_ADMIN: ["tenant:manage", "workflow:configure", "workflow:publish", "connector:manage", "run:create_any", "run:view_any", "approval:decide", "audit:view_any"]
+};
 
 const baseStep = z.object({
   id: z.string().min(1),
@@ -26,6 +34,7 @@ export const workflowDefinitionSchema = z.object({
   version: z.number().int().positive(),
   status: z.enum(["draft", "active", "paused"]).default("draft"),
   dataClass: dataClassSchema.default("INTERNAL"),
+  assignedRoles: z.array(roleSchema).default(["FRONTLINE", "CLIENT_ADMIN"]),
   startAt: z.string().min(1),
   steps: z.array(workflowStepSchema).min(1),
   allowedProviders: z.array(z.enum(["browser", "api", "spreadsheet", "email", "file", "mock"])).min(1)
@@ -65,6 +74,7 @@ export const sampleWorkflow: WorkflowDefinition = {
   version: 1,
   status: "active",
   dataClass: "PII",
+  assignedRoles: ["FRONTLINE", "CLIENT_ADMIN"],
   startAt: "interpret",
   allowedProviders: ["browser", "mock"],
   steps: [

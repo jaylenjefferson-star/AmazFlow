@@ -1,0 +1,8 @@
+header { gap: 24px; }
+.identity { display: grid; gap: 10px; justify-items: end; }
+.identity label { display: grid; gap: 5px; color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.identity select { min-width: 220px; border: 1px solid var(--line); background: var(--paper); border-radius: 10px; padding: 10px 12px; color: var(--ink); font-weight: 700; text-transform: none; letter-spacing: 0; }
+.rolecopy { min-height: 270px; border-radius: 14px; background: #f2efe5; border: 1px solid var(--line); padding: 24px; display: grid; align-content: center; }
+.rolecopy b { font: 800 24px Manrope; }
+.rolecopy p { max-width: 560px; color: var(--muted); line-height: 1.6; margin-bottom: 0; }
+@media(max-width:1000px) { .identity { justify-items: start; } }

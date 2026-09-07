@@ -1,0 +1,192 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AmazFlow development control plane with tenant-scoped RBAC (synthetic data only)
+
+Resources:
+  ControlPlaneTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      Tags:
+        - { Key: Product, Value: AmazFlow }
+        - { Key: Environment, Value: dev }
+        - { Key: DataBoundary, Value: synthetic-only }
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: amazflow-dev-users
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      MfaConfiguration: OPTIONAL
+      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - { Name: verified_email, Priority: 1 }
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      Schema:
+        - Name: tenant_id
+          AttributeDataType: String
+          Mutable: true
+          Required: false
+
+  FrontlineGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: { GroupName: FRONTLINE, Description: Runs assigned workflows and views own executions, UserPoolId: !Ref UserPool, Precedence: 30 }
+  ClientAdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: { GroupName: CLIENT_ADMIN, Description: Runs tenant workflows and manages tenant operations, UserPoolId: !Ref UserPool, Precedence: 20 }
+  SuperAdminGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: { GroupName: SUPER_ADMIN, Description: AmazFlow-owned global configuration and tenant administration, UserPoolId: !Ref UserPool, Precedence: 10 }
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: amazflow-dev-web
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      PreventUserExistenceErrors: ENABLED
+      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      AccessTokenValidity: 60
+      IdTokenValidity: 60
+      RefreshTokenValidity: 7
+      TokenValidityUnits: { AccessToken: minutes, IdToken: minutes, RefreshToken: days }
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: amazflow-dev-control-plane
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:Query, dynamodb:Scan, dynamodb:UpdateItem]
+                Resource: !GetAtt ControlPlaneTable.Arn
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: '*'
+
+  ControlPlaneFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: amazflow-dev-control-plane
+      Runtime: nodejs22.x
+      Handler: index.handler
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 15
+      MemorySize: 256
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref ControlPlaneTable
+          DATA_BOUNDARY: synthetic-only
+      Code:
+        ZipFile: |
+          const {DynamoDBClient,ScanCommand,PutItemCommand}=require('@aws-sdk/client-dynamodb');
+          const db=new DynamoDBClient({}); const table=process.env.TABLE_NAME;
+          const reply=(s,b)=>({statusCode:s,headers:{'content-type':'application/json','access-control-allow-origin':'*'},body:JSON.stringify(b)});
+          const auth=e=>{const c=e.requestContext?.authorizer?.jwt?.claims||{};const groups=String(c['cognito:groups']||'').split(',');const role=['SUPER_ADMIN','CLIENT_ADMIN','FRONTLINE'].find(r=>groups.includes(r));return {userId:c.sub,tenantId:c['custom:tenant_id'],role};};
+          exports.handler=async e=>{try{const route=e.routeKey||'';if(route==='GET /health')return reply(200,{ok:true,service:'amazflow-control-plane',boundary:process.env.DATA_BOUNDARY});const a=auth(e);if(!a.role)return reply(403,{error:'Role required'});if(route==='GET /me')return reply(200,a);if(route==='GET /workflows'){const out=await db.send(new ScanCommand({TableName:table,FilterExpression:'begins_with(pk,:p)',ExpressionAttributeValues:{':p':{S:'TENANT#'}}}));const items=(out.Items||[]).filter(i=>a.role==='SUPER_ADMIN'||i.tenantId?.S===a.tenantId).map(i=>JSON.parse(i.document.S));return reply(200,items);}if(route==='POST /workflows'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins configure workflows'});const body=JSON.parse(e.body||'{}');if(!body.id||!body.tenantId||!Array.isArray(body.steps))return reply(400,{error:'Invalid workflow definition'});await db.send(new PutItemCommand({TableName:table,Item:{pk:{S:`TENANT#${body.tenantId}`},sk:{S:`WORKFLOW#${body.id}#V${body.version||1}`},tenantId:{S:body.tenantId},document:{S:JSON.stringify(body)},createdAt:{S:new Date().toISOString()}}}));return reply(201,body);}return reply(404,{error:'Route not found'});}catch(err){console.error(err);return reply(500,{error:'Control plane error'});}};
+
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: amazflow-dev-api
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins: ['*']
+        AllowMethods: [GET, POST, OPTIONS]
+        AllowHeaders: [authorization, content-type]
+
+  ApiIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ControlPlaneFunction.Arn
+      PayloadFormatVersion: '2.0'
+
+  JwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref HttpApi
+      AuthorizerType: JWT
+      IdentitySource: ['$request.header.Authorization']
+      Name: amazflow-cognito
+      JwtConfiguration:
+        Audience: [!Ref UserPoolClient]
+        Issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+
+  HealthRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /health'
+      Target: !Sub integrations/${ApiIntegration}
+  MeRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /me'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+  WorkflowsGetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /workflows'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+  WorkflowsPostRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /workflows'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+
+  Stage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: '$default'
+      AutoDeploy: true
+      DefaultRouteSettings: { ThrottlingBurstLimit: 20, ThrottlingRateLimit: 10 }
+
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ControlPlaneFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*
+
+Outputs:
+  ApiUrl: { Value: !GetAtt HttpApi.ApiEndpoint }
+  UserPoolId: { Value: !Ref UserPool }
+  UserPoolClientId: { Value: !Ref UserPoolClient }
+  TableName: { Value: !Ref ControlPlaneTable }
