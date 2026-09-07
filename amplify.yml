@@ -5,13 +5,20 @@ applications:
       phases:
         preBuild:
           commands:
-            - echo "Using verified AmazFlow static release artifact"
+            - cd ../..
+            - corepack enable
+            - corepack prepare pnpm@11.19.0 --activate
+            - pnpm install --no-frozen-lockfile
         build:
           commands:
-            - test -f out/index.html
+            - cd ../..
+            - pnpm --filter @amazflow/web build
+            - test -f apps/web/out/index.html
       artifacts:
         baseDirectory: out
         files:
           - '**/*'
       cache:
-        paths: []
+        paths:
+          - ../../node_modules/**/*
+          - ../../.pnpm-store/**/*

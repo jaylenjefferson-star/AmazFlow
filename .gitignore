@@ -7,3 +7,4 @@ cdk.out
 coverage
 *.log
 *.tsbuildinfo
+apps/web/out

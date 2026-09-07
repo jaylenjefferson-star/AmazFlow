@@ -106,6 +106,9 @@ Resources:
                 Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
                 Resource: '*'
               - Effect: Allow
+                Action: [ses:SendEmail]
+                Resource: '*'
+              - Effect: Allow
                 Action: [bedrock:InvokeModel]
                 Resource: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}
 
@@ -122,12 +125,15 @@ Resources:
         Variables:
           TABLE_NAME: !Ref ControlPlaneTable
           DATA_BOUNDARY: synthetic-only
+          LEAD_TO: sales@amazflow.com
+          LEAD_FROM: sales@amazflow.com
           BEDROCK_MODEL_ID: !Ref BedrockModelId
       Code:
         ZipFile: |
           const {DynamoDBClient,ScanCommand,PutItemCommand}=require('@aws-sdk/client-dynamodb');
           const {BedrockRuntimeClient,ConverseCommand}=require('@aws-sdk/client-bedrock-runtime');
-          const db=new DynamoDBClient({}); const bedrock=new BedrockRuntimeClient({}); const table=process.env.TABLE_NAME;
+          const {SESv2Client,SendEmailCommand}=require('@aws-sdk/client-sesv2');
+          const db=new DynamoDBClient({}); const bedrock=new BedrockRuntimeClient({}); const ses=new SESv2Client({}); const table=process.env.TABLE_NAME;
           const reply=(s,b)=>({statusCode:s,headers:{'content-type':'application/json','access-control-allow-origin':'*'},body:JSON.stringify(b)});
           const auth=e=>{const c=e.requestContext?.authorizer?.jwt?.claims||{};const groups=String(c['cognito:groups']||'').split(',');const role=['SUPER_ADMIN','CLIENT_ADMIN','FRONTLINE'].find(r=>groups.includes(r));return {userId:c.sub,tenantId:c['custom:tenant_id'],role};};
           const parse=i=>JSON.parse(i.document.S); const now=()=>new Date().toISOString();
@@ -136,7 +142,7 @@ Resources:
           const scanType=async(type,a)=>{const out=await db.send(new ScanCommand({TableName:table}));return (out.Items||[]).filter(i=>i.sk?.S?.startsWith(type)&&i.document?.S&&(a.role==='SUPER_ADMIN'||i.tenantId?.S===a.tenantId)).map(parse);};
           const save=async(type,doc)=>db.send(new PutItemCommand({TableName:table,Item:{pk:{S:`TENANT#${doc.tenantId}`},sk:{S:`${type}#${doc.id}`},tenantId:{S:doc.tenantId},document:{S:JSON.stringify(doc)},updatedAt:{S:now()}}}));
           const runWorkflow=async(workflow,input,a)=>{const run={id:`run_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,tenantId:workflow.tenantId,workflowId:workflow.id,workflowVersion:workflow.version||1,status:'RUNNING',context:{input,values:{},lastAction:null},audit:[],createdAt:now(),updatedAt:now()};const audit=(type,message,stepId,details)=>run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type,message,stepId,details});audit('RUN_STARTED','Workflow execution started',undefined,{actor:a.userId,role:a.role});let next=workflow.startAt;for(let guard=0;guard<30&&next;guard++){const step=workflow.steps.find(s=>s.id===next);if(!step)throw new Error(`Missing step ${next}`);audit('STEP_STARTED',step.name,step.id);if(step.type==='ai'){const out=await ai(step,{input,...run.context.values});run.context.values[step.outputKey]=out.result;audit('AI_COMPLETED','Amazon Bedrock returned a bounded result',step.id,{model:process.env.BEDROCK_MODEL_ID,usage:out.usage});next=step.next;}else if(step.type==='condition'){next=test(valueAt(run.context,step.path),step.operator,step.value)?step.whenTrue:step.whenFalse;audit('CONDITION_EVALUATED',`Condition routed to ${next}`,step.id);}else if(step.type==='approval'){run.status='WAITING_APPROVAL';run.currentStepId=step.id;audit('APPROVAL_REQUIRED',step.message,step.id,{roles:step.roles});break;}else if(step.type==='action'){const result={ok:true,provider:step.provider,operation:step.operation,simulated:process.env.DATA_BOUNDARY==='synthetic-only',status:step.input?.status||'COMPLETED'};run.context.lastAction={result};audit('ACTION_COMPLETED',`${step.provider} action completed`,step.id,result);next=step.next;}else if(step.type==='verify'){const passed=test(valueAt(run.context,step.path),step.operator,step.value);audit(passed?'VERIFIED':'VERIFICATION_FAILED',passed?'Expected state verified':'Expected state not verified',step.id,{expected:step.value,actual:valueAt(run.context,step.path)});next=passed?step.next:step.onFailure;}else if(step.type==='end'){run.status=step.outcome==='success'?'COMPLETED':'FAILED';audit(run.status,step.name,step.id);next=undefined;}run.currentStepId=next;run.updatedAt=now();}await save('RUN',run);return run;};
-          exports.handler=async e=>{try{const route=e.routeKey||'';if(route==='GET /health')return reply(200,{ok:true,service:'amazflow-control-plane',boundary:process.env.DATA_BOUNDARY,aiRuntime:'amazon-bedrock'});const a=auth(e);if(!a.role)return reply(403,{error:'Role required'});if(route==='GET /me')return reply(200,a);if(route==='GET /workflows'){const items=await scanType('WORKFLOW#',a);return reply(200,items.sort((x,y)=>String(y.version).localeCompare(String(x.version))));}if(route==='POST /workflows'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins configure workflows'});const body=JSON.parse(e.body||'{}');if(!body.id||!body.tenantId||!body.name||!body.startAt||!Array.isArray(body.steps))return reply(400,{error:'Invalid workflow definition'});body.updatedAt=now();await save('WORKFLOW',body);return reply(201,body);}if(route==='GET /runs'){const items=await scanType('RUN#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='POST /workflows/{id}/runs'){const id=e.pathParameters?.id;const workflows=await scanType('WORKFLOW#',a);const workflow=workflows.find(w=>w.id===id);if(!workflow)return reply(404,{error:'Workflow not found'});const body=JSON.parse(e.body||'{}');return reply(201,await runWorkflow(workflow,body,a));}if(route==='POST /ai/execute'){const body=JSON.parse(e.body||'{}');const allowedOps=['classify','extract','transform','summarize','choose'];if(!allowedOps.includes(body.operation)||typeof body.prompt!=='string')return reply(400,{error:'Invalid bounded AI request'});const out=await ai(body,body.context||{});return reply(200,{model:process.env.BEDROCK_MODEL_ID,provider:'amazon-bedrock',...out});}return reply(404,{error:'Route not found'});}catch(err){console.error(err);return reply(500,{error:err.message||'Control plane error'});}};
+          exports.handler=async e=>{try{const route=e.routeKey||'';if(route==='GET /health')return reply(200,{ok:true,service:'amazflow-control-plane',boundary:process.env.DATA_BOUNDARY,aiRuntime:'amazon-bedrock'});if(route==='POST /leads'){const b=JSON.parse(e.body||'{}');const clean=v=>String(v==null?'':v).slice(0,2000).trim();const email=clean(b.email);const name=clean(b.name);if(clean(b.website))return reply(201,{ok:true});if(!name||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return reply(400,{error:'A name and a valid work email are required'});const lead={id:`lead_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,tenantId:'amazflow',name,email,company:clean(b.company),role:clean(b.role),workflow:clean(b.workflow),volume:clean(b.volume),message:clean(b.message),source:clean(b.source)||'website',status:'new',createdAt:now()};await save('LEAD',lead);try{const text=['New AmazFlow lead','','Name: '+lead.name,'Email: '+lead.email,'Company: '+lead.company,'Role: '+lead.role,'Workflow to automate: '+lead.workflow,'Monthly volume: '+lead.volume,'Notes: '+lead.message,'','Source: '+lead.source,'Received: '+lead.createdAt,'Lead ID: '+lead.id].join('\n');await ses.send(new SendEmailCommand({FromEmailAddress:process.env.LEAD_FROM,Destination:{ToAddresses:[process.env.LEAD_TO]},ReplyToAddresses:[lead.email],Content:{Simple:{Subject:{Data:'New lead: '+lead.name+(lead.company?' - '+lead.company:'')},Body:{Text:{Data:text}}}}}));}catch(mailErr){console.error('lead email failed',mailErr.message);}return reply(201,{ok:true,id:lead.id});}const a=auth(e);if(!a.role)return reply(403,{error:'Role required'});if(route==='GET /me')return reply(200,a);if(route==='GET /workflows'){const items=await scanType('WORKFLOW#',a);return reply(200,items.sort((x,y)=>String(y.version).localeCompare(String(x.version))));}if(route==='POST /workflows'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins configure workflows'});const body=JSON.parse(e.body||'{}');if(!body.id||!body.tenantId||!body.name||!body.startAt||!Array.isArray(body.steps))return reply(400,{error:'Invalid workflow definition'});body.updatedAt=now();await save('WORKFLOW',body);return reply(201,body);}if(route==='GET /leads'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins view leads'});const items=await scanType('LEAD#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='GET /runs'){const items=await scanType('RUN#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='POST /workflows/{id}/runs'){const id=e.pathParameters?.id;const workflows=await scanType('WORKFLOW#',a);const workflow=workflows.find(w=>w.id===id);if(!workflow)return reply(404,{error:'Workflow not found'});const body=JSON.parse(e.body||'{}');return reply(201,await runWorkflow(workflow,body,a));}if(route==='POST /ai/execute'){const body=JSON.parse(e.body||'{}');const allowedOps=['classify','extract','transform','summarize','choose'];if(!allowedOps.includes(body.operation)||typeof body.prompt!=='string')return reply(400,{error:'Invalid bounded AI request'});const out=await ai(body,body.context||{});return reply(200,{model:process.env.BEDROCK_MODEL_ID,provider:'amazon-bedrock',...out});}return reply(404,{error:'Route not found'});}catch(err){console.error(err);return reply(500,{error:err.message||'Control plane error'});}};
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
@@ -202,6 +208,20 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: 'POST /ai/execute'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+  LeadsPostRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /leads'
+      Target: !Sub integrations/${ApiIntegration}
+  LeadsGetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /leads'
       Target: !Sub integrations/${ApiIntegration}
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
