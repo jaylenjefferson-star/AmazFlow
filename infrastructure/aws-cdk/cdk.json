@@ -1,0 +1,1 @@
+{ "app": "pnpm tsx src/app.ts" }

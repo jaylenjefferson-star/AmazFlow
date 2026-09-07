@@ -1,0 +1,8 @@
+{
+  "name": "@amazflow/aws-cdk",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json", "test": "node --test", "synth": "cdk synth" },
+  "dependencies": { "aws-cdk-lib": "^2.180.0", "constructs": "^10.4.2" },
+  "devDependencies": { "aws-cdk": "^2.1019.0", "tsx": "^4.19.3", "typescript": "^5.7.3" }
+}

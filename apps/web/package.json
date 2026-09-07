@@ -1,0 +1,8 @@
+{
+  "name": "@amazflow/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": { "dev": "next dev", "build": "next build", "typecheck": "tsc --noEmit", "test": "node --test" },
+  "dependencies": { "@amazflow/workflow-schema": "workspace:*", "next": "^15.2.0", "react": "^19.0.0", "react-dom": "^19.0.0" },
+  "devDependencies": { "@types/node": "^22.13.4", "@types/react": "^19.0.8", "@types/react-dom": "^19.0.3", "typescript": "^5.7.3" }
+}

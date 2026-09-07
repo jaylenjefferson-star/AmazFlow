@@ -1,0 +1,19 @@
+{
+  "name": "@amazflow/api",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@amazflow/engine": "workspace:*",
+    "@amazflow/workflow-schema": "workspace:*",
+    "@hono/node-server": "^1.13.8",
+    "hono": "^4.7.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": { "tsx": "^4.19.3", "typescript": "^5.7.3" }
+}
