@@ -1,1 +1,24 @@
-<!doctype html><html><head><meta charset="utf-8"><style>body{font:14px system-ui;width:260px;padding:16px;background:#fffaf0;color:#1e211d}b{font-size:18px}.ok{color:#287743}small{display:block;margin-top:8px;color:#74766e}</style></head><body><b>AmazFlow Agent</b><p class="ok">● Ready for scoped tasks</p><small>Development boundary · synthetic data only</small></body></html>
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{font:13px system-ui;width:280px;padding:16px;background:#fffaf0;color:#1e211d}
+b{font-size:17px}
+label{display:block;margin-top:10px;font-weight:600;font-size:11px;color:#74766e}
+input{width:100%;box-sizing:border-box;margin-top:4px;padding:7px 8px;border:1px solid #dcd7c9;border-radius:7px;font:12px/1.3 ui-monospace,monospace}
+button{margin-top:10px;width:100%;border:1px solid #1e211d;border-radius:8px;background:#ff765c;color:#1e211d;padding:8px;font-weight:700;font-size:12px;cursor:pointer}
+button:disabled{opacity:.55;cursor:default;background:#e2f2e6}
+.status{margin-top:6px;font-size:11px;color:#74766e}
+small{display:block;margin-top:12px;color:#74766e;line-height:1.5}
+hr{border:0;border-top:1px solid #ece7d8;margin:14px 0}
+</style></head><body>
+<b>AmazFlow Agent</b>
+<label for="apiBase">API base</label>
+<input id="apiBase" spellcheck="false" />
+<label for="token">Session token (paste idToken)</label>
+<input id="token" type="password" spellcheck="false" />
+<div id="tokenStatus" class="status"></div>
+<button id="save">Save</button>
+<hr />
+<div id="siteStatus" class="status"></div>
+<button id="enableSite">Enable on this site</button>
+<small>Sign in to AmazFlow, open DevTools → Application → Local Storage → amazflow_session, copy idToken here. Development boundary: synthetic data only.</small>
+<script src="popup.js"></script>
+</body></html>

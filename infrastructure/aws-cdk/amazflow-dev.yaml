@@ -141,8 +141,77 @@ Resources:
           const valueAt=(obj,path)=>{const keys=String(path||'').split('.');const read=root=>keys.reduce((v,k)=>v?.[k],root);const direct=read(obj);return direct===undefined?read(obj?.values):direct;};const test=(left,op,right)=>op==='equals'?left===right:op==='notEquals'?left!==right:op==='exists'?left!==undefined:op==='gt'?left>right:op==='lt'?left<right:false;
           const scanType=async(type,a)=>{const out=await db.send(new ScanCommand({TableName:table}));return (out.Items||[]).filter(i=>i.sk?.S?.startsWith(type)&&i.document?.S&&(a.role==='SUPER_ADMIN'||i.tenantId?.S===a.tenantId)).map(parse);};
           const save=async(type,doc)=>db.send(new PutItemCommand({TableName:table,Item:{pk:{S:`TENANT#${doc.tenantId}`},sk:{S:`${type}#${doc.id}`},tenantId:{S:doc.tenantId},document:{S:JSON.stringify(doc)},updatedAt:{S:now()}}}));
-          const runWorkflow=async(workflow,input,a)=>{const run={id:`run_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,tenantId:workflow.tenantId,workflowId:workflow.id,workflowVersion:workflow.version||1,status:'RUNNING',context:{input,values:{},lastAction:null},audit:[],createdAt:now(),updatedAt:now()};const audit=(type,message,stepId,details)=>run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type,message,stepId,details});audit('RUN_STARTED','Workflow execution started',undefined,{actor:a.userId,role:a.role});let next=workflow.startAt;for(let guard=0;guard<30&&next;guard++){const step=workflow.steps.find(s=>s.id===next);if(!step)throw new Error(`Missing step ${next}`);audit('STEP_STARTED',step.name,step.id);if(step.type==='ai'){const out=await ai(step,{input,...run.context.values});run.context.values[step.outputKey]=out.result;audit('AI_COMPLETED','Amazon Bedrock returned a bounded result',step.id,{model:process.env.BEDROCK_MODEL_ID,usage:out.usage});next=step.next;}else if(step.type==='condition'){next=test(valueAt(run.context,step.path),step.operator,step.value)?step.whenTrue:step.whenFalse;audit('CONDITION_EVALUATED',`Condition routed to ${next}`,step.id);}else if(step.type==='approval'){run.status='WAITING_APPROVAL';run.currentStepId=step.id;audit('APPROVAL_REQUIRED',step.message,step.id,{roles:step.roles});break;}else if(step.type==='action'){const result={ok:true,provider:step.provider,operation:step.operation,simulated:process.env.DATA_BOUNDARY==='synthetic-only',status:step.input?.status||'COMPLETED'};run.context.lastAction={result};audit('ACTION_COMPLETED',`${step.provider} action completed`,step.id,result);next=step.next;}else if(step.type==='verify'){const passed=test(valueAt(run.context,step.path),step.operator,step.value);audit(passed?'VERIFIED':'VERIFICATION_FAILED',passed?'Expected state verified':'Expected state not verified',step.id,{expected:step.value,actual:valueAt(run.context,step.path)});next=passed?step.next:step.onFailure;}else if(step.type==='end'){run.status=step.outcome==='success'?'COMPLETED':'FAILED';audit(run.status,step.name,step.id);next=undefined;}run.currentStepId=next;run.updatedAt=now();}await save('RUN',run);return run;};
-          exports.handler=async e=>{try{const route=e.routeKey||'';if(route==='GET /health')return reply(200,{ok:true,service:'amazflow-control-plane',boundary:process.env.DATA_BOUNDARY,aiRuntime:'amazon-bedrock'});if(route==='POST /leads'){const b=JSON.parse(e.body||'{}');const clean=v=>String(v==null?'':v).slice(0,2000).trim();const email=clean(b.email);const name=clean(b.name);if(clean(b.website))return reply(201,{ok:true});if(!name||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return reply(400,{error:'A name and a valid work email are required'});const lead={id:`lead_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,tenantId:'amazflow',name,email,company:clean(b.company),role:clean(b.role),workflow:clean(b.workflow),volume:clean(b.volume),message:clean(b.message),source:clean(b.source)||'website',status:'new',createdAt:now()};await save('LEAD',lead);try{const text=['New AmazFlow lead','','Name: '+lead.name,'Email: '+lead.email,'Company: '+lead.company,'Role: '+lead.role,'Workflow to automate: '+lead.workflow,'Monthly volume: '+lead.volume,'Notes: '+lead.message,'','Source: '+lead.source,'Received: '+lead.createdAt,'Lead ID: '+lead.id].join('\n');await ses.send(new SendEmailCommand({FromEmailAddress:process.env.LEAD_FROM,Destination:{ToAddresses:[process.env.LEAD_TO]},ReplyToAddresses:[lead.email],Content:{Simple:{Subject:{Data:'New lead: '+lead.name+(lead.company?' - '+lead.company:'')},Body:{Text:{Data:text}}}}}));}catch(mailErr){console.error('lead email failed',mailErr.message);}return reply(201,{ok:true,id:lead.id});}const a=auth(e);if(!a.role)return reply(403,{error:'Role required'});if(route==='GET /me')return reply(200,a);if(route==='GET /workflows'){const items=await scanType('WORKFLOW#',a);return reply(200,items.sort((x,y)=>String(y.version).localeCompare(String(x.version))));}if(route==='POST /workflows'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins configure workflows'});const body=JSON.parse(e.body||'{}');if(!body.id||!body.tenantId||!body.name||!body.startAt||!Array.isArray(body.steps))return reply(400,{error:'Invalid workflow definition'});body.updatedAt=now();await save('WORKFLOW',body);return reply(201,body);}if(route==='GET /leads'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins view leads'});const items=await scanType('LEAD#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='GET /runs'){const items=await scanType('RUN#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='POST /workflows/{id}/runs'){const id=e.pathParameters?.id;const workflows=await scanType('WORKFLOW#',a);const workflow=workflows.find(w=>w.id===id);if(!workflow)return reply(404,{error:'Workflow not found'});const body=JSON.parse(e.body||'{}');return reply(201,await runWorkflow(workflow,body,a));}if(route==='POST /ai/execute'){const body=JSON.parse(e.body||'{}');const allowedOps=['classify','extract','transform','summarize','choose'];if(!allowedOps.includes(body.operation)||typeof body.prompt!=='string')return reply(400,{error:'Invalid bounded AI request'});const out=await ai(body,body.context||{});return reply(200,{model:process.env.BEDROCK_MODEL_ID,provider:'amazon-bedrock',...out});}return reply(404,{error:'Route not found'});}catch(err){console.error(err);return reply(500,{error:err.message||'Control plane error'});}};
+          const advance=async(workflow,run)=>{
+            const audit=(type,message,stepId,details)=>run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type,message,stepId,details});
+            let next=run.currentStepId;
+            for(let guard=0;guard<30&&next;guard++){
+              const step=workflow.steps.find(s=>s.id===next);
+              if(!step) throw new Error(`Missing step ${next}`);
+              audit('STEP_STARTED',step.name,step.id);
+              if(step.type==='ai'){
+                const out=await ai(step,{input:run.context.input,...run.context.values});
+                run.context.values[step.outputKey]=out.result;
+                audit('AI_COMPLETED','Amazon Bedrock returned a bounded result',step.id,{model:process.env.BEDROCK_MODEL_ID,usage:out.usage});
+                next=step.next;
+              } else if(step.type==='condition'){
+                next=test(valueAt(run.context,step.path),step.operator,step.value)?step.whenTrue:step.whenFalse;
+                audit('CONDITION_EVALUATED',`Condition routed to ${next}`,step.id);
+              } else if(step.type==='approval'){
+                run.status='WAITING_APPROVAL'; run.currentStepId=step.id;
+                audit('APPROVAL_REQUIRED',step.message,step.id,{roles:step.roles});
+                break;
+              } else if(step.type==='action'){
+                if(step.provider==='mock'){
+                  const result={ok:true,provider:step.provider,operation:step.operation,simulated:true,status:step.input?.status||'COMPLETED'};
+                  run.context.lastAction={result};
+                  audit('ACTION_COMPLETED',`${step.provider} action completed`,step.id,result);
+                  next=step.next;
+                } else {
+                  const task={id:`task_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,runId:run.id,tenantId:run.tenantId,stepId:step.id,provider:step.provider,operation:step.operation,input:step.input||{},expiresAt:new Date(Date.now()+5*60000).toISOString(),status:'PENDING'};
+                  await save('TASK',task);
+                  run.status='WAITING_AGENT'; run.currentStepId=step.id;
+                  audit('AGENT_TASK_CREATED',`${step.provider}:${step.operation}`,step.id,{taskId:task.id});
+                  break;
+                }
+              } else if(step.type==='verify'){
+                const passed=test(valueAt(run.context,step.path),step.operator,step.value);
+                audit(passed?'VERIFIED':'VERIFICATION_FAILED',passed?'Expected state verified':'Expected state not verified',step.id,{expected:step.value,actual:valueAt(run.context,step.path)});
+                next=passed?step.next:step.onFailure;
+              } else if(step.type==='end'){
+                run.status=step.outcome==='success'?'COMPLETED':'FAILED';
+                audit(run.status,step.name,step.id);
+                next=undefined;
+              }
+              run.currentStepId=next; run.updatedAt=now();
+            }
+            await save('RUN',run);
+            return run;
+          };
+          const runWorkflow=async(workflow,input,a)=>{
+            const run={id:`run_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,tenantId:workflow.tenantId,workflowId:workflow.id,workflowVersion:workflow.version||1,status:'RUNNING',currentStepId:workflow.startAt,context:{input,values:{},lastAction:null},audit:[{id:'aud_1',at:now(),type:'RUN_STARTED',message:'Workflow execution started',details:{actor:a.userId,role:a.role}}],createdAt:now(),updatedAt:now()};
+            return advance(workflow,run);
+          };
+          const resumeAgentTask=async(taskId,result,a)=>{
+            const allTasks=await scanType('TASK#',{role:'SUPER_ADMIN'});
+            const task=allTasks.find(t=>t.id===taskId);
+            if(!task) throw {status:404,message:'Task not found'};
+            if(a.role!=='SUPER_ADMIN'&&task.tenantId!==a.tenantId) throw {status:403,message:'Task belongs to another tenant'};
+            if(task.status!=='PENDING') throw {status:409,message:'Task already resolved'};
+            const allRuns=await scanType('RUN#',{role:'SUPER_ADMIN'});
+            const run=allRuns.find(r=>r.id===task.runId);
+            if(!run||run.status!=='WAITING_AGENT'||run.currentStepId!==task.stepId) throw {status:409,message:'Run is not waiting for this task'};
+            const allWorkflows=await scanType('WORKFLOW#',{role:'SUPER_ADMIN'});
+            const workflow=allWorkflows.find(w=>w.id===run.workflowId);
+            if(!workflow) throw {status:400,message:'Workflow not found for run'};
+            task.status='COMPLETED';
+            await save('TASK',task);
+            run.context.lastAction={result};
+            run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type:'AGENT_RESULT',stepId:task.stepId,message:`Agent completed ${task.stepId}`,details:result});
+            const step=workflow.steps.find(s=>s.id===task.stepId);
+            run.status='RUNNING'; run.currentStepId=step.next;
+            return advance(workflow,run);
+          };
+          exports.handler=async e=>{try{const route=e.routeKey||'';if(route==='GET /health')return reply(200,{ok:true,service:'amazflow-control-plane',boundary:process.env.DATA_BOUNDARY,aiRuntime:'amazon-bedrock'});if(route==='POST /leads'){const b=JSON.parse(e.body||'{}');const clean=v=>String(v==null?'':v).slice(0,2000).trim();const email=clean(b.email);const name=clean(b.name);if(clean(b.website))return reply(201,{ok:true});if(!name||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return reply(400,{error:'A name and a valid work email are required'});const lead={id:`lead_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,tenantId:'amazflow',name,email,company:clean(b.company),role:clean(b.role),workflow:clean(b.workflow),volume:clean(b.volume),message:clean(b.message),source:clean(b.source)||'website',status:'new',createdAt:now()};await save('LEAD',lead);try{const text=['New AmazFlow lead','','Name: '+lead.name,'Email: '+lead.email,'Company: '+lead.company,'Role: '+lead.role,'Workflow to automate: '+lead.workflow,'Monthly volume: '+lead.volume,'Notes: '+lead.message,'','Source: '+lead.source,'Received: '+lead.createdAt,'Lead ID: '+lead.id].join('\n');await ses.send(new SendEmailCommand({FromEmailAddress:process.env.LEAD_FROM,Destination:{ToAddresses:[process.env.LEAD_TO]},ReplyToAddresses:[lead.email],Content:{Simple:{Subject:{Data:'New lead: '+lead.name+(lead.company?' - '+lead.company:'')},Body:{Text:{Data:text}}}}}));}catch(mailErr){console.error('lead email failed',mailErr.message);}return reply(201,{ok:true,id:lead.id});}const a=auth(e);if(!a.role)return reply(403,{error:'Role required'});if(route==='GET /me')return reply(200,a);if(route==='GET /workflows'){const items=await scanType('WORKFLOW#',a);return reply(200,items.sort((x,y)=>String(y.version).localeCompare(String(x.version))));}if(route==='POST /workflows'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins configure workflows'});const body=JSON.parse(e.body||'{}');if(!body.id||!body.tenantId||!body.name||!body.startAt||!Array.isArray(body.steps))return reply(400,{error:'Invalid workflow definition'});body.updatedAt=now();await save('WORKFLOW',body);return reply(201,body);}if(route==='GET /leads'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins view leads'});const items=await scanType('LEAD#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='GET /runs'){const items=await scanType('RUN#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='POST /workflows/{id}/runs'){const id=e.pathParameters?.id;const workflows=await scanType('WORKFLOW#',a);const workflow=workflows.find(w=>w.id===id);if(!workflow)return reply(404,{error:'Workflow not found'});const body=JSON.parse(e.body||'{}');return reply(201,await runWorkflow(workflow,body,a));}if(route==='GET /agent-tasks'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins view agent tasks'});const items=await scanType('TASK#',a);return reply(200,items.filter(t=>t.status==='PENDING'));}if(route==='POST /agent-tasks/{id}/result'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins resolve agent tasks'});try{const body=JSON.parse(e.body||'{}');const run=await resumeAgentTask(e.pathParameters?.id,body,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /ai/execute'){const body=JSON.parse(e.body||'{}');const allowedOps=['classify','extract','transform','summarize','choose'];if(!allowedOps.includes(body.operation)||typeof body.prompt!=='string')return reply(400,{error:'Invalid bounded AI request'});const out=await ai(body,body.context||{});return reply(200,{model:process.env.BEDROCK_MODEL_ID,provider:'amazon-bedrock',...out});}return reply(404,{error:'Route not found'});}catch(err){console.error(err);return reply(500,{error:err.message||'Control plane error'});}};
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
@@ -238,6 +307,22 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: 'POST /workflows/{id}/runs'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+  AgentTasksGetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /agent-tasks'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+  AgentTaskResultPostRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /agent-tasks/{id}/result'
       Target: !Sub integrations/${ApiIntegration}
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer

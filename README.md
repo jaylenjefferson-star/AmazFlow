@@ -23,7 +23,14 @@ Local development uses synthetic data and in-memory persistence. AWS hosts the p
 
 Set `BEDROCK_MODEL_ID` and AWS credentials to replace the deterministic local AI provider with bounded Amazon Bedrock inference. The provider enforces JSON output, confidence bounds, and configured allowed values.
 
-The Chrome agent source lives in `apps/browser-agent`. It polls for short-lived tasks and only executes an explicit local operation allowlist. Its host permissions are intentionally limited to the local control plane in this build.
+The Chrome agent source lives in `apps/browser-agent`. It polls the AWS control plane for short-lived, tenant-scoped agent tasks and only executes an explicit operation allowlist. It has no standing access to any site: it holds a fixed host permission for the AmazFlow API only, and every other origin is an optional permission the operator must explicitly grant per site from the extension popup (via Chrome's own permission prompt) before the agent will inject a content script there. The popup also stores the operator's AmazFlow session token, which authorizes calls to `GET /agent-tasks` and `POST /agent-tasks/:id/result`.
+
+## Load the Chrome agent
+
+1. Build it: `pnpm --filter @amazflow/browser-agent build` (produces `apps/browser-agent/dist`, which is gitignored like any other build output).
+2. In Chrome, go to `chrome://extensions`, enable Developer mode, and click "Load unpacked", then select `apps/browser-agent/dist`.
+3. Open the extension popup, sign in to AmazFlow in a normal tab, copy `amazflow_session.idToken` from DevTools → Application → Local Storage, and paste it into the popup's token field, then Save.
+4. Open the tab where a workflow's browser action should run and click "Enable on this site" in the popup — Chrome will prompt to confirm the grant. The agent only acts on origins explicitly enabled this way.
 
 ## Core API
 
