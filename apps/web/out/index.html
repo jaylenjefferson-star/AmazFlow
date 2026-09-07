@@ -1,0 +1,106 @@
+<!DOCTYPE html><!--BjBsfngmuM76CExp9TE3s--><html lang="en"><head><meta charSet="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><link rel="stylesheet" href="/_next/static/css/9582337fafe309b7.css" data-precedence="next"/><link rel="preload" as="script" fetchPriority="low" href="/_next/static/chunks/webpack-fa39ac86c67ef0d2.js"/><script src="/_next/static/chunks/5174445a-65bcb23bbdc4c8f0.js" async=""></script><script src="/_next/static/chunks/385-eb06edfc59167d6f.js" async=""></script><script src="/_next/static/chunks/main-app-4e5c6683ed70651e.js" async=""></script><script src="/_next/static/chunks/174-b0953c097c374211.js" async=""></script><script src="/_next/static/chunks/app/page-d04db9383df1e100.js" async=""></script><title>AmazFlow Control</title><meta name="description" content="Configure and run operational workflows"/><script src="/_next/static/chunks/polyfills-42372ed130431b0a.js" noModule=""></script></head><body><div hidden=""><!--$--><!--/$--></div><main><aside><div class="brand"><span>A</span>AmazFlow</div><p class="eyebrow">OPERATIONS CONTROL</p><nav><button class="">Global overview<em></em></button><button class="active">Workflow studio<em></em></button><button class="">Clients<em></em></button><button class="">Connections<em></em></button><button class="">Agents<em></em></button><button class="">Audit &amp; policy<em></em></button><button class="">Platform settings<em></em></button></nav><div class="boundary"><b>Data boundary</b><span>Synthetic development</span><small>No production or PHI data</small></div></aside><section class="shell"><header><div><p class="eyebrow">WORKFLOW FABRIC</p><h1>Configure the work.<br/><i>AmazFlow executes it.</i></h1></div><div class="identity"><label>Preview access level<select><option value="FRONTLINE">Frontline user</option><option value="CLIENT_ADMIN">Client operations admin</option><option value="SUPER_ADMIN" selected="">AmazFlow super admin</option></select></label><div class="status"><span></span> <!-- -->Connecting to AmazFlow…</div></div></header><div class="stats"><div><strong>1</strong><span>Active workflows</span></div><div><strong>0</strong><span>Waiting / running</span></div><div><strong>0</strong><span>Completed</span></div><div><strong>0</strong><span>Failed / exceptions</span></div></div><div class="workspace"><section class="panel library"><div class="panelhead"><div><p class="eyebrow">WORKFLOW LIBRARY</p><h2>Business processes</h2></div><button class="plus">＋</button></div><button class="workflow chosen"><span class="glyph">↝</span><span><b>Configurable employee status change</b><small>8<!-- --> configured steps · v<!-- -->1</small></span><mark>active</mark></button><div class="addhint">Any department. Any repeatable SOP.<br/>AI is a bounded step—not the workflow owner.</div></section><section class="panel builder"><div class="panelhead"><div><p class="eyebrow">SUPER ADMIN CONFIGURATION</p><h2>Configurable employee status change</h2></div><button>Save definition</button></div><div class="flow"><div class="step"><span>✦</span><div><small>AI</small><b>Interpret request</b></div><i>→</i></div><div class="step"><span>◇</span><div><small>CONDITION</small><b>Check certainty</b></div><i>→</i></div><div class="step"><span>✓</span><div><small>APPROVAL</small><b>Human review</b></div><i>→</i></div><div class="step"><span>↗</span><div><small>ACTION</small><b>Execute in browser</b><em>browser<!-- --> · <!-- -->SET_EMPLOYEE_STATUS</em></div><i>→</i></div><div class="step"><span>◎</span><div><small>VERIFY</small><b>Verify final state</b></div><i>→</i></div><div class="step"><span>●</span><div><small>END</small><b>Completed</b></div><i>→</i></div><div class="step"><span>●</span><div><small>END</small><b>Rejected</b></div><i>→</i></div><div class="step"><span>●</span><div><small>END</small><b>Verification failed</b></div></div></div><label>Workflow definition <small>Only AmazFlow super admins can edit</small><textarea spellCheck="false">{
+  &quot;id&quot;: &quot;workflow-sample-ops&quot;,
+  &quot;tenantId&quot;: &quot;tenant-demo&quot;,
+  &quot;name&quot;: &quot;Configurable employee status change&quot;,
+  &quot;description&quot;: &quot;A sample definition proving that business workflows are configuration, not application code.&quot;,
+  &quot;version&quot;: 1,
+  &quot;status&quot;: &quot;active&quot;,
+  &quot;dataClass&quot;: &quot;PII&quot;,
+  &quot;assignedRoles&quot;: [
+    &quot;FRONTLINE&quot;,
+    &quot;CLIENT_ADMIN&quot;
+  ],
+  &quot;startAt&quot;: &quot;interpret&quot;,
+  &quot;allowedProviders&quot;: [
+    &quot;browser&quot;,
+    &quot;mock&quot;
+  ],
+  &quot;steps&quot;: [
+    {
+      &quot;id&quot;: &quot;interpret&quot;,
+      &quot;name&quot;: &quot;Interpret request&quot;,
+      &quot;type&quot;: &quot;ai&quot;,
+      &quot;operation&quot;: &quot;extract&quot;,
+      &quot;prompt&quot;: &quot;Extract the requested employee action&quot;,
+      &quot;outputKey&quot;: &quot;decision&quot;,
+      &quot;allowedValues&quot;: [
+        &quot;DISABLE&quot;,
+        &quot;REVIEW&quot;
+      ],
+      &quot;confidenceThreshold&quot;: 0.85,
+      &quot;next&quot;: &quot;safe&quot;
+    },
+    {
+      &quot;id&quot;: &quot;safe&quot;,
+      &quot;name&quot;: &quot;Check certainty&quot;,
+      &quot;type&quot;: &quot;condition&quot;,
+      &quot;path&quot;: &quot;decision.value&quot;,
+      &quot;operator&quot;: &quot;equals&quot;,
+      &quot;value&quot;: &quot;DISABLE&quot;,
+      &quot;whenTrue&quot;: &quot;execute&quot;,
+      &quot;whenFalse&quot;: &quot;approval&quot;
+    },
+    {
+      &quot;id&quot;: &quot;approval&quot;,
+      &quot;name&quot;: &quot;Human review&quot;,
+      &quot;type&quot;: &quot;approval&quot;,
+      &quot;message&quot;: &quot;Review the requested employee change&quot;,
+      &quot;roles&quot;: [
+        &quot;admin&quot;,
+        &quot;operator&quot;
+      ],
+      &quot;next&quot;: &quot;execute&quot;,
+      &quot;onReject&quot;: &quot;rejected&quot;
+    },
+    {
+      &quot;id&quot;: &quot;execute&quot;,
+      &quot;name&quot;: &quot;Execute in browser&quot;,
+      &quot;type&quot;: &quot;action&quot;,
+      &quot;provider&quot;: &quot;browser&quot;,
+      &quot;operation&quot;: &quot;SET_EMPLOYEE_STATUS&quot;,
+      &quot;input&quot;: {
+        &quot;targetPath&quot;: &quot;employee.id&quot;,
+        &quot;status&quot;: &quot;DISABLED&quot;
+      },
+      &quot;verify&quot;: {
+        &quot;path&quot;: &quot;result.status&quot;,
+        &quot;equals&quot;: &quot;DISABLED&quot;
+      },
+      &quot;next&quot;: &quot;verified&quot;
+    },
+    {
+      &quot;id&quot;: &quot;verified&quot;,
+      &quot;name&quot;: &quot;Verify final state&quot;,
+      &quot;type&quot;: &quot;verify&quot;,
+      &quot;path&quot;: &quot;lastAction.result.status&quot;,
+      &quot;operator&quot;: &quot;equals&quot;,
+      &quot;value&quot;: &quot;DISABLED&quot;,
+      &quot;next&quot;: &quot;done&quot;,
+      &quot;onFailure&quot;: &quot;failed&quot;
+    },
+    {
+      &quot;id&quot;: &quot;done&quot;,
+      &quot;name&quot;: &quot;Completed&quot;,
+      &quot;type&quot;: &quot;end&quot;,
+      &quot;outcome&quot;: &quot;success&quot;
+    },
+    {
+      &quot;id&quot;: &quot;rejected&quot;,
+      &quot;name&quot;: &quot;Rejected&quot;,
+      &quot;type&quot;: &quot;end&quot;,
+      &quot;outcome&quot;: &quot;failed&quot;
+    },
+    {
+      &quot;id&quot;: &quot;failed&quot;,
+      &quot;name&quot;: &quot;Verification failed&quot;,
+      &quot;type&quot;: &quot;end&quot;,
+      &quot;outcome&quot;: &quot;failed&quot;
+    }
+  ]
+}</textarea></label></section></div><div class="workspace lower"><section class="panel runbox"><div class="panelhead"><div><p class="eyebrow">TEST EXECUTION</p><h2>Run with synthetic input</h2></div><button class="run">Run workflow →</button></div><textarea spellCheck="false">{
+  &quot;employee&quot;: {
+    &quot;id&quot;: &quot;E-10042&quot;,
+    &quot;name&quot;: &quot;Sarah Chen&quot;
+  },
+  &quot;request&quot;: &quot;DISABLE&quot;
+}</textarea></section><section class="panel activity"><div class="panelhead"><div><p class="eyebrow">LIVE RUNS</p><h2>Execution &amp; audit</h2></div><button>Refresh</button></div><p class="empty">No runs yet. Execute a configured workflow.</p></section></div></section></main><!--$--><!--/$--><script src="/_next/static/chunks/webpack-fa39ac86c67ef0d2.js" id="_R_" async=""></script><script>(self.__next_f=self.__next_f||[]).push([0])</script><script>self.__next_f.push([1,"1:\"$Sreact.fragment\"\n2:I[1732,[],\"\"]\n3:I[18,[],\"\"]\n4:I[9633,[],\"ClientPageRoot\"]\n5:I[1366,[\"174\",\"static/chunks/174-b0953c097c374211.js\",\"974\",\"static/chunks/app/page-d04db9383df1e100.js\"],\"default\"]\n8:I[9185,[],\"OutletBoundary\"]\na:I[364,[],\"AsyncMetadataOutlet\"]\nc:I[9185,[],\"ViewportBoundary\"]\ne:I[9185,[],\"MetadataBoundary\"]\nf:\"$Sreact.suspense\"\n11:I[8912,[],\"\"]\n:HL[\"/_next/static/css/9582337fafe309b7.css\",\"style\"]\n"])</script><script>self.__next_f.push([1,"0:{\"P\":null,\"b\":\"BjBsfngmuM76CExp9TE3s\",\"p\":\"\",\"c\":[\"\",\"\"],\"i\":false,\"f\":[[[\"\",{\"children\":[\"__PAGE__\",{}]},\"$undefined\",\"$undefined\",true],[\"\",[\"$\",\"$1\",\"c\",{\"children\":[[[\"$\",\"link\",\"0\",{\"rel\":\"stylesheet\",\"href\":\"/_next/static/css/9582337fafe309b7.css\",\"precedence\":\"next\",\"crossOrigin\":\"$undefined\",\"nonce\":\"$undefined\"}]],[\"$\",\"html\",null,{\"lang\":\"en\",\"children\":[\"$\",\"body\",null,{\"children\":[\"$\",\"$L2\",null,{\"parallelRouterKey\":\"children\",\"error\":\"$undefined\",\"errorStyles\":\"$undefined\",\"errorScripts\":\"$undefined\",\"template\":[\"$\",\"$L3\",null,{}],\"templateStyles\":\"$undefined\",\"templateScripts\":\"$undefined\",\"notFound\":[[[\"$\",\"title\",null,{\"children\":\"404: This page could not be found.\"}],[\"$\",\"div\",null,{\"style\":{\"fontFamily\":\"system-ui,\\\"Segoe UI\\\",Roboto,Helvetica,Arial,sans-serif,\\\"Apple Color Emoji\\\",\\\"Segoe UI Emoji\\\"\",\"height\":\"100vh\",\"textAlign\":\"center\",\"display\":\"flex\",\"flexDirection\":\"column\",\"alignItems\":\"center\",\"justifyContent\":\"center\"},\"children\":[\"$\",\"div\",null,{\"children\":[[\"$\",\"style\",null,{\"dangerouslySetInnerHTML\":{\"__html\":\"body{color:#000;background:#fff;margin:0}.next-error-h1{border-right:1px solid rgba(0,0,0,.3)}@media (prefers-color-scheme:dark){body{color:#fff;background:#000}.next-error-h1{border-right:1px solid rgba(255,255,255,.3)}}\"}}],[\"$\",\"h1\",null,{\"className\":\"next-error-h1\",\"style\":{\"display\":\"inline-block\",\"margin\":\"0 20px 0 0\",\"padding\":\"0 23px 0 0\",\"fontSize\":24,\"fontWeight\":500,\"verticalAlign\":\"top\",\"lineHeight\":\"49px\"},\"children\":404}],[\"$\",\"div\",null,{\"style\":{\"display\":\"inline-block\"},\"children\":[\"$\",\"h2\",null,{\"style\":{\"fontSize\":14,\"fontWeight\":400,\"lineHeight\":\"49px\",\"margin\":0},\"children\":\"This page could not be found.\"}]}]]}]}]],[]],\"forbidden\":\"$undefined\",\"unauthorized\":\"$undefined\"}]}]}]]}],{\"children\":[\"__PAGE__\",[\"$\",\"$1\",\"c\",{\"children\":[[\"$\",\"$L4\",null,{\"Component\":\"$5\",\"searchParams\":{},\"params\":{},\"promises\":[\"$@6\",\"$@7\"]}],null,[\"$\",\"$L8\",null,{\"children\":[\"$L9\",[\"$\",\"$La\",null,{\"promise\":\"$@b\"}]]}]]}],{},null,false]},null,false],[\"$\",\"$1\",\"h\",{\"children\":[null,[[\"$\",\"$Lc\",null,{\"children\":\"$Ld\"}],null],[\"$\",\"$Le\",null,{\"children\":[\"$\",\"div\",null,{\"hidden\":true,\"children\":[\"$\",\"$f\",null,{\"fallback\":null,\"children\":\"$L10\"}]}]}]]}],false]],\"m\":\"$undefined\",\"G\":[\"$11\",[]],\"s\":false,\"S\":true}\n"])</script><script>self.__next_f.push([1,"6:{}\n7:\"$0:f:0:1:2:children:1:props:children:0:props:params\"\n"])</script><script>self.__next_f.push([1,"d:[[\"$\",\"meta\",\"0\",{\"charSet\":\"utf-8\"}],[\"$\",\"meta\",\"1\",{\"name\":\"viewport\",\"content\":\"width=device-width, initial-scale=1\"}]]\n9:null\n"])</script><script>self.__next_f.push([1,"b:{\"metadata\":[[\"$\",\"title\",\"0\",{\"children\":\"AmazFlow Control\"}],[\"$\",\"meta\",\"1\",{\"name\":\"description\",\"content\":\"Configure and run operational workflows\"}]],\"error\":null,\"digest\":\"$undefined\"}\n"])</script><script>self.__next_f.push([1,"10:\"$b:metadata\"\n"])</script></body></html>
