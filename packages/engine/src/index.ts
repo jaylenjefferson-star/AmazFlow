@@ -1,3 +1,6 @@
+// NOT DEPLOYED. This local implementation is not connected to any AWS resource and is not
+// what customers use. It exists only for local engine-logic testing. The production workflow
+// engine lives entirely inside the ZipFile in infrastructure/aws-cdk/amazflow-dev.yaml.
 import type { WorkflowDefinition, WorkflowRun, WorkflowStep } from "@amazflow/workflow-schema";
 
 export type AgentTask = { id: string; runId: string; tenantId: string; stepId: string; provider: string; operation: string; input: Record<string, unknown>; expiresAt: string; status: "PENDING" | "COMPLETED" };

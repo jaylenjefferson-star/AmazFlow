@@ -1,3 +1,6 @@
+// NOT DEPLOYED. This local implementation is not connected to any AWS resource and is not
+// what customers use. It exists only for local engine-logic testing. The production workflow
+// engine lives entirely inside the ZipFile in infrastructure/aws-cdk/amazflow-dev.yaml.
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";

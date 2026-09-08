@@ -8,12 +8,16 @@ The control plane supports generic AI, browser, API, spreadsheet, approval, cond
 
 ```bash
 pnpm install
-pnpm dev
+pnpm dev:web
 ```
 
 - Marketing site: http://localhost:3000
 - Product console: http://localhost:3000/app
-- API: http://localhost:4000
+- Customer console: http://localhost:3000/console
+
+The frontend talks directly to the deployed Lambda control plane (see below), not to a local API — `pnpm dev:web` is all you need for frontend work.
+
+`services/api` is a separate, **never-deployed** local reimplementation of the workflow engine, used only to exercise `packages/engine` in isolation (`pnpm dev:engine-sandbox`, http://localhost:4000). It is not connected to AWS and is not what customers use.
 
 The public experience includes the homepage plus Product, Solutions, Security, Pricing, Company, Contact, Privacy, Terms, and Subprocessors pages. The authenticated product console is intentionally separated at `/app`. Cognito enforces three product access levels: Frontline User, Client Operations Admin, and AmazFlow Super Admin.
 

@@ -3,7 +3,8 @@
   "private": true,
   "packageManager": "pnpm@11.26.0",
   "scripts": {
-    "dev": "pnpm --parallel --filter @amazflow/api --filter @amazflow/web dev",
+    "dev:web": "pnpm --filter @amazflow/web dev",
+    "dev:engine-sandbox": "pnpm --filter @amazflow/api dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck"
