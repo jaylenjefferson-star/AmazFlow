@@ -13,9 +13,42 @@ import { API, type Session, clearSession, resolveSession, revokeRefreshToken } f
 type ConsoleWorkflow = WorkflowDefinition & { manualMinutesEstimate?: number; customerSummary?: string };
 type View = { kind: "home" } | { kind: "run"; runId: string } | { kind: "team" };
 
+// Real URL-addressable views without a Next.js dynamic route: this app is a static export
+// (next.config output:'export', no server and no configured Amplify rewrite rule for arbitrary
+// sub-paths), so a hard reload of /console/runs/<id>/ has nowhere to resolve to -- only the
+// prebuilt /console/ page exists as a real static file. pushState/popstate instead gives real
+// browser back/forward and a URL that reflects the current view for anything reached by
+// navigating within a live session (sharing/bookmarking a run link still needs the recipient to
+// land on /console/ first, then follow through -- documented as a known limitation, not silently
+// dropped).
+function viewToPath(view: View): string {
+  if (view.kind === "team") return "/console/team/";
+  if (view.kind === "run") return `/console/runs/${view.runId}/`;
+  return "/console/";
+}
+
+function pathToView(pathname: string): View {
+  const runMatch = pathname.match(/^\/console\/runs\/([^/]+)\/?$/);
+  if (runMatch) return { kind: "run", runId: runMatch[1] };
+  if (/^\/console\/team\/?$/.test(pathname)) return { kind: "team" };
+  return { kind: "home" };
+}
+
 export default function CustomerConsole() {
   const [session, setSession] = useState<Session | null>();
-  const [view, setView] = useState<View>({ kind: "home" });
+  const [view, setViewState] = useState<View>({ kind: "home" });
+
+  const setView = (next: View) => {
+    setViewState(next);
+    const path = viewToPath(next);
+    if (window.location.pathname !== path) window.history.pushState(null, "", path);
+  };
+
+  useEffect(() => {
+    const onPopState = () => setViewState(pathToView(window.location.pathname));
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   const [workflows, setWorkflows] = useState<ConsoleWorkflow[]>([]);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
@@ -40,6 +73,7 @@ export default function CustomerConsole() {
         return;
       }
       setSession(restored);
+      setViewState(pathToView(window.location.pathname));
       loadData(restored);
     });
   }, []);
@@ -263,9 +297,13 @@ export default function CustomerConsole() {
                 onCancelRun={() => cancelRun(activeRun)}
               />
             )}
+            {view.kind === "run" && !activeRun && !dataLoading && (
+              <NotFoundScreen onBackHome={() => setView({ kind: "home" })} />
+            )}
             {view.kind === "team" && session.role === "CLIENT_ADMIN" && (
               <TeamScreen members={members} loading={teamLoading} error={teamError} onRetry={() => loadTeam(session)} onSetEnabled={setMemberEnabled} />
             )}
+            {view.kind === "team" && session.role !== "CLIENT_ADMIN" && <NotFoundScreen onBackHome={() => setView({ kind: "home" })} />}
           </main>
         </div>
       </div>
@@ -280,6 +318,17 @@ export default function CustomerConsole() {
           </button>
         </nav>
       )}
+    </div>
+  );
+}
+
+function NotFoundScreen({ onBackHome }: { onBackHome: () => void }) {
+  return (
+    <div className="console-empty">
+      <h2>We couldn’t find that page.</h2>
+      <button className="console-btn console-btn-primary" onClick={onBackHome}>
+        Back to Home
+      </button>
     </div>
   );
 }

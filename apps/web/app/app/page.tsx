@@ -29,7 +29,16 @@ export default function ProductConsole() {
   const [sopOpen, setSopOpen] = useState(false);
   const [sopText, setSopText] = useState("");
   const [generating, setGenerating] = useState(false);
-  const [view, setView] = useState<"workflows" | "clients" | "agents">("workflows");
+  const [view, setViewState] = useState<"workflows" | "clients" | "agents">("workflows");
+  // See the matching comment in console/page.tsx: this is a static export with no server-side
+  // rewrite for arbitrary sub-paths, so pushState gives real back/forward and a URL that
+  // reflects the current view for in-session navigation, without risking a build/hosting change
+  // this environment can't verify.
+  const setView = (next: "workflows" | "clients" | "agents") => {
+    setViewState(next);
+    const path = next === "workflows" ? "/app/workflows/" : `/app/${next}/`;
+    if (window.location.pathname !== path) window.history.pushState(null, "", path);
+  };
   const [organizations, setOrganizations] = useState<Organization[]>([]);
   const [orgsLoading, setOrgsLoading] = useState(false);
   const [newOrgName, setNewOrgName] = useState("");
@@ -81,8 +90,19 @@ export default function ProductConsole() {
         return;
       }
       setSession(restored);
+      const path = window.location.pathname;
+      setViewState(path.startsWith("/app/clients") ? "clients" : path.startsWith("/app/agents") ? "agents" : "workflows");
       refresh(restored).catch((error) => setNotice(error.message));
     });
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const path = window.location.pathname;
+      setViewState(path.startsWith("/app/clients") ? "clients" : path.startsWith("/app/agents") ? "agents" : "workflows");
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
   const stats = useMemo(() => ({
