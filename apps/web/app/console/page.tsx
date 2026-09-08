@@ -8,7 +8,7 @@ import { HomeScreen } from "./home";
 import { RunDetailScreen } from "./run-detail";
 import { TeamScreen, type TeamMember } from "./team";
 import { visibleWorkflows } from "./copy";
-import { API, type Session, clearSession, resolveSession, revokeRefreshToken } from "../lib/cognito-auth";
+import { API, type Session, clearSession, guardBFCacheRestore, resolveSession, revokeRefreshToken } from "../lib/cognito-auth";
 
 type ConsoleWorkflow = WorkflowDefinition & { manualMinutesEstimate?: number; customerSummary?: string };
 type View = { kind: "home" } | { kind: "run"; runId: string } | { kind: "team" };
@@ -59,6 +59,8 @@ export default function CustomerConsole() {
   const [teamLoading, setTeamLoading] = useState(true);
   const [teamError, setTeamError] = useState<string | null>(null);
   const [draftResume, setDraftResume] = useState<{ workflowId: string; text: string } | null>(null);
+
+  useEffect(() => guardBFCacheRestore(), []);
 
   useEffect(() => {
     const hadStoredSession = Boolean(localStorage.getItem("amazflow_session"));
@@ -196,7 +198,7 @@ export default function CustomerConsole() {
     revokeRefreshToken(session?.refreshToken);
     clearSession();
     setSession(null);
-    window.location.assign("/signed-out");
+    window.location.replace("/signed-out");
   };
 
   if (!session) {

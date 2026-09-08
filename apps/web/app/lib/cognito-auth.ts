@@ -211,3 +211,15 @@ export async function revokeRefreshToken(refreshToken: string | undefined) {
 export function loginPathFor(role: AmazFlowRole | null): string {
   return role === "SUPER_ADMIN" ? "/app/" : "/console/";
 }
+
+// Chrome/Safari can restore a page from the back-forward cache instead of re-running its mount
+// effects, which would let a signed-out browser flash the last authenticated screen it had in
+// memory before any auth check re-runs. Forcing a real reload on a bfcache restore guarantees
+// the session check in the page's own mount effect always runs against current localStorage.
+export function guardBFCacheRestore() {
+  const onPageShow = (event: PageTransitionEvent) => {
+    if (event.persisted) window.location.reload();
+  };
+  window.addEventListener("pageshow", onPageShow);
+  return () => window.removeEventListener("pageshow", onPageShow);
+}

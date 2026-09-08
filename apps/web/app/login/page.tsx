@@ -4,7 +4,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { LogoMark, WorkflowVisual } from "../site-components";
 import type { AmazFlowRole } from "@amazflow/workflow-schema";
-import { API, AuthError, completeNewPassword, loadSession, loginPathFor, saveSession, signIn } from "../lib/cognito-auth";
+import { API, AuthError, completeNewPassword, guardBFCacheRestore, loadSession, loginPathFor, saveSession, signIn } from "../lib/cognito-auth";
 import "../auth.css";
 
 type OrgBranding = { displayName?: string; logoUrl?: string; accent?: string; loginMessage?: string };
@@ -25,6 +25,8 @@ export default function LoginPage() {
   const [expiredNotice, setExpiredNotice] = useState(false);
   const [nextPath, setNextPath] = useState<string | null>(null);
   const [branding, setBranding] = useState<OrgBranding | null>(null);
+
+  useEffect(() => guardBFCacheRestore(), []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
