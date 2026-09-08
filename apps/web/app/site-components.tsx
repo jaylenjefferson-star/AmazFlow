@@ -46,32 +46,38 @@ export function MarketingNav() {
   }, [open]);
 
   return (
-    <header className="site-nav">
-      <div className="wrap nav-inner">
-        <Logo />
+    <>
+      <header className="site-nav">
+        <div className="wrap nav-inner">
+          <Logo />
 
-        <nav className="nav-desktop" aria-label="Primary">
-          {NAV_LINKS.map((link) => <Link key={link.href} href={link.href}>{link.label}</Link>)}
-        </nav>
+          <nav className="nav-desktop" aria-label="Primary">
+            {NAV_LINKS.map((link) => <Link key={link.href} href={link.href}>{link.label}</Link>)}
+          </nav>
 
-        <div className="nav-actions">
-          <Link className="nav-signin" href="/login">Sign in</Link>
-          <Link className="button quiet nav-demo" href="/demo">Try the demo</Link>
-          <Link className="button nav-cta" href="/contact">Talk to sales</Link>
+          <div className="nav-actions">
+            <Link className="nav-signin" href="/login">Sign in</Link>
+            <Link className="button quiet nav-demo" href="/demo">Try the demo</Link>
+            <Link className="button nav-cta" href="/contact">Talk to sales</Link>
+          </div>
+
+          <button
+            type="button"
+            className="nav-toggle"
+            aria-expanded={open}
+            aria-controls="mobile-nav-panel"
+            aria-label={open ? "Close menu" : "Open menu"}
+            onClick={() => setOpen((value) => !value)}
+          >
+            <span className="nav-toggle-bars" aria-hidden="true"><i /><i /><i /></span>
+          </button>
         </div>
+      </header>
 
-        <button
-          type="button"
-          className="nav-toggle"
-          aria-expanded={open}
-          aria-controls="mobile-nav-panel"
-          aria-label={open ? "Close menu" : "Open menu"}
-          onClick={() => setOpen((value) => !value)}
-        >
-          <span className="nav-toggle-bars" aria-hidden="true"><i /><i /><i /></span>
-        </button>
-      </div>
-
+      {/* Rendered as siblings of <header>, not children -- .site-nav's backdrop-filter
+          creates a CSS containing block for position:fixed descendants, which clipped this
+          panel to the header's own ~140px height instead of the viewport when it lived
+          inside it. */}
       {open && <button type="button" className="nav-overlay" aria-hidden="true" tabIndex={-1} onClick={() => setOpen(false)} />}
 
       <div id="mobile-nav-panel" className={`nav-mobile-panel ${open ? "open" : ""}`}>
@@ -84,7 +90,7 @@ export function MarketingNav() {
           <Link className="button primary" href="/contact" onClick={() => setOpen(false)}>Talk to sales</Link>
         </div>
       </div>
-    </header>
+    </>
   );
 }
 
