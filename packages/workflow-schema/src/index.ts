@@ -35,6 +35,8 @@ export const workflowDefinitionSchema = z.object({
   status: z.enum(["draft", "active", "paused"]).default("draft"),
   dataClass: dataClassSchema.default("INTERNAL"),
   assignedRoles: z.array(roleSchema).default(["FRONTLINE", "CLIENT_ADMIN"]),
+  manualMinutesEstimate: z.number().positive().optional(),
+  customerSummary: z.string().optional(),
   startAt: z.string().min(1),
   steps: z.array(workflowStepSchema).min(1),
   allowedProviders: z.array(z.enum(["browser", "api", "spreadsheet", "email", "file", "mock"])).min(1)
@@ -75,6 +77,8 @@ export const sampleWorkflow: WorkflowDefinition = {
   status: "active",
   dataClass: "PII",
   assignedRoles: ["FRONTLINE", "CLIENT_ADMIN"],
+  manualMinutesEstimate: 20,
+  customerSummary: "Turns off a departing employee's access across your systems",
   startAt: "interpret",
   allowedProviders: ["browser", "mock"],
   steps: [
@@ -88,3 +92,5 @@ export const sampleWorkflow: WorkflowDefinition = {
     { id: "failed", name: "Verification failed", type: "end", outcome: "failed" }
   ]
 };
+
+export { sampleDataEntryWorkflow } from "./sample-data-entry";

@@ -95,6 +95,8 @@ export function WorkflowBuilder({ workflow, canEdit, onChange }: { workflow: Wor
         <StepTarget label="Start step" value={workflow.startAt} stepIds={stepIds} onChange={(value) => value && onChange({ ...workflow, startAt: value })} />
       </div>
       <label className="wf-field wf-full"><small>Description</small><input value={workflow.description ?? ""} disabled={!canEdit} onChange={(event) => onChange({ ...workflow, description: event.target.value })} /></label>
+      <label className="wf-field wf-full"><small>Customer-facing summary</small><input value={workflow.customerSummary ?? ""} disabled={!canEdit} placeholder="Plain-English sentence shown on the customer's workflow card" onChange={(event) => onChange({ ...workflow, customerSummary: event.target.value || undefined })} /></label>
+      <label className="wf-field"><small>Manual minutes estimate</small><input type="number" min={0} step={1} value={workflow.manualMinutesEstimate ?? ""} disabled={!canEdit} onChange={(event) => onChange({ ...workflow, manualMinutesEstimate: event.target.value ? Number(event.target.value) : undefined })} /></label>
 
       <div className="wf-steps">
         {workflow.steps.map((step, index) => (
