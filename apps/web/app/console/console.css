@@ -153,6 +153,33 @@
 
 .console-failed-icon { width: 44px; height: 44px; border-radius: 12px; background: var(--yellow); border: 1.5px solid var(--ink); display: grid; place-items: center; font-weight: 800; margin-bottom: 16px; }
 
+/* ---------- Recent run rows ---------- */
+.console-run-rows { display: grid; gap: 8px; }
+.console-run-row { display: flex; align-items: center; gap: 14px; width: 100%; text-align: left; background: var(--paper); border: 1.5px solid var(--line); border-radius: 16px; padding: 14px 16px; cursor: pointer; transition: border-color .15s, transform .15s; }
+.console-run-row:hover { border-color: var(--ink); transform: translateY(-1px); }
+.console-run-row:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.console-run-row-main { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.console-run-row-main b { font-size: 14px; }
+.console-run-row-main small { color: var(--muted); font-size: 12px; }
+.console-run-row-chevron { color: var(--muted); font-size: 20px; font-weight: 800; }
+
+/* ---------- Interpretation / confirmation ---------- */
+.console-interpretation-details { display: grid; gap: 10px; margin: 16px 0 0; padding-top: 16px; border-top: 1px solid var(--line); }
+.console-interpretation-details > div { display: flex; justify-content: space-between; gap: 16px; font-size: 14px; }
+.console-interpretation-details dt { color: var(--muted); margin: 0; }
+.console-interpretation-details dd { margin: 0; font-weight: 700; text-align: right; }
+
+/* ---------- Evidence timeline ---------- */
+.console-evidence-timeline { display: grid; gap: 14px; margin: 18px 0; }
+.console-evidence-row { display: flex; gap: 12px; align-items: flex-start; }
+.console-evidence-check { width: 24px; height: 24px; min-width: 24px; border-radius: 50%; display: grid; place-items: center; font-size: 13px; font-weight: 800; margin-top: 1px; }
+.console-evidence-check.ok { background: var(--mint); color: var(--ink); }
+.console-evidence-check.bad { background: var(--yellow); color: var(--ink); }
+.console-evidence-row b { display: block; font-size: 14px; }
+.console-evidence-row p { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+.console-evidence-facts { display: flex; gap: 16px; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.console-evidence-facts b { display: inline; color: var(--ink); }
+
 /* ---------- Team ---------- */
 .console-table { width: 100%; border-collapse: collapse; }
 .console-table th { text-align: left; font-size: 11px; letter-spacing: .04em; color: var(--muted); padding: 0 12px 10px; font-weight: 800; }

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AmazFlowRole, WorkflowDefinition, WorkflowRun } from "@amazflow/workflow-schema";
 import { LogoMark } from "../site-components";
-import { computeStats, workflowSummary } from "./copy";
+import { computeStats, requestExample, statusInfo, workflowSummary } from "./copy";
 
 type ConsoleWorkflow = WorkflowDefinition & { manualMinutesEstimate?: number; customerSummary?: string };
 
@@ -16,6 +16,8 @@ export function HomeScreen({
   onRetry,
   onStartRun,
   onOpenRun,
+  draftResume,
+  onDraftConsumed,
 }: {
   role: AmazFlowRole;
   workflows: ConsoleWorkflow[];
@@ -25,6 +27,8 @@ export function HomeScreen({
   onRetry: () => void;
   onStartRun: (workflow: ConsoleWorkflow, description: string) => Promise<void>;
   onOpenRun: (runId: string) => void;
+  draftResume?: { workflowId: string; text: string } | null;
+  onDraftConsumed?: () => void;
 }) {
   if (loading) {
     return (
@@ -112,32 +116,43 @@ export function HomeScreen({
       <h2 className="console-section-title">Workflows</h2>
       <div className="console-workflow-list">
         {workflows.map((workflow) => (
-          <WorkflowCard key={workflow.id} workflow={workflow} onStartRun={onStartRun} />
+          <WorkflowCard
+            key={workflow.id}
+            workflow={workflow}
+            onStartRun={onStartRun}
+            initialText={draftResume?.workflowId === workflow.id ? draftResume.text : undefined}
+            onDraftConsumed={onDraftConsumed}
+          />
         ))}
       </div>
 
-      {runs.length > 0 && (
-        <>
-          <h2 className="console-section-title" style={{ marginTop: 36 }}>
-            Recent runs
-          </h2>
-          <div className="console-workflow-list">
-            {runs.slice(0, 8).map((run) => {
-              const workflow = workflows.find((item) => item.id === run.workflowId);
-              return (
-                <button
-                  key={run.id}
-                  className="console-workflow-card"
-                  style={{ textAlign: "left", cursor: "pointer", border: "1.5px solid var(--line)" }}
-                  onClick={() => onOpenRun(run.id)}
-                >
-                  <h3>{workflow?.name ?? "Workflow run"}</h3>
-                  <p>Started {new Date(run.createdAt).toLocaleString()}</p>
-                </button>
-              );
-            })}
-          </div>
-        </>
+      <h2 className="console-section-title" style={{ marginTop: 36 }}>
+        Recent runs
+      </h2>
+      {runs.length === 0 ? (
+        <div className="console-empty" style={{ padding: "32px 20px" }}>
+          <h2 style={{ font: "800 20px var(--font-display)" }}>No runs yet</h2>
+          <p>Your completed and in-progress workflow runs will appear here.</p>
+        </div>
+      ) : (
+        <div className="console-run-rows">
+          {runs.slice(0, 8).map((run) => {
+            const workflow = workflows.find((item) => item.id === run.workflowId);
+            const status = statusInfo(run.status);
+            return (
+              <button key={run.id} className="console-run-row" onClick={() => onOpenRun(run.id)}>
+                <div className="console-run-row-main">
+                  <b>{workflow?.name ?? "Workflow run"}</b>
+                  <small>Started {new Date(run.createdAt).toLocaleString()}</small>
+                </div>
+                <span className={`console-status-badge ${status.tone}`}>{status.label}</span>
+                <span className="console-run-row-chevron" aria-hidden="true">
+                  ›
+                </span>
+              </button>
+            );
+          })}
+        </div>
       )}
     </div>
   );
@@ -146,24 +161,40 @@ export function HomeScreen({
 function WorkflowCard({
   workflow,
   onStartRun,
+  initialText,
+  onDraftConsumed,
 }: {
   workflow: ConsoleWorkflow;
   onStartRun: (workflow: ConsoleWorkflow, description: string) => Promise<void>;
+  initialText?: string;
+  onDraftConsumed?: () => void;
 }) {
   const [composing, setComposing] = useState(false);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    if (initialText === undefined) return;
+    setText(initialText);
+    setComposing(true);
+    setDirty(false);
+    onDraftConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialText]);
 
   const submit = async () => {
+    if (!text.trim()) return;
     setBusy(true);
     setError(null);
     try {
       await onStartRun(workflow, text);
       setComposing(false);
       setText("");
+      setDirty(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Couldn’t start this workflow. Try again.");
+      setError(err instanceof Error ? err.message : "Couldn’t review this request. Try again.");
     } finally {
       setBusy(false);
     }
@@ -190,17 +221,27 @@ function WorkflowCard({
           <textarea
             id={`run-${workflow.id}`}
             value={text}
-            onChange={(event) => setText(event.target.value)}
+            onChange={(event) => {
+              setText(event.target.value);
+              setDirty(true);
+            }}
             placeholder="Describe what you’d like AmazFlow to do…"
             autoFocus
           />
+          <small style={{ color: "var(--muted)" }}>
+            Example: “{requestExample(workflow)}”
+          </small>
+          {dirty && !text.trim() && (
+            <p style={{ color: "var(--ink)", fontSize: 13, fontWeight: 700 }}>Tell us what you need done before starting.</p>
+          )}
           {error && <p style={{ color: "var(--ink)", fontSize: 13 }}>{error}</p>}
+          <p style={{ color: "var(--muted)", fontSize: 12 }}>AmazFlow will show you what it understood before anything changes.</p>
           <div className="console-run-compose-actions">
             <button className="console-btn console-btn-quiet" onClick={() => setComposing(false)} disabled={busy}>
               Cancel
             </button>
             <button className="console-btn console-btn-primary" onClick={submit} disabled={busy || !text.trim()}>
-              {busy ? "Starting…" : "Start →"}
+              {busy ? "Reviewing…" : "Review request →"}
             </button>
           </div>
         </div>

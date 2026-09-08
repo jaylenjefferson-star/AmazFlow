@@ -29,6 +29,7 @@ export default function CustomerConsole() {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [teamLoading, setTeamLoading] = useState(true);
   const [teamError, setTeamError] = useState<string | null>(null);
+  const [draftResume, setDraftResume] = useState<{ workflowId: string; text: string } | null>(null);
 
   useEffect(() => {
     restoreSession()
@@ -61,12 +62,8 @@ export default function CustomerConsole() {
         authGet(currentSession, "/workflows"),
         authGet(currentSession, "/runs"),
       ]);
-      // Server-side scoping stops at tenant today -- GET /runs does not yet filter FRONTLINE
-      // down to their own runs. Filter client-side using the actor recorded on the run's first
-      // audit event until the deployed Lambda gets the same restriction.
-      const scopedRuns = currentSession.role === "FRONTLINE" ? runResponse.filter((run) => run.audit?.[0]?.details?.actor === currentSession.sub) : runResponse;
       setWorkflows(visibleWorkflows(workflowResponse, currentSession.role));
-      setRuns(scopedRuns.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
+      setRuns(runResponse.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
     } catch (err) {
       setDataError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -105,6 +102,39 @@ export default function CustomerConsole() {
     if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
     setRuns((current) => [body, ...current]);
     setView({ kind: "run", runId: body.id });
+  };
+
+  const postAction = async (path: string, body?: unknown) => {
+    if (!session) throw new Error("Sign in required");
+    const response = await fetch(`${API}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${session.idToken}` },
+      body: JSON.stringify(body ?? {}),
+    });
+    const responseBody = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(responseBody.error ?? `Request failed (${response.status})`);
+    setRuns((current) => current.map((item) => (item.id === responseBody.id ? responseBody : item)));
+    return responseBody as WorkflowRun;
+  };
+
+  const confirmRun = async (run: WorkflowRun) => {
+    if (!run.currentStepId) return;
+    await postAction(`/runs/${run.id}/confirmations/${run.currentStepId}/confirm`);
+  };
+
+  const cancelRun = async (run: WorkflowRun) => {
+    await postAction(`/runs/${run.id}/cancel`);
+  };
+
+  // "Let me fix this": the run already exists but no irreversible action has run yet (it's
+  // still AWAITING_CONFIRMATION) -- cancel it outright rather than leaving a stale confirmation
+  // that could later authorize a materially different, re-edited request, then hand the
+  // customer's original free text back to the composer so they can edit and resubmit fresh.
+  const fixRequest = async (run: WorkflowRun) => {
+    await cancelRun(run);
+    const originalText = typeof (run.context as { input?: { description?: unknown } } | undefined)?.input?.description === "string" ? (run.context as { input: { description: string } }).input.description : "";
+    setDraftResume({ workflowId: run.workflowId, text: originalText });
+    setView({ kind: "home" });
   };
 
   const decideApproval = async (run: WorkflowRun, approved: boolean) => {
@@ -244,6 +274,8 @@ export default function CustomerConsole() {
                 onRetry={() => loadData(session)}
                 onStartRun={startRun}
                 onOpenRun={(runId) => setView({ kind: "run", runId })}
+                draftResume={draftResume}
+                onDraftConsumed={() => setDraftResume(null)}
               />
             )}
             {view.kind === "run" && activeRun && activeWorkflow && (
@@ -251,8 +283,12 @@ export default function CustomerConsole() {
                 run={activeRun}
                 workflow={activeWorkflow}
                 role={session.role}
+                currentUserId={session.sub}
                 onApprove={() => decideApproval(activeRun, true)}
                 onSendBack={() => decideApproval(activeRun, false)}
+                onConfirm={() => confirmRun(activeRun)}
+                onFixRequest={() => fixRequest(activeRun)}
+                onCancelRun={() => cancelRun(activeRun)}
               />
             )}
             {view.kind === "team" && session.role === "CLIENT_ADMIN" && (

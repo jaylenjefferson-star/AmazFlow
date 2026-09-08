@@ -5,12 +5,19 @@ export type StatusTone = "progress" | "approval" | "done" | "attention";
 export function statusInfo(status: RunStatus): { label: string; tone: StatusTone } {
   switch (status) {
     case "RUNNING":
+      return { label: "Making the change", tone: "progress" };
     case "WAITING_AGENT":
-      return { label: "In progress", tone: "progress" };
+      return { label: "Waiting for the AmazFlow Agent", tone: "progress" };
+    case "AWAITING_CONFIRMATION":
+      return { label: "Waiting for your confirmation", tone: "approval" };
     case "WAITING_APPROVAL":
       return { label: "Waiting on your approval", tone: "approval" };
     case "COMPLETED":
       return { label: "Completed and verified", tone: "done" };
+    case "CANCELLED":
+      return { label: "Cancelled", tone: "attention" };
+    case "TIMED_OUT":
+      return { label: "Timed out", tone: "attention" };
     case "FAILED":
       return { label: "Needs a look", tone: "attention" };
     default:
@@ -101,6 +108,57 @@ export function verificationStatement(run: WorkflowRun, workflow: WorkflowDefini
 }
 
 export const HOW_WAS_THIS_CHECKED = "AmazFlow re-read the system after making the change and compared it to what was expected.";
+
+// Only the two seeded demo workflows exist today, so map examples by id with a generic
+// fallback -- avoids inventing per-workflow config that doesn't exist yet.
+export function requestExample(workflow: { id: string }): string {
+  if (workflow.id === "workflow-sample-ops") return "Disable access for Maria Lopez, who left the team on Friday.";
+  if (workflow.id === "workflow-sample-data-entry") return "Add invoice 10482 for $3,450 from Acme Supply to this month's invoice tracker.";
+  return "Describe what you'd like AmazFlow to do, in plain language.";
+}
+
+// Builds the "Here's what I'll do" interpretation card from real persisted run data --
+// context.input.description (the customer's own text) and whatever the workflow's leading
+// ai step extracted into context.values. Never fabricates fields that aren't actually there.
+export function interpretationSummary(run: WorkflowRun, workflow: WorkflowDefinition): { headline: string; details: { label: string; value: string }[] } {
+  const context = (run.context ?? {}) as Record<string, unknown>;
+  const input = context.input as Record<string, unknown> | undefined;
+  const requestText = typeof input?.description === "string" && input.description.trim() ? input.description.trim() : null;
+  const values = (context.values ?? {}) as Record<string, unknown>;
+  const decision = Object.values(values).find((value) => value && typeof value === "object" && "value" in (value as Record<string, unknown>)) as
+    | { value?: unknown; confidence?: number }
+    | undefined;
+  const subject = findSubjectName(context);
+  const action = typeof decision?.value === "string" ? humanizeValue(decision.value) : null;
+
+  const headline = action
+    ? `${action}${subject ? ` for ${subject}` : ""}, as part of ${workflow.name}.`
+    : `Run ${workflow.name}${requestText ? ", based on your request below" : ""}.`;
+
+  const details: { label: string; value: string }[] = [];
+  if (requestText) details.push({ label: "Your request", value: requestText });
+  if (subject) details.push({ label: "Who", value: subject });
+  if (action) details.push({ label: "Action", value: action });
+  if (typeof decision?.confidence === "number") details.push({ label: "Confidence", value: `${Math.round(decision.confidence * 100)}%` });
+  return { headline, details };
+}
+
+// Distinguishes real verified-vs-unverified outcomes rather than always saying "verified" --
+// only shows VERIFIED when a persisted verify-type stepResult actually passed.
+export function completionVerdict(run: WorkflowRun): { headline: string; tone: "verified" | "unavailable" | "failed" } {
+  const results = Object.values(run.stepResults ?? {});
+  const verifyResults = results.filter((result) => result.type === "verify");
+  if (verifyResults.length === 0) return { headline: "Completed, verification unavailable", tone: "unavailable" };
+  const allPassed = verifyResults.every((result) => result.verificationResult?.passed);
+  return allPassed ? { headline: "Completed and verified", tone: "verified" } : { headline: "Action completed, verification failed", tone: "failed" };
+}
+
+export function cancelSummary(run: WorkflowRun): string {
+  const completed = Object.values(run.stepResults ?? {}).filter((result) => result.status === "SUCCEEDED").length;
+  const cancelEvent = run.audit.find((event) => event.type === "RUN_CANCELLED");
+  if (cancelEvent?.message) return cancelEvent.message;
+  return completed > 0 ? `${completed} step${completed === 1 ? "" : "s"} completed before cancellation.` : "AmazFlow stopped before any step ran.";
+}
 
 export function workflowSummary(workflow: WorkflowDefinition & { customerSummary?: string }): string {
   if (workflow.customerSummary) return workflow.customerSummary;
