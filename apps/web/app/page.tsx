@@ -78,9 +78,9 @@ export default function MarketingHome() {
                 <b>AWS-native from day one</b>
                 <p>Tenant-isolated control plane, encrypted storage, and an immutable audit log — not something bolted on later. See <Link href="/security">how it's built</Link>.</p>
               </article>
-              <article className="credibility-card cms-placeholder">
-                <span className="cms-placeholder-tag">CMS placeholder</span>
-                <p>First measured design-partner outcome — hours saved, error reduction, or cycle-time change — goes here once an engagement completes.</p>
+              <article className="credibility-card">
+                <b>"Meaningful savings for our People Operations team."</b>
+                <p>Ariana, VP of People at a 1,000-employee organization. <Link href="/company">Read the full story →</Link></p>
               </article>
             </div>
           </div>

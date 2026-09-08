@@ -271,6 +271,12 @@
 .founder-spotlight p{color:var(--muted);line-height:1.7;font-size:15px;margin:0}
 .founder-avatar{width:44px;height:44px;border-radius:50%;object-fit:cover;border:1.5px solid var(--line);margin-bottom:12px;display:block}
 
+.testimonial-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:24px}
+.testimonial-card{background:var(--paper);border:1px solid var(--line);border-radius:20px;padding:28px}
+.testimonial-quote{font:600 16px/1.65 var(--font-body);margin:0 0 22px;color:var(--ink)}
+.testimonial-attribution b{display:block;font:800 14px var(--font-display)}
+.testimonial-attribution span{color:var(--muted);font-size:12px}
+
 /* ===== Pricing ===== */
 .price-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:24px}
 .price-card{background:#fff;border:1px solid var(--line);border-radius:22px;padding:28px;display:flex;flex-direction:column}
@@ -339,7 +345,7 @@
 @media(max-width:960px){
   .hero{grid-template-columns:1fr;min-height:auto}
   .control-grid,.security-banner .wrap,.contact-card{grid-template-columns:1fr}
-  .how-grid,.subpage-grid,.price-grid,.credibility-grid,.demo-stats,.demo-systems,.roi-grid{grid-template-columns:1fr 1fr}
+  .how-grid,.subpage-grid,.price-grid,.credibility-grid,.demo-stats,.demo-systems,.roi-grid,.testimonial-grid{grid-template-columns:1fr 1fr}
   .founder-spotlight{grid-template-columns:auto 1fr}
   .pilot{grid-template-columns:100px 1fr}
   .pilot-action{grid-column:2}
@@ -359,7 +365,7 @@
   .visual-result{grid-template-columns:repeat(3,1fr);gap:7px}
   .visual-result mark{grid-column:1/-1;text-align:center}
   .section{padding-block:64px}
-  .how-grid,.subpage-grid,.price-grid,.credibility-grid,.demo-stats,.demo-systems,.roi-grid,.control-grid{grid-template-columns:1fr}
+  .how-grid,.subpage-grid,.price-grid,.credibility-grid,.demo-stats,.demo-systems,.roi-grid,.control-grid,.testimonial-grid{grid-template-columns:1fr}
   .founder-spotlight{grid-template-columns:1fr}
   .expansion-row{flex-direction:column;align-items:flex-start}
   .pilot{grid-template-columns:1fr;padding-block:64px}

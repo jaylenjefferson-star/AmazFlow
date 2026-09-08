@@ -35,13 +35,20 @@ export default function CompanyPage() {
 
       <section className="subpage-section alt">
         <div className="wrap">
-          <div className="section-label">DESIGN-PARTNER EVIDENCE</div>
-          <h2>Proof, as it happens — not before.</h2>
-          <p className="copy-block">We'd rather show one real, measured engagement than describe a hypothetical one. This section fills in as design partners complete their first workflow.</p>
-          <div className="subpage-grid">
-            <article className="subpage-card cms-placeholder"><span className="cms-placeholder-tag">CMS placeholder</span><p>Design-partner name, workflow, and the measured before/after — added after the first engagement completes.</p></article>
-            <article className="subpage-card cms-placeholder"><span className="cms-placeholder-tag">CMS placeholder</span><p>A direct quote from an operations lead who ran the workflow, once we have one to publish.</p></article>
+          <div className="section-label">CUSTOMER FEEDBACK</div>
+          <h2>What operations leaders say.</h2>
+          <p className="copy-block">Direct feedback from two leaders running AmazFlow in their teams today. We're building toward a fully quantified case study next — for now, here's what they told us.</p>
+          <div className="testimonial-grid">
+            <article className="testimonial-card">
+              <p className="testimonial-quote">"AmazFlow has created meaningful savings for our People Operations team. We're spending far less time coordinating repetitive workflows and more time focused on higher-value initiatives, including employee experience and strategic people programs."</p>
+              <div className="testimonial-attribution"><b>Ariana</b><span>VP of People · 1,000-employee organization</span></div>
+            </article>
+            <article className="testimonial-card">
+              <p className="testimonial-quote">"Our CX teams are able to spend more time on the member experience and complex escalations instead of managing work through spreadsheets. We've seen meaningful labor savings, and the team has been able to move away from a lot of manual tracking and coordination."</p>
+              <div className="testimonial-attribution"><b>Tom</b><span>Senior Director of Customer Experience · E-commerce company</span></div>
+            </article>
           </div>
+          <p className="subpage-card cms-placeholder" style={{ marginTop: 16, maxWidth: 480 }}><span className="cms-placeholder-tag">CMS placeholder</span>A fully quantified before/after — hours saved, error reduction, or cycle-time change — added once we can publish exact figures with a named engagement.</p>
         </div>
       </section>
 
