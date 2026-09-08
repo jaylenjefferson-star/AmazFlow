@@ -96,6 +96,9 @@
 .console-empty h2 { font: 800 24px var(--font-display); margin: 0 0 10px; }
 .console-empty p { color: var(--muted); margin: 0; }
 
+.console-impact-empty { padding: 36px 24px; background: var(--paper); border: 1.5px dashed var(--line); border-radius: 20px; margin-bottom: 32px; }
+.console-impact-empty h2 { font-size: 20px; }
+
 .console-skeleton { display: grid; gap: 14px; }
 .console-skeleton-card { height: 92px; border-radius: 20px; background: var(--paper); border: 1.5px solid var(--line); position: relative; overflow: hidden; }
 .console-skeleton-card::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, #1d211d0d, transparent); animation: console-pulse 1.6s infinite; }
