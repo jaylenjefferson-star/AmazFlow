@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "AmazFlow Agent",
-  "version": "0.2.0",
-  "description": "Executes narrowly scoped AmazFlow operations tasks in authorized browser tabs.",
-  "permissions": ["activeTab", "storage", "alarms", "scripting", "permissions"],
-  "host_permissions": ["https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com/*"],
+  "version": "0.3.0",
+  "description": "Executes narrowly scoped AmazFlow operations tasks in authorized browser tabs, connected via AmazFlow's own sign-in -- no manual token copying.",
+  "permissions": ["activeTab", "storage", "alarms", "scripting", "permissions", "tabs"],
+  "host_permissions": ["https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com/*", "https://amazflow.com/*"],
   "optional_host_permissions": ["https://*/*", "http://*/*"],
   "background": { "service_worker": "service-worker.js", "type": "module" },
   "action": { "default_popup": "popup.html", "default_title": "AmazFlow Agent" }

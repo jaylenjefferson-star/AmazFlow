@@ -16,6 +16,7 @@ const json = (value: unknown) => JSON.stringify(value, null, 2);
 
 type Organization = { id: string; name: string; slug: string; status: string; plan: string; createdAt: string };
 type AgentTask = { id: string; runId: string; stepId: string; provider: string; operation: string; expiresAt: string; status: string };
+type Agent = { id: string; name: string; tenantId: string; status: string; allowedDomains: string[]; lastSeenAt: string | null; version: string | null; createdAt: string };
 
 export default function ProductConsole() {
   const [session, setSession] = useState<Session | null>();
@@ -45,6 +46,9 @@ export default function ProductConsole() {
   const [creatingOrg, setCreatingOrg] = useState(false);
   const [agentTasks, setAgentTasks] = useState<AgentTask[]>([]);
   const [tasksLoading, setTasksLoading] = useState(false);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [agentsLoading, setAgentsLoading] = useState(false);
+  const [revokingAgentId, setRevokingAgentId] = useState<string | null>(null);
   const role = session?.role ?? "FRONTLINE";
   const canConfigure = role === "SUPER_ADMIN";
 
@@ -179,6 +183,30 @@ export default function ProductConsole() {
     }
   };
 
+  const loadAgents = async () => {
+    setAgentsLoading(true);
+    try {
+      const items = (await request("/agents")) as Agent[];
+      setAgents(items);
+    } catch (error) {
+      setNotice(`Could not load agents: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      setAgentsLoading(false);
+    }
+  };
+
+  const revokeAgentById = async (agentId: string) => {
+    setRevokingAgentId(agentId);
+    try {
+      const updated = (await request(`/agents/${agentId}/revoke`, { method: "POST" })) as Agent;
+      setAgents((current) => current.map((item) => (item.id === agentId ? updated : item)));
+    } catch (error) {
+      setNotice(`Could not revoke agent: ${error instanceof Error ? error.message : error}`);
+    } finally {
+      setRevokingAgentId(null);
+    }
+  };
+
   const run = async () => {
     if (!selected) return;
     setBusy(true);
@@ -204,11 +232,11 @@ export default function ProductConsole() {
         if (role !== "SUPER_ADMIN") return <button className={index === 1 ? "active" : ""} key={name}>{name}<em>{name === "Approvals" ? runs.filter((run) => run.status === "WAITING_APPROVAL").length : ""}</em></button>;
         const clickable = name === "Workflow studio" || name === "Clients" || name === "Agents";
         const isActive = (name === "Workflow studio" && view === "workflows") || (name === "Clients" && view === "clients") || (name === "Agents" && view === "agents");
-        return <button key={name} className={isActive ? "active" : ""} disabled={!clickable} onClick={clickable ? () => { if (name === "Clients") { setView("clients"); if (organizations.length === 0) loadOrganizations(); } else if (name === "Agents") { setView("agents"); loadAgentTasks(); } else { setView("workflows"); } } : undefined}>{name}{!clickable && <em>Soon</em>}</button>;
+        return <button key={name} className={isActive ? "active" : ""} disabled={!clickable} onClick={clickable ? () => { if (name === "Clients") { setView("clients"); if (organizations.length === 0) loadOrganizations(); } else if (name === "Agents") { setView("agents"); loadAgentTasks(); loadAgents(); } else { setView("workflows"); } } : undefined}>{name}{!clickable && <em>Soon</em>}</button>;
       })}</nav><div className="product-boundary"><b>Development boundary</b><span>Synthetic data only</span><small>Persistent AWS workspace</small></div></aside>
     <section className="product-shell">
       <header className="product-header"><div><p className="product-eyebrow">WORKFLOW FABRIC</p><h1>{canConfigure ? <>Configure the work.<br /></> : <>Run the work.<br /></>}<i>AmazFlow executes it.</i></h1></div><div className="product-identity"><a className="back-to-site" href="/">← Marketing site</a><div className="identity-card"><span>{session.email.slice(0, 1).toUpperCase()}</span><div><b>{session.email}</b><small>{roleLabel(role)} · {session.tenantId}</small></div><button onClick={signOut}>Sign out</button></div><div className="product-status"><span /> {notice}</div></div></header>
-      {view === "clients" ? <div className="product-workspace product-clientsview"><section className="product-panel product-clients"><div className="product-panelhead"><div><p className="product-eyebrow">CUSTOMER ORGANIZATIONS</p><h2>Clients</h2></div></div><div className="product-neworg"><input value={newOrgName} onChange={(event) => setNewOrgName(event.target.value)} placeholder="Organization name (e.g. Acme Corp)" onKeyDown={(event) => { if (event.key === "Enter") createOrganization(); }} /><button disabled={creatingOrg || !newOrgName.trim()} onClick={createOrganization}>{creatingOrg ? "Creating…" : "Create organization →"}</button></div>{orgsLoading ? <p className="product-empty">Loading organizations…</p> : organizations.length === 0 ? <p className="product-empty">No organizations yet. Create your first customer above.</p> : organizations.map((org) => <div className="product-orgrow" key={org.id}><span className="product-glyph">◇</span><div><b>{org.name}</b><small>{org.slug} · {org.plan}</small></div><mark>{org.status}</mark></div>)}</section></div> : view === "agents" ? <div className="product-workspace product-clientsview"><section className="product-panel product-clients"><div className="product-panelhead"><div><p className="product-eyebrow">BROWSER AUTOMATION</p><h2>AmazFlow Agent</h2></div><a className="product-download" href="/downloads/amazflow-agent.zip" download>Download for Chrome →</a></div><div className="product-addhint">Workflow steps with the <b>browser</b> provider pause a run and wait for this agent to act. Setup: 1) unzip the download, 2) open <code>chrome://extensions</code>, enable Developer mode, click &quot;Load unpacked&quot;, and select the unzipped folder, 3) open the extension popup, sign in to AmazFlow in a normal tab, copy the <code>idToken</code> from DevTools → Application → Local Storage → <code>amazflow_session</code>, and paste it into the popup, 4) open the tab where the action should run and click &quot;Enable on this site&quot;.</div><div className="product-panelhead" style={{ marginTop: 18 }}><div><p className="product-eyebrow">PENDING AGENT TASKS</p><h2>Waiting on a browser step</h2></div><button disabled={tasksLoading} onClick={loadAgentTasks}>Refresh</button></div>{tasksLoading ? <p className="product-empty">Loading tasks…</p> : agentTasks.length === 0 ? <p className="product-empty">No runs are currently waiting on the browser agent.</p> : agentTasks.map((task) => <div className="product-runrow" key={task.id}><span className="product-dot" /><div><b>{task.operation}</b><small>run {task.runId} · step {task.stepId} · expires {new Date(task.expiresAt).toLocaleTimeString()}</small></div><mark>{task.status}</mark></div>)}</section></div> : <>
+      {view === "clients" ? <div className="product-workspace product-clientsview"><section className="product-panel product-clients"><div className="product-panelhead"><div><p className="product-eyebrow">CUSTOMER ORGANIZATIONS</p><h2>Clients</h2></div></div><div className="product-neworg"><input value={newOrgName} onChange={(event) => setNewOrgName(event.target.value)} placeholder="Organization name (e.g. Acme Corp)" onKeyDown={(event) => { if (event.key === "Enter") createOrganization(); }} /><button disabled={creatingOrg || !newOrgName.trim()} onClick={createOrganization}>{creatingOrg ? "Creating…" : "Create organization →"}</button></div>{orgsLoading ? <p className="product-empty">Loading organizations…</p> : organizations.length === 0 ? <p className="product-empty">No organizations yet. Create your first customer above.</p> : organizations.map((org) => <div className="product-orgrow" key={org.id}><span className="product-glyph">◇</span><div><b>{org.name}</b><small>{org.slug} · {org.plan}</small></div><mark>{org.status}</mark></div>)}</section></div> : view === "agents" ? <div className="product-workspace product-clientsview"><section className="product-panel product-clients"><div className="product-panelhead"><div><p className="product-eyebrow">BROWSER AUTOMATION</p><h2>AmazFlow Agent</h2></div><a className="product-download" href="/downloads/amazflow-agent.zip" download>Download for Chrome →</a></div><div className="product-addhint">Workflow steps with the <b>browser</b> provider pause a run and wait for this agent to act. Setup: 1) unzip the download, 2) open <code>chrome://extensions</code>, enable Developer mode, click &quot;Load unpacked&quot;, and select the unzipped folder, 3) click the extension icon and choose &quot;Connect to AmazFlow →&quot; — it opens a normal AmazFlow tab where you sign in and authorize the agent, no token copying, 4) open the tab where the action should run and click &quot;Enable on this site&quot;.</div><div className="product-panelhead" style={{ marginTop: 18 }}><div><p className="product-eyebrow">CONNECTED AGENTS</p><h2>Authorized browsers</h2></div><button disabled={agentsLoading} onClick={loadAgents}>Refresh</button></div>{agentsLoading ? <p className="product-empty">Loading agents…</p> : agents.length === 0 ? <p className="product-empty">No agents connected yet.</p> : agents.map((agentItem) => <div className="product-orgrow" key={agentItem.id}><span className="product-glyph">◈</span><div><b>{agentItem.name}</b><small>{agentItem.status === "revoked" ? "Revoked" : agentItem.lastSeenAt ? `Last seen ${new Date(agentItem.lastSeenAt).toLocaleString()}` : "Never connected"}{agentItem.version ? ` · v${agentItem.version}` : ""}</small></div>{agentItem.status === "revoked" ? <mark>revoked</mark> : <button disabled={revokingAgentId === agentItem.id} onClick={() => revokeAgentById(agentItem.id)}>{revokingAgentId === agentItem.id ? "Revoking…" : "Revoke"}</button>}</div>)}<div className="product-panelhead" style={{ marginTop: 18 }}><div><p className="product-eyebrow">PENDING AGENT TASKS</p><h2>Waiting on a browser step</h2></div><button disabled={tasksLoading} onClick={loadAgentTasks}>Refresh</button></div>{tasksLoading ? <p className="product-empty">Loading tasks…</p> : agentTasks.length === 0 ? <p className="product-empty">No runs are currently waiting on the browser agent.</p> : agentTasks.map((task) => <div className="product-runrow" key={task.id}><span className="product-dot" /><div><b>{task.operation}</b><small>run {task.runId} · step {task.stepId} · expires {new Date(task.expiresAt).toLocaleTimeString()}</small></div><mark>{task.status}</mark></div>)}</section></div> : <>
       <div className="product-stats"><Metric n={stats.active} t="Active workflows" /><Metric n={stats.running} t="Waiting / running" /><Metric n={stats.completed} t="Completed" /><Metric n={stats.exceptions} t="Failed / exceptions" /></div>
       <div className="product-workspace"><section className="product-panel product-library"><div className="product-panelhead"><div><p className="product-eyebrow">WORKFLOW LIBRARY</p><h2>Business processes</h2></div><div style={{ display: "flex", gap: 6 }}><button className="product-plus" title="Generate from SOP" onClick={() => setSopOpen((v) => !v)}>✎</button><button className="product-plus" onClick={() => { const fresh = { ...sampleWorkflow, id: `workflow-${Date.now()}`, name: "Untitled operations workflow", version: 1, status: "draft" as const }; setSelected(fresh); setDraft(json(fresh)); }}>＋</button></div></div>
           {sopOpen && <div className="product-sopgen"><small>Describe the SOP in plain English. AmazFlow drafts a workflow you can review and edit below before saving.</small><textarea value={sopText} onChange={(event) => setSopText(event.target.value)} placeholder="e.g. When a new vendor invoice arrives by email, read the vendor, amount, and due date, flag anything over $5,000 for manager approval, then record it in the AP spreadsheet and confirm it was recorded." rows={4} /><div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><button onClick={() => setSopOpen(false)} disabled={generating}>Cancel</button><button disabled={generating || !sopText.trim()} onClick={generateFromSop}>{generating ? "Designing…" : "Generate draft →"}</button></div></div>}

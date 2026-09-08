@@ -1,4 +1,5 @@
 const DEFAULT_API = "https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com";
+const CONNECT_URL = "https://amazflow.com/agent-authorize/";
 
 function el<T extends HTMLElement>(id: string) { return document.getElementById(id) as T; }
 
@@ -9,10 +10,16 @@ async function currentTabOrigin(): Promise<string | null> {
 }
 
 async function refreshStatus() {
-  const { apiBase, token } = await chrome.storage.local.get(["apiBase", "token"]);
-  el<HTMLInputElement>("apiBase").value = (apiBase as string) || DEFAULT_API;
-  el<HTMLInputElement>("token").value = (token as string) || "";
-  el<HTMLElement>("tokenStatus").textContent = token ? "Token saved" : "No token saved yet";
+  const { agentToken, agentName, tenantId } = await chrome.storage.local.get(["agentToken", "agentName", "tenantId"]);
+  const connected = Boolean(agentToken);
+
+  el<HTMLElement>("disconnectedView").style.display = connected ? "none" : "block";
+  el<HTMLElement>("connectedView").style.display = connected ? "block" : "none";
+
+  if (!connected) return;
+
+  el<HTMLElement>("agentNameLabel").textContent = (agentName as string) || "Browser Agent";
+  el<HTMLElement>("agentTenantLabel").textContent = `Connected · ${tenantId || "unknown org"}`;
 
   const origin = await currentTabOrigin();
   const siteStatus = el<HTMLElement>("siteStatus");
@@ -28,10 +35,16 @@ async function refreshStatus() {
   siteButton.textContent = granted ? "Enabled" : `Enable on ${origin}`;
 }
 
-el<HTMLButtonElement>("save").addEventListener("click", async () => {
-  const apiBase = el<HTMLInputElement>("apiBase").value.trim() || DEFAULT_API;
-  const token = el<HTMLInputElement>("token").value.trim();
-  await chrome.storage.local.set({ apiBase, token });
+el<HTMLButtonElement>("connect").addEventListener("click", async () => {
+  const { apiBase } = await chrome.storage.local.get(["apiBase"]);
+  if (!apiBase) await chrome.storage.local.set({ apiBase: DEFAULT_API });
+  const tab = await chrome.tabs.create({ url: CONNECT_URL });
+  if (tab.id) await chrome.storage.local.set({ pendingConnectTabId: tab.id });
+  window.close();
+});
+
+el<HTMLButtonElement>("disconnect").addEventListener("click", async () => {
+  await chrome.storage.local.remove(["agentToken", "agentId", "agentName", "tenantId"]);
   await refreshStatus();
 });
 
