@@ -9,14 +9,11 @@ import {
 } from "@amazflow/workflow-schema";
 import { LogoMark } from "../site-components";
 import { WorkflowBuilder } from "./workflow-builder";
+import { API, type Session, clearSession, resolveSession, revokeRefreshToken } from "../lib/cognito-auth";
 import "./product.css";
 
-const API = "https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com";
-const COGNITO_DOMAIN = "https://amazflow-dev-398681517793.auth.us-east-1.amazoncognito.com";
-const COGNITO_CLIENT_ID = "4cjp4kpmmofnr9gmd3h90i4i2i";
 const json = (value: unknown) => JSON.stringify(value, null, 2);
 
-type Session = { idToken: string; email: string; role: AmazFlowRole; tenantId: string; expiresAt: number };
 type Organization = { id: string; name: string; slug: string; status: string; plan: string; createdAt: string };
 type AgentTask = { id: string; runId: string; stepId: string; provider: string; operation: string; expiresAt: string; status: string };
 
@@ -72,10 +69,20 @@ export default function ProductConsole() {
   };
 
   useEffect(() => {
-    restoreSession().then((restored) => {
+    const hadStoredSession = Boolean(localStorage.getItem("amazflow_session"));
+    resolveSession().then((restored) => {
+      if (!restored) {
+        const reason = hadStoredSession ? "&reason=expired" : "";
+        window.location.assign(`/login?next=${encodeURIComponent("/app/")}${reason}`);
+        return;
+      }
+      if (restored.role !== "SUPER_ADMIN") {
+        window.location.assign("/console/");
+        return;
+      }
       setSession(restored);
-      if (restored) refresh(restored).catch((error) => setNotice(error.message));
-    }).catch((error) => { setSession(null); setNotice(error.message); });
+      refresh(restored).catch((error) => setNotice(error.message));
+    });
   }, []);
 
   const stats = useMemo(() => ({
@@ -164,14 +171,13 @@ export default function ProductConsole() {
   };
 
   const signOut = () => {
-    localStorage.removeItem("amazflow_session");
+    revokeRefreshToken(session?.refreshToken);
+    clearSession();
     setSession(null);
-    const target = encodeURIComponent(`${window.location.origin}/app/`);
-    window.location.assign(`${COGNITO_DOMAIN}/logout?client_id=${COGNITO_CLIENT_ID}&logout_uri=${target}`);
+    window.location.assign("/signed-out");
   };
 
-  if (session === undefined) return <main className="product-login"><div className="login-card"><div className="product-brand"><span><LogoMark /></span>AmazFlow</div><div className="login-loader" /><h1>Opening your workspace…</h1><p>Connecting securely to AmazFlow on AWS.</p></div></main>;
-  if (!session) return <main className="product-login"><div className="login-card"><a className="product-brand" href="/"><span><LogoMark /></span>AmazFlow</a><p className="product-eyebrow">FOUNDER WORKSPACE</p><h1>Build the work.<br /><i>Run it for real.</i></h1><p>Sign in to create configurable workflows, run bounded AI steps through Amazon Bedrock, and keep execution history in your AWS workspace.</p><button className="login-button" onClick={beginLogin}>Sign in to AmazFlow <span>→</span></button><small>Authorized accounts only · Synthetic development data</small></div></main>;
+  if (!session) return <main className="product-login"><div className="login-card"><div className="product-brand"><span><LogoMark /></span>AmazFlow</div><div className="login-loader" /><h1>Opening your workspace…</h1><p>Connecting securely to AmazFlow.</p></div></main>;
 
   return <main className="product-app">
     <aside className="product-sidebar"><a className="product-brand" href="/"><span><LogoMark /></span>AmazFlow</a><p className="product-eyebrow">OPERATIONS CONTROL</p><nav>{navFor(role).map((name, index) => {
@@ -193,47 +199,6 @@ export default function ProductConsole() {
     </section>
   </main>;
 }
-
-async function beginLogin() {
-  const bytes = crypto.getRandomValues(new Uint8Array(48));
-  const verifier = base64Url(bytes);
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
-  const challenge = base64Url(new Uint8Array(digest));
-  sessionStorage.setItem("amazflow_pkce", verifier);
-  const params = new URLSearchParams({ client_id: COGNITO_CLIENT_ID, response_type: "code", scope: "openid email profile", redirect_uri: `${window.location.origin}/app/`, code_challenge_method: "S256", code_challenge: challenge });
-  window.location.assign(`${COGNITO_DOMAIN}/oauth2/authorize?${params}`);
-}
-
-async function restoreSession(): Promise<Session | null> {
-  const code = new URLSearchParams(window.location.search).get("code");
-  if (code) {
-    const verifier = sessionStorage.getItem("amazflow_pkce");
-    if (!verifier) throw new Error("Sign-in session expired. Please try again.");
-    const response = await fetch(`${COGNITO_DOMAIN}/oauth2/token`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "authorization_code", client_id: COGNITO_CLIENT_ID, code, redirect_uri: `${window.location.origin}/app/`, code_verifier: verifier }) });
-    const tokens = await response.json();
-    if (!response.ok || !tokens.id_token) throw new Error(tokens.error_description ?? "Unable to complete sign in");
-    const next = sessionFromToken(tokens.id_token);
-    localStorage.setItem("amazflow_session", JSON.stringify(next));
-    sessionStorage.removeItem("amazflow_pkce");
-    window.history.replaceState({}, "", "/app/");
-    return next;
-  }
-  const stored = localStorage.getItem("amazflow_session");
-  if (!stored) return null;
-  const parsed = JSON.parse(stored) as Session;
-  if (parsed.expiresAt < Date.now()) { localStorage.removeItem("amazflow_session"); return null; }
-  return parsed;
-}
-
-function sessionFromToken(idToken: string): Session {
-  const claims = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(idToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")), (character) => character.charCodeAt(0))));
-  const groups = (claims["cognito:groups"] ?? []) as string[];
-  const role = (["SUPER_ADMIN", "CLIENT_ADMIN", "FRONTLINE"] as AmazFlowRole[]).find((candidate) => groups.includes(candidate));
-  if (!role) throw new Error("This account does not have an AmazFlow access role.");
-  return { idToken, email: claims.email, role, tenantId: claims["custom:tenant_id"] ?? "amazflow", expiresAt: Number(claims.exp) * 1000 };
-}
-
-function base64Url(bytes: Uint8Array) { return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
 function Metric({ n, t }: { n: number; t: string }) { return <div><strong>{n}</strong><span>{t}</span></div>; }
 function icon(type: string) { return ({ ai: "✦", action: "↗", condition: "◇", approval: "✓", verify: "◎", end: "●" } as Record<string, string>)[type] ?? "·"; }
 function roleLabel(role: AmazFlowRole) { return role === "FRONTLINE" ? "Frontline user" : role === "CLIENT_ADMIN" ? "Client operations admin" : "AmazFlow super admin"; }

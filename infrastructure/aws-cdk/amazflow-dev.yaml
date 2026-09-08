@@ -68,7 +68,13 @@ Resources:
       UserPoolId: !Ref UserPool
       GenerateSecret: false
       PreventUserExistenceErrors: ENABLED
-      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      # ALLOW_USER_PASSWORD_AUTH lets the branded /login page authenticate directly against
+      # Cognito's InitiateAuth API (password sent over TLS) instead of redirecting through the
+      # Cognito Hosted UI -- the tradeoff for never showing AWS/Cognito branding, and for not
+      # needing an SRP client-side crypto library. Not a downgrade from the (still enabled) SRP
+      # flow's own security level in any way that matters over TLS; it's simply a different,
+      # equally AWS-supported flow.
+      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_USER_PASSWORD_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
       AllowedOAuthFlowsUserPoolClient: true
       AllowedOAuthFlows: [code]
       AllowedOAuthScopes: [openid, email, profile]

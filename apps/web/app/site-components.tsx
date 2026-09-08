@@ -55,7 +55,7 @@ export function MarketingNav() {
         </nav>
 
         <div className="nav-actions">
-          <Link className="nav-signin" href="/console">Sign in</Link>
+          <Link className="nav-signin" href="/login">Sign in</Link>
           <Link className="button quiet nav-demo" href="/demo">Try the demo</Link>
           <Link className="button nav-cta" href="/contact">Talk to sales</Link>
         </div>
@@ -79,7 +79,7 @@ export function MarketingNav() {
           {NAV_LINKS.map((link) => <Link key={link.href} href={link.href} onClick={() => setOpen(false)}>{link.label}</Link>)}
         </nav>
         <div className="nav-mobile-actions">
-          <Link className="button quiet" href="/console" onClick={() => setOpen(false)}>Sign in</Link>
+          <Link className="button quiet" href="/login" onClick={() => setOpen(false)}>Sign in</Link>
           <Link className="button quiet" href="/demo" onClick={() => setOpen(false)}>Try the interactive demo</Link>
           <Link className="button primary" href="/contact" onClick={() => setOpen(false)}>Talk to sales</Link>
         </div>
@@ -103,7 +103,7 @@ export function MarketingFooter() {
           <Link href="/solutions">Solutions</Link>
           <Link href="/pricing">Pricing</Link>
           <Link href="/demo">Try the interactive demo</Link>
-          <Link href="/console">Sign in</Link>
+          <Link href="/login">Sign in</Link>
         </div>
         <div>
           <b>Trust</b>
