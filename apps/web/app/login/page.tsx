@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { LogoMark, WorkflowVisual } from "../site-components";
 import type { AmazFlowRole } from "@amazflow/workflow-schema";
-import { AuthError, completeNewPassword, loadSession, loginPathFor, saveSession, signIn } from "../lib/cognito-auth";
+import { API, AuthError, completeNewPassword, loadSession, loginPathFor, saveSession, signIn } from "../lib/cognito-auth";
 import "../auth.css";
+
+type OrgBranding = { displayName?: string; logoUrl?: string; accent?: string; loginMessage?: string };
 
 function redirectAfterSignIn(role: AmazFlowRole, next: string | null) {
   const target = next && (next.startsWith("/app") || next.startsWith("/console")) ? next : loginPathFor(role);
@@ -22,11 +24,19 @@ export default function LoginPage() {
   const [newPassword, setNewPassword] = useState("");
   const [expiredNotice, setExpiredNotice] = useState(false);
   const [nextPath, setNextPath] = useState<string | null>(null);
+  const [branding, setBranding] = useState<OrgBranding | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setExpiredNotice(params.get("reason") === "expired");
     setNextPath(params.get("next"));
+    const org = params.get("org");
+    if (org) {
+      fetch(`${API}/organizations/${encodeURIComponent(org)}/branding`)
+        .then((response) => (response.ok ? response.json() : null))
+        .then((body) => body?.branding && setBranding(body.branding))
+        .catch(() => undefined);
+    }
     const existing = loadSession();
     if (existing) {
       redirectAfterSignIn(existing.role, params.get("next"));
@@ -77,7 +87,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="auth-shell">
+    <div className="auth-shell" style={branding?.accent ? ({ "--auth-accent": branding.accent } as CSSProperties) : undefined}>
       <div className="auth-left">
         <a className="auth-brand" href="/">
           <span>
@@ -85,12 +95,18 @@ export default function LoginPage() {
           </span>
           AmazFlow
         </a>
+        {branding?.displayName && (
+          <div className="auth-org-badge">
+            {branding.logoUrl && <img src={branding.logoUrl} alt="" width={20} height={20} />}
+            <span>{branding.displayName}</span>
+          </div>
+        )}
         <h1>
           Everything running.
           <br />
           <mark>Nothing hidden.</mark>
         </h1>
-        <p>Sign in to manage workflows, review approvals, and see exactly what AmazFlow completed.</p>
+        <p>{branding?.loginMessage || "Sign in to manage workflows, review approvals, and see exactly what AmazFlow completed."}</p>
         <WorkflowVisual />
       </div>
 

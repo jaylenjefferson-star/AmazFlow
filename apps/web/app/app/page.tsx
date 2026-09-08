@@ -9,6 +9,7 @@ import {
 } from "@amazflow/workflow-schema";
 import { LogoMark } from "../site-components";
 import { WorkflowBuilder } from "./workflow-builder";
+import { CopilotPanel } from "./copilot";
 import { API, type Session, clearSession, resolveSession, revokeRefreshToken } from "../lib/cognito-auth";
 import "./product.css";
 
@@ -245,6 +246,7 @@ export default function ProductConsole() {
       <div className="product-workspace product-lower"><section className="product-panel product-runbox"><div className="product-panelhead"><div><p className="product-eyebrow">LIVE AWS EXECUTION</p><h2>Run with synthetic input</h2></div><button className="product-run" disabled={busy} onClick={run}>{busy ? "Running…" : "Run workflow →"}</button></div><textarea value={input} onChange={(event) => setInput(event.target.value)} spellCheck={false} /><small className="aws-note">✦ AI steps run through Amazon Bedrock Nova Lite in us-east-1.</small></section><section className="product-panel product-activity"><div className="product-panelhead"><div><p className="product-eyebrow">PERSISTED RUNS</p><h2>Execution & audit</h2></div><button disabled={busy} onClick={() => refresh().catch((error) => setNotice(error.message))}>Refresh</button></div>{runs.length === 0 ? <p className="product-empty">No AWS runs yet. Save the starter workflow, then execute it.</p> : runs.slice(0, 5).map((runItem) => <div className="product-runrow" key={runItem.id}><span className={`product-dot ${runItem.status}`} /><div><b>{runItem.id}</b><small>{runItem.audit.at(-1)?.message} · {runItem.audit.length} audit events</small></div><mark>{runItem.status.replaceAll("_", " ")}</mark></div>)}</section></div>
       </>}
     </section>
+    {canConfigure && <CopilotPanel request={request} />}
   </main>;
 }
 function Metric({ n, t }: { n: number; t: string }) { return <div><strong>{n}</strong><span>{t}</span></div>; }
