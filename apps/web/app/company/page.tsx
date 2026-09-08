@@ -21,15 +21,14 @@ export default function CompanyPage() {
 
       <section className="subpage-section">
         <div className="wrap">
-          <div className="section-label">TEAM</div>
+          <div className="section-label">FOUNDER</div>
           <h2>Who's building this.</h2>
-          <div className="team-grid">
-            <article className="team-card cms-placeholder">
-              <span className="cms-placeholder-tag">CMS placeholder</span>
-              <div className="team-avatar" aria-hidden="true" />
-              <b>[Founder name]</b>
-              <p>[Background and relevant operating experience — operations, automation, or the industry AmazFlow serves first.]</p>
-            </article>
+          <div className="founder-spotlight">
+            <img className="founder-photo" src="/team/jay-jefferson.jpg" alt="Jay Jefferson, founder of AmazFlow" width={140} height={140} />
+            <div>
+              <b>Jay Jefferson</b>
+              <p>Jay founded AmazFlow after years running healthcare operations from the inside — most recently at Virta Health and Oracle. He watched capable teams get consumed by the work between systems: re-entering the same data across five tools, chasing approvals by hand, closing out queues at the end of every day just to keep operations moving. That firsthand view of the waste is why AmazFlow exists.</p>
+            </div>
           </div>
         </div>
       </section>

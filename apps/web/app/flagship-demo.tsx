@@ -61,18 +61,18 @@ export function FlagshipDemo() {
   const replay = () => { setStepIndex(0); setOutcome("pending"); };
 
   return (
-    <div className="demo" aria-label="Interactive AmazFlow workflow demo: employee offboarding">
+    <div className="demo" aria-label="Interactive AmazFlow workflow demo: employee offboarding" aria-live="polite">
       <div className="demo-head">
         <div>
           <p className="demo-badge">INTERACTIVE DEMO · SYNTHETIC DATA · NO ACCOUNT NEEDED</p>
           <h3>{stopped ? "Sent back for review" : STAGES[stepIndex].label}</h3>
         </div>
-        <p className="demo-step-count" aria-hidden="true">Step {stepIndex + 1} of {STAGES.length}</p>
+        <p className="demo-step-count">Step {stepIndex + 1} of {STAGES.length}</p>
       </div>
 
       <div className="demo-progress" aria-hidden="true"><span style={{ width: `${stopped ? 100 : progressPct}%` }} /></div>
 
-      <div className="demo-body" aria-live="polite">
+      <div className="demo-body">
         {stopped ? (
           <div className="demo-outcome">
             <p>AmazFlow made <b>no changes to any system</b>. The request stays open until it's re-reviewed — nothing was disabled, revoked, or deactivated.</p>

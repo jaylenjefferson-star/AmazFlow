@@ -66,8 +66,9 @@ export default function MarketingHome() {
             <h2>Early. Honest.<br /><i>Measured, not marketed.</i></h2>
             <div className="credibility-grid">
               <article className="credibility-card">
-                <b>Founder-led</b>
-                <p className="cms-placeholder"><span className="cms-placeholder-tag">CMS placeholder</span>Founder name, background, and relevant operating experience go here.</p>
+                <img className="founder-avatar" src="/team/jay-jefferson.jpg" alt="Jay Jefferson, founder of AmazFlow" width={44} height={44} />
+                <b>Founded by an operator</b>
+                <p>Jay Jefferson spent his career inside healthcare operations at Virta Health and Oracle, and built AmazFlow after seeing the busywork firsthand. <Link href="/company">More about Jay →</Link></p>
               </article>
               <article className="credibility-card">
                 <b>Design-partner stage</b>
@@ -136,7 +137,7 @@ export default function MarketingHome() {
         </section>
 
         <section className="pilot section wrap">
-          <div className="pilot-stamp" aria-hidden="true">30<br /><small>DAY</small></div>
+          <div className="pilot-stamp">30<br /><small>DAY</small></div>
           <div>
             <div className="section-label">DESIGN PARTNER PROGRAM</div>
             <h2>Start with the workflow<br />your team <i>hates most.</i></h2>

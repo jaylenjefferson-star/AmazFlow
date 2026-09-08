@@ -19,7 +19,7 @@ The frontend talks directly to the deployed Lambda control plane (see below), no
 
 `services/api` is a separate, **never-deployed** local reimplementation of the workflow engine, used only to exercise `packages/engine` in isolation (`pnpm dev:engine-sandbox`, http://localhost:4000). It is not connected to AWS and is not what customers use.
 
-The public experience includes the homepage plus Product, Solutions, Security, Pricing, Company, Contact, Privacy, Terms, and Subprocessors pages. The authenticated product console is intentionally separated at `/app`. Cognito enforces three product access levels: Frontline User, Client Operations Admin, and AmazFlow Super Admin.
+The public experience includes the homepage plus Product, Solutions, Security, Pricing, Company, Contact, an ungated interactive demo at `/demo`, and Privacy, Terms, and Subprocessors pages. `/console` is customer sign-in (Frontline User and Client Operations Admin). The authenticated operator/builder workspace is intentionally separated at `/app` (AmazFlow Super Admin) and is never linked from the marketing site or sold as a demo. Cognito enforces three product access levels: Frontline User, Client Operations Admin, and AmazFlow Super Admin.
 
 The development workspace persists workflow definitions and execution history in DynamoDB. Workflow AI steps run through Amazon Bedrock Nova Lite. The active boundary remains synthetic-only: do not enter PHI, customer production data, or real credentials.
 
