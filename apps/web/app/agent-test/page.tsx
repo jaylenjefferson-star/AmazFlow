@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 // Internal QA harness only -- not a marketing page, not linked from nav. Gives the browser
 // agent a real DOM to act on (matching the [data-amazflow] selectors the sample workflow and
 // content.ts expect) so the full browser-control loop, including the target-identity check, can
-// be exercised end to end against something real instead of asserted from code alone.
+// be exercised end to end against something real instead of asserted from code alone. The extra
+// checkbox/scroll-target/delayed-note elements below exist purely so a manually-authored test
+// workflow has something real to point CHECK/SCROLL_TO/WAIT_FOR at.
 const EMPLOYEES = [
   { id: "E-10042", name: "Sarah Chen" },
   { id: "E-20099", name: "Alex Kim" },
@@ -13,11 +15,17 @@ const EMPLOYEES = [
 
 export default function AgentTestHarness() {
   const [selected, setSelected] = useState(EMPLOYEES[0].id);
+  const [noteVisible, setNoteVisible] = useState(false);
   // Deliberately uncontrolled: the whole point is that the extension's own script (not React)
   // sets this field's value directly, the same way it would on a real third-party page AmazFlow
   // doesn't own. A controlled input would just fight that write back to whatever React thinks
   // the value should be.
   const statusKey = `status-${selected}`;
+
+  useEffect(() => {
+    const timer = setTimeout(() => setNoteVisible(true), 2000);
+    return () => clearTimeout(timer);
+  }, []);
 
   return (
     <main style={{ maxWidth: 480, margin: "60px auto", padding: 24, fontFamily: "system-ui" }}>
@@ -46,11 +54,29 @@ export default function AgentTestHarness() {
           <b>Access status:</b>{" "}
           <input key={statusKey} data-amazflow="employee-status" defaultValue="ENABLED" style={{ fontWeight: 800, border: "1px solid #ccc", padding: "4px 8px" }} />
         </div>
+        <div style={{ marginTop: 12 }}>
+          <label>
+            <input type="checkbox" data-amazflow="employee-reviewed" /> Reviewed by operator
+          </label>
+        </div>
       </div>
       <p style={{ marginTop: 20, fontSize: 12, color: "#888" }}>
         Switch the employee above, then run a workflow addressed to a different employee id to see the
         agent&apos;s target-identity check refuse to act rather than silently editing the wrong record.
       </p>
+
+      <div style={{ marginTop: 260 }} data-amazflow="scroll-target">
+        <p style={{ fontSize: 11, letterSpacing: ".08em", color: "#888", textTransform: "uppercase" }}>Scroll target</p>
+        <p>A SCROLL_TO step should bring this box into view.</p>
+      </div>
+
+      <div style={{ marginTop: 24 }}>
+        {noteVisible ? (
+          <p data-amazflow="audit-note" style={{ color: "#2a7a3f" }}>Audit note appended two seconds after page load.</p>
+        ) : (
+          <p style={{ color: "#888" }}>Audit note appears ~2s after load -- a WAIT_FOR step should wait for it rather than failing immediately.</p>
+        )}
+      </div>
     </main>
   );
 }
