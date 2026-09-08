@@ -15,6 +15,7 @@ Resources:
     Properties:
       BillingMode: PAY_PER_REQUEST
       PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true }
+      TimeToLiveSpecification: { AttributeName: ttl, Enabled: true }
       AttributeDefinitions:
         - { AttributeName: pk, AttributeType: S }
         - { AttributeName: sk, AttributeType: S }
@@ -100,7 +101,7 @@ Resources:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:Query, dynamodb:Scan, dynamodb:UpdateItem]
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:Query, dynamodb:Scan, dynamodb:UpdateItem, dynamodb:TransactWriteItems]
                 Resource: !GetAtt ControlPlaneTable.Arn
               - Effect: Allow
                 Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
@@ -138,7 +139,7 @@ Resources:
           BEDROCK_MODEL_ID: !Ref BedrockModelId
       Code:
         ZipFile: |
-          const {DynamoDBClient,ScanCommand,QueryCommand,PutItemCommand}=require('@aws-sdk/client-dynamodb');
+          const {DynamoDBClient,ScanCommand,QueryCommand,PutItemCommand,GetItemCommand,TransactWriteItemsCommand}=require('@aws-sdk/client-dynamodb');
           const {BedrockRuntimeClient,ConverseCommand}=require('@aws-sdk/client-bedrock-runtime');
           const {SESv2Client,SendEmailCommand}=require('@aws-sdk/client-sesv2');
           const {CognitoIdentityProviderClient,ListUsersCommand,ListUsersInGroupCommand,AdminEnableUserCommand,AdminDisableUserCommand}=require('@aws-sdk/client-cognito-identity-provider');
@@ -229,12 +230,52 @@ Resources:
             return item&&item.document?.S?parse(item):null;
           };
           const saveOrganization=async(org)=>db.send(new PutItemCommand({TableName:table,Item:{pk:{S:'PLATFORM'},sk:{S:`ORG#${org.slug}`},document:{S:JSON.stringify(org)},updatedAt:{S:now()}}}));
-          const advance=async(workflow,run)=>{
+          // Every run mutation is committed together with the new audit rows it produced in one
+          // TransactWriteItems call, so a partial failure never leaves the run's status out of
+          // sync with its own evidence trail. auditStartIdx is the length run.audit had the last
+          // time it was durably saved (or 0 for a brand-new run) -- callers capture this right
+          // after loading the run, before pushing any new entries, and pass it through advance().
+          const saveRunWithAudit=async(run,auditStartIdx)=>{
+            const newEntries=run.audit.slice(auditStartIdx||0);
+            const items=[{Put:{TableName:table,Item:{pk:{S:`TENANT#${run.tenantId}`},sk:{S:`RUN#${run.id}`},tenantId:{S:run.tenantId},document:{S:JSON.stringify(run)},updatedAt:{S:now()}}}}];
+            newEntries.slice(0,90).forEach((entry,i)=>{
+              const seq=String((auditStartIdx||0)+i).padStart(6,'0');
+              items.push({Put:{TableName:table,Item:{pk:{S:`TENANT#${run.tenantId}`},sk:{S:`AUDIT#${run.id}#${seq}`},tenantId:{S:run.tenantId},document:{S:JSON.stringify({...entry,runId:run.id})},updatedAt:{S:now()}}}});
+            });
+            await db.send(new TransactWriteItemsCommand({TransactItems:items}));
+          };
+          // Runs snapshot the workflow version they started with (workflowVersion) so that a
+          // resumed run (after an approval, agent result, or confirmation) keeps executing the
+          // exact version it began on, even if a SUPER_ADMIN has since edited and republished the
+          // workflow. Falls back to the current WORKFLOW# doc for runs created before version
+          // history existed.
+          const getWorkflowVersion=async(tenantId,workflowId,version)=>{
+            if(version){
+              const paddedV=String(version).padStart(6,'0');
+              const out=await db.send(new GetItemCommand({TableName:table,Key:{pk:{S:`TENANT#${tenantId}`},sk:{S:`WORKFLOWVERSION#${workflowId}_v${paddedV}`}}}));
+              if(out.Item&&out.Item.document?.S) return parse(out.Item);
+            }
+            const out=await db.send(new GetItemCommand({TableName:table,Key:{pk:{S:`TENANT#${tenantId}`},sk:{S:`WORKFLOW#${workflowId}`}}}));
+            return out.Item&&out.Item.document?.S?parse(out.Item):null;
+          };
+          const ALLOWED_AGENT_OPS=new Set(['READ_TEXT','CLICK','TYPE','SELECT','VERIFY_TEXT','SET_EMPLOYEE_STATUS']);
+          const advance=async(workflow,run,auditStartIdx)=>{
             const audit=(type,message,stepId,details)=>run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type,message,stepId,details});
             let next=run.currentStepId;
             for(let guard=0;guard<30&&next;guard++){
               const step=workflow.steps.find(s=>s.id===next);
               if(!step) throw new Error(`Missing step ${next}`);
+              // Action steps default to NOT requiring a separate confirmation gate, so existing
+              // workflows keep behaving exactly as before -- a workflow author opts a specific
+              // action step into the gate with requiresConfirmation:true.
+              if(step.type==='action'&&step.requiresConfirmation===true&&!(run.confirmedStepIds||[]).includes(step.id)){
+                run.status='AWAITING_CONFIRMATION'; run.currentStepId=step.id;
+                const confirmation={id:`conf_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,tenantId:run.tenantId,kind:'ACTION_GATE',runId:run.id,stepId:step.id,summary:{provider:step.provider,operation:step.operation,name:step.name},status:'PENDING',createdAt:now(),expiresAt:new Date(Date.now()+3600000).toISOString()};
+                await save('CONFIRMATION',confirmation);
+                run.pendingConfirmationId=confirmation.id;
+                audit('CONFIRMATION_REQUIRED',`Confirm before: ${step.name}`,step.id,{confirmationId:confirmation.id});
+                break;
+              }
               audit('STEP_STARTED',step.name,step.id);
               if(step.type==='ai'){
                 const out=await ai(step,{input:run.context.input,...run.context.values});
@@ -249,9 +290,11 @@ Resources:
                 audit('APPROVAL_REQUIRED',step.message,step.id,{roles:step.roles});
                 break;
               } else if(step.type==='action'){
+                run.stepResults=run.stepResults||{};
                 if(step.provider==='mock'){
                   const result={ok:true,provider:step.provider,operation:step.operation,simulated:true,status:step.input?.status||'COMPLETED'};
                   run.context.lastAction={result};
+                  run.stepResults[step.id]={stepId:step.id,type:'action',provider:step.provider,operation:step.operation,status:'SUCCEEDED',resolvedAt:now(),actionResult:{ok:true,body:result}};
                   audit('ACTION_COMPLETED',`${step.provider} action completed`,step.id,result);
                   next=step.next;
                 } else if(step.provider==='api'){
@@ -270,8 +313,13 @@ Resources:
                     apiResult={ok:false,status:0,error:err.message};
                   }
                   run.context.lastAction={result:apiResult};
-                  audit('ACTION_COMPLETED','api action completed',step.id,{status:apiResult.status,ok:apiResult.ok});
-                  next=step.next;
+                  run.stepResults[step.id]={stepId:step.id,type:'action',provider:step.provider,operation:step.operation,status:apiResult.ok?'SUCCEEDED':'FAILED',resolvedAt:now(),actionResult:apiResult};
+                  audit(apiResult.ok?'ACTION_COMPLETED':'ACTION_FAILED',`api action ${apiResult.ok?'completed':'failed'}`,step.id,{status:apiResult.status,ok:apiResult.ok});
+                  // A failed action no longer silently advances to step.next -- it routes to the
+                  // step's own onFailure step if one is configured, or ends the run FAILED.
+                  if(apiResult.ok){ next=step.next; }
+                  else if(step.onFailure){ next=step.onFailure; }
+                  else { run.status='FAILED'; audit('FAILED','Action failed with no failure route configured',step.id); next=undefined; }
                 } else {
                   const task={id:`task_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,runId:run.id,tenantId:run.tenantId,stepId:step.id,provider:step.provider,operation:step.operation,input:step.input||{},expiresAt:new Date(Date.now()+5*60000).toISOString(),status:'PENDING'};
                   await save('TASK',task);
@@ -281,6 +329,8 @@ Resources:
                 }
               } else if(step.type==='verify'){
                 const passed=test(valueAt(run.context,step.path),step.operator,step.value);
+                run.stepResults=run.stepResults||{};
+                run.stepResults[step.id]={stepId:step.id,type:'verify',status:passed?'SUCCEEDED':'FAILED',resolvedAt:now(),verificationResult:{passed,expected:step.value,actual:valueAt(run.context,step.path)}};
                 audit(passed?'VERIFIED':'VERIFICATION_FAILED',passed?'Expected state verified':'Expected state not verified',step.id,{expected:step.value,actual:valueAt(run.context,step.path)});
                 next=passed?step.next:step.onFailure;
               } else if(step.type==='end'){
@@ -290,12 +340,12 @@ Resources:
               }
               run.currentStepId=next; run.updatedAt=now();
             }
-            await save('RUN',run);
+            await saveRunWithAudit(run,auditStartIdx);
             return run;
           };
           const runWorkflow=async(workflow,input,a)=>{
-            const run={id:`run_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,tenantId:workflow.tenantId,workflowId:workflow.id,workflowVersion:workflow.version||1,status:'RUNNING',currentStepId:workflow.startAt,context:{input,values:{},lastAction:null},audit:[{id:'aud_1',at:now(),type:'RUN_STARTED',message:'Workflow execution started',details:{actor:a.userId,role:a.role}}],createdAt:now(),updatedAt:now()};
-            return advance(workflow,run);
+            const run={id:`run_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,tenantId:workflow.tenantId,workflowId:workflow.id,workflowVersion:workflow.version||1,status:'RUNNING',currentStepId:workflow.startAt,createdBy:a.userId,confirmedStepIds:[],stepResults:{},context:{input,values:{},lastAction:null},audit:[{id:'aud_1',at:now(),type:'RUN_STARTED',message:'Workflow execution started',details:{actor:a.userId,role:a.role}}],createdAt:now(),updatedAt:now()};
+            return advance(workflow,run,0);
           };
           const resumeAgentTask=async(taskId,result,a)=>{
             const allTasks=await scanType('TASK#',{role:'SUPER_ADMIN'});
@@ -303,19 +353,26 @@ Resources:
             if(!task) throw {status:404,message:'Task not found'};
             if(a.role!=='SUPER_ADMIN'&&task.tenantId!==a.tenantId) throw {status:403,message:'Task belongs to another tenant'};
             if(task.status!=='PENDING') throw {status:409,message:'Task already resolved'};
+            if(new Date(task.expiresAt).getTime()<Date.now()) throw {status:409,message:'This task expired -- AmazFlow timed the run out already'};
+            if(!result||typeof result.ok!=='boolean') throw {status:400,message:'Result must include an "ok" boolean'};
+            if(!ALLOWED_AGENT_OPS.has(task.operation)) throw {status:400,message:'Operation is not in the allowed agent operation set'};
             const allRuns=await scanType('RUN#',{role:'SUPER_ADMIN'});
             const run=allRuns.find(r=>r.id===task.runId);
             if(!run||run.status!=='WAITING_AGENT'||run.currentStepId!==task.stepId) throw {status:409,message:'Run is not waiting for this task'};
-            const allWorkflows=await scanType('WORKFLOW#',{role:'SUPER_ADMIN'});
-            const workflow=allWorkflows.find(w=>w.id===run.workflowId);
+            const workflow=await getWorkflowVersion(run.tenantId,run.workflowId,run.workflowVersion);
             if(!workflow) throw {status:400,message:'Workflow not found for run'};
             task.status='COMPLETED';
             await save('TASK',task);
+            const auditStartIdx=run.audit.length;
             run.context.lastAction={result};
-            run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type:'AGENT_RESULT',stepId:task.stepId,message:`Agent completed ${task.stepId}`,details:result});
+            run.stepResults=run.stepResults||{};
+            run.stepResults[task.stepId]={stepId:task.stepId,type:'action',provider:task.provider,operation:task.operation,status:result.ok?'SUCCEEDED':'FAILED',resolvedAt:now(),actionResult:result};
+            run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type:result.ok?'AGENT_RESULT':'AGENT_RESULT_FAILED',stepId:task.stepId,message:`Agent ${result.ok?'completed':'reported failure for'} ${task.stepId}`,details:result});
             const step=workflow.steps.find(s=>s.id===task.stepId);
-            run.status='RUNNING'; run.currentStepId=step.next;
-            return advance(workflow,run);
+            if(result.ok){ run.status='RUNNING'; run.currentStepId=step.next; }
+            else if(step.onFailure){ run.status='RUNNING'; run.currentStepId=step.onFailure; }
+            else { run.status='FAILED'; run.currentStepId=undefined; run.updatedAt=now(); await saveRunWithAudit(run,auditStartIdx); return run; }
+            return advance(workflow,run,auditStartIdx);
           };
           const resumeApproval=async(runId,stepId,approved,a)=>{
             const allRuns=await scanType('RUN#',{role:'SUPER_ADMIN'});
@@ -323,14 +380,76 @@ Resources:
             if(!run) throw {status:404,message:'Run not found'};
             if(a.role!=='SUPER_ADMIN'&&run.tenantId!==a.tenantId) throw {status:403,message:'Run belongs to another tenant'};
             if(run.status!=='WAITING_APPROVAL'||run.currentStepId!==stepId) throw {status:409,message:'Run is not waiting for this approval'};
-            const allWorkflows=await scanType('WORKFLOW#',{role:'SUPER_ADMIN'});
-            const workflow=allWorkflows.find(w=>w.id===run.workflowId);
+            const workflow=await getWorkflowVersion(run.tenantId,run.workflowId,run.workflowVersion);
             if(!workflow) throw {status:400,message:'Workflow not found for run'};
             const step=workflow.steps.find(s=>s.id===stepId);
             if(!step||step.type!=='approval') throw {status:400,message:'Step is not an approval step'};
+            if(a.role!=='SUPER_ADMIN'&&!(step.roles||[]).includes(a.role)) throw {status:403,message:'Your role is not authorized to decide this approval'};
+            const auditStartIdx=run.audit.length;
             run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type:approved?'APPROVED':'REJECTED',stepId,message:approved?'Approval granted':'Approval rejected',details:{by:a.userId,role:a.role}});
             run.status='RUNNING'; run.currentStepId=approved?step.next:step.onReject;
-            return advance(workflow,run);
+            return advance(workflow,run,auditStartIdx);
+          };
+          const confirmActionGate=async(runId,stepId,a)=>{
+            const allRuns=await scanType('RUN#',{role:'SUPER_ADMIN'});
+            const run=allRuns.find(r=>r.id===runId);
+            if(!run) throw {status:404,message:'Run not found'};
+            if(a.role!=='SUPER_ADMIN'&&run.tenantId!==a.tenantId) throw {status:403,message:'Run belongs to another tenant'};
+            if(run.status!=='AWAITING_CONFIRMATION'||run.currentStepId!==stepId) throw {status:409,message:'Run is not waiting for this confirmation'};
+            if(a.role==='FRONTLINE') throw {status:403,message:'Only tenant admins confirm protected actions'};
+            const workflow=await getWorkflowVersion(run.tenantId,run.workflowId,run.workflowVersion);
+            if(!workflow) throw {status:400,message:'Workflow not found for run'};
+            const auditStartIdx=run.audit.length;
+            run.confirmedStepIds=[...(run.confirmedStepIds||[]),stepId];
+            run.status='RUNNING';
+            run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type:'CONFIRMATION_GRANTED',stepId,message:`Confirmed by ${a.userId}`,details:{by:a.userId,role:a.role}});
+            return advance(workflow,run,auditStartIdx);
+          };
+          const cancelRun=async(runId,a)=>{
+            const allRuns=await scanType('RUN#',{role:'SUPER_ADMIN'});
+            const run=allRuns.find(r=>r.id===runId);
+            if(!run) throw {status:404,message:'Run not found'};
+            if(a.role!=='SUPER_ADMIN'&&run.tenantId!==a.tenantId) throw {status:403,message:'Run belongs to another tenant'};
+            if(a.role==='FRONTLINE'&&run.createdBy!==a.userId) throw {status:403,message:'You can only cancel your own runs'};
+            const cancellable=['RUNNING','WAITING_APPROVAL','WAITING_AGENT','AWAITING_CONFIRMATION'];
+            if(!cancellable.includes(run.status)) throw {status:409,message:'This run can no longer be cancelled'};
+            const completedSteps=Object.keys(run.stepResults||{}).length;
+            const auditStartIdx=run.audit.length;
+            run.status='CANCELLED';
+            run.currentStepId=undefined;
+            run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type:'RUN_CANCEL_REQUESTED',message:'Cancellation requested',details:{by:a.userId,role:a.role}});
+            run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type:'RUN_CANCELLED',message:`Cancelled. ${completedSteps} step(s) completed before cancellation.`,details:{completedSteps}});
+            run.updatedAt=now();
+            await saveRunWithAudit(run,auditStartIdx);
+            return run;
+          };
+          // Runs once a minute via an EventBridge schedule (see sweep branch in the handler).
+          // No cron/scheduled invocation existed before this -- WAITING_AGENT/AWAITING_CONFIRMATION
+          // runs could sit stuck indefinitely with an already-expired task, since expiresAt was
+          // previously only ever checked client-side by the Chrome extension.
+          const sweepExpired=async()=>{
+            const [tasks,confirmations]=await Promise.all([scanType('TASK#',{role:'SUPER_ADMIN'}),scanType('CONFIRMATION#',{role:'SUPER_ADMIN'})]);
+            const nowMs=Date.now();
+            const expiredTasks=tasks.filter(t=>t.status==='PENDING'&&t.expiresAt&&new Date(t.expiresAt).getTime()<nowMs);
+            const expiredConfirmations=confirmations.filter(c=>c.status==='PENDING'&&c.expiresAt&&new Date(c.expiresAt).getTime()<nowMs);
+            const runIdsToTimeout=new Set([...expiredTasks.map(t=>t.runId),...expiredConfirmations.map(c=>c.runId).filter(Boolean)]);
+            for(const task of expiredTasks){ task.status='EXPIRED'; await save('TASK',task); }
+            for(const confirmation of expiredConfirmations){ confirmation.status='EXPIRED'; await save('CONFIRMATION',confirmation); }
+            let timedOutRuns=0;
+            if(runIdsToTimeout.size){
+              const allRuns=await scanType('RUN#',{role:'SUPER_ADMIN'});
+              for(const run of allRuns){
+                if(!runIdsToTimeout.has(run.id)) continue;
+                if(run.status!=='WAITING_AGENT'&&run.status!=='AWAITING_CONFIRMATION') continue;
+                const auditStartIdx=run.audit.length;
+                run.status='TIMED_OUT';
+                run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type:'RUN_TIMED_OUT',message:'AmazFlow could not reach the execution agent in time. No additional actions were taken.',details:{}});
+                run.updatedAt=now();
+                await saveRunWithAudit(run,auditStartIdx);
+                timedOutRuns++;
+              }
+            }
+            return {expiredTasks:expiredTasks.length,expiredConfirmations:expiredConfirmations.length,timedOutRuns};
           };
           const BLENDED_HOURLY_RATE=35; // Placeholder blended rate until per-tenant rates exist.
           const listTenantUsers=async(tenantId)=>{
@@ -369,7 +488,7 @@ Resources:
             }
             return {totalRunsCompleted,totalMinutesSaved:Math.round(totalMinutesSaved),dollarEstimate:Math.round((totalMinutesSaved/60)*BLENDED_HOURLY_RATE)};
           };
-          exports.handler=async e=>{try{const route=e.routeKey||'';if(route==='GET /health')return reply(200,{ok:true,service:'amazflow-control-plane',boundary:process.env.DATA_BOUNDARY,aiRuntime:'amazon-bedrock'});if(route==='POST /leads'){const b=JSON.parse(e.body||'{}');const clean=v=>String(v==null?'':v).slice(0,2000).trim();const email=clean(b.email);const name=clean(b.name);if(clean(b.website))return reply(201,{ok:true});if(!name||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return reply(400,{error:'A name and a valid work email are required'});const lead={id:`lead_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,tenantId:'amazflow',name,email,company:clean(b.company),role:clean(b.role),workflow:clean(b.workflow),volume:clean(b.volume),message:clean(b.message),source:clean(b.source)||'website',status:'new',createdAt:now()};await save('LEAD',lead);try{const text=['New AmazFlow lead','','Name: '+lead.name,'Email: '+lead.email,'Company: '+lead.company,'Role: '+lead.role,'Workflow to automate: '+lead.workflow,'Monthly volume: '+lead.volume,'Notes: '+lead.message,'','Source: '+lead.source,'Received: '+lead.createdAt,'Lead ID: '+lead.id].join('\n');await ses.send(new SendEmailCommand({FromEmailAddress:process.env.LEAD_FROM,Destination:{ToAddresses:[process.env.LEAD_TO]},ReplyToAddresses:[lead.email],Content:{Simple:{Subject:{Data:'New lead: '+lead.name+(lead.company?' - '+lead.company:'')},Body:{Text:{Data:text}}}}}));}catch(mailErr){console.error('lead email failed',mailErr.message);}return reply(201,{ok:true,id:lead.id});}const a=auth(e);if(!a.role)return reply(403,{error:'Role required'});if(route==='GET /me')return reply(200,a);if(route==='GET /workflows'){const items=await scanType('WORKFLOW#',a);return reply(200,items.sort((x,y)=>String(y.version).localeCompare(String(x.version))));}if(route==='POST /workflows'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins configure workflows'});const body=JSON.parse(e.body||'{}');const shapeError=validateWorkflowShape(body);if(shapeError)return reply(400,{error:shapeError});body.updatedAt=now();await save('WORKFLOW',body);return reply(201,body);}if(route==='GET /organizations'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow administrators view organizations'});const orgs=await listOrganizations();return reply(200,orgs.sort((x,y)=>String(x.createdAt).localeCompare(String(y.createdAt))));}if(route==='POST /organizations'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow administrators create organizations'});const body=JSON.parse(e.body||'{}');const name=String(body.name||'').trim();if(!name)return reply(400,{error:'A name is required'});const slug=slugify(body.slug||name);if(!slug)return reply(400,{error:'Could not derive a usable slug from that name'});if(await getOrganization(slug))return reply(409,{error:`An organization with slug "${slug}" already exists`});const org={id:`org_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,name,slug,status:'active',plan:body.plan||'design_partner',createdAt:now(),updatedAt:now()};await saveOrganization(org);return reply(201,org);}if(route==='POST /workflows/generate'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins generate workflows'});const body=JSON.parse(e.body||'{}');if(!body.sop||typeof body.sop!=='string')return reply(400,{error:'A sop description is required'});try{const draft=await generateWorkflowFromSop(body.sop,body.tenantId||a.tenantId||'amazflow');return reply(200,draft);}catch(err){return reply(422,{error:err.message||'Could not generate a workflow from that description'});}}if(route==='GET /leads'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins view leads'});const items=await scanType('LEAD#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='GET /runs'){const items=await scanType('RUN#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='POST /workflows/{id}/runs'){const id=e.pathParameters?.id;const workflows=await scanType('WORKFLOW#',a);const workflow=workflows.find(w=>w.id===id);if(!workflow)return reply(404,{error:'Workflow not found'});const body=JSON.parse(e.body||'{}');return reply(201,await runWorkflow(workflow,body,a));}if(route==='GET /agent-tasks'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins view agent tasks'});const items=await scanType('TASK#',a);return reply(200,items.filter(t=>t.status==='PENDING'));}if(route==='POST /agent-tasks/{id}/result'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins resolve agent tasks'});try{const body=JSON.parse(e.body||'{}');const run=await resumeAgentTask(e.pathParameters?.id,body,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /runs/{id}/approvals/{stepId}'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins decide approvals'});try{const body=JSON.parse(e.body||'{}');const run=await resumeApproval(e.pathParameters?.id,e.pathParameters?.stepId,!!body.approved,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /ai/execute'){const body=JSON.parse(e.body||'{}');const allowedOps=['classify','extract','transform','summarize','choose'];if(!allowedOps.includes(body.operation)||typeof body.prompt!=='string')return reply(400,{error:'Invalid bounded AI request'});const out=await ai(body,body.context||{});return reply(200,{model:process.env.BEDROCK_MODEL_ID,provider:'amazon-bedrock',...out});}if(route==='GET /tenants/{tenantId}/summary'){const tenantId=e.pathParameters?.tenantId;if(a.role!=='SUPER_ADMIN'&&tenantId!==a.tenantId)return reply(403,{error:'You can only view your own tenant'});return reply(200,await tenantSummary(tenantId));}if(route==='GET /tenants/{tenantId}/users'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins view team members'});const tenantId=e.pathParameters?.tenantId;if(a.role!=='SUPER_ADMIN'&&tenantId!==a.tenantId)return reply(403,{error:'You can only view your own tenant'});return reply(200,await listTenantUsers(tenantId));}if(route==='POST /tenants/{tenantId}/users/{username}/status'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins manage team members'});const tenantId=e.pathParameters?.tenantId;if(a.role!=='SUPER_ADMIN'&&tenantId!==a.tenantId)return reply(403,{error:'You can only manage your own tenant'});const username=e.pathParameters?.username;const users=await listTenantUsers(tenantId);if(!users.find(u=>u.username===username))return reply(404,{error:'User not found in this tenant'});const body=JSON.parse(e.body||'{}');const Command=body.enabled?AdminEnableUserCommand:AdminDisableUserCommand;await cognito.send(new Command({UserPoolId:process.env.USER_POOL_ID,Username:username}));return reply(200,{username,enabled:!!body.enabled});}return reply(404,{error:'Route not found'});}catch(err){console.error(err);return reply(500,{error:err.message||'Control plane error'});}};
+          exports.handler=async e=>{try{if(e.source==='amazflow.sweep'){const result=await sweepExpired();return {ok:true,...result};}const route=e.routeKey||'';if(route==='GET /health')return reply(200,{ok:true,service:'amazflow-control-plane',boundary:process.env.DATA_BOUNDARY,aiRuntime:'amazon-bedrock'});if(route==='POST /leads'){const b=JSON.parse(e.body||'{}');const clean=v=>String(v==null?'':v).slice(0,2000).trim();const email=clean(b.email);const name=clean(b.name);if(clean(b.website))return reply(201,{ok:true});if(!name||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return reply(400,{error:'A name and a valid work email are required'});const lead={id:`lead_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,tenantId:'amazflow',name,email,company:clean(b.company),role:clean(b.role),workflow:clean(b.workflow),volume:clean(b.volume),message:clean(b.message),source:clean(b.source)||'website',status:'new',createdAt:now()};await save('LEAD',lead);try{const text=['New AmazFlow lead','','Name: '+lead.name,'Email: '+lead.email,'Company: '+lead.company,'Role: '+lead.role,'Workflow to automate: '+lead.workflow,'Monthly volume: '+lead.volume,'Notes: '+lead.message,'','Source: '+lead.source,'Received: '+lead.createdAt,'Lead ID: '+lead.id].join('\n');await ses.send(new SendEmailCommand({FromEmailAddress:process.env.LEAD_FROM,Destination:{ToAddresses:[process.env.LEAD_TO]},ReplyToAddresses:[lead.email],Content:{Simple:{Subject:{Data:'New lead: '+lead.name+(lead.company?' - '+lead.company:'')},Body:{Text:{Data:text}}}}}));}catch(mailErr){console.error('lead email failed',mailErr.message);}return reply(201,{ok:true,id:lead.id});}const a=auth(e);if(!a.role)return reply(403,{error:'Role required'});if(route==='GET /me')return reply(200,a);if(route==='GET /workflows'){const items=await scanType('WORKFLOW#',a);return reply(200,items.sort((x,y)=>String(y.version).localeCompare(String(x.version))));}if(route==='POST /workflows'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins configure workflows'});const body=JSON.parse(e.body||'{}');const shapeError=validateWorkflowShape(body);if(shapeError)return reply(400,{error:shapeError});body.updatedAt=now();await save('WORKFLOW',body);if(body.version){const paddedV=String(body.version).padStart(6,'0');await save('WORKFLOWVERSION',{...body,id:`${body.id}_v${paddedV}`});}return reply(201,body);}if(route==='GET /organizations'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow administrators view organizations'});const orgs=await listOrganizations();return reply(200,orgs.sort((x,y)=>String(x.createdAt).localeCompare(String(y.createdAt))));}if(route==='POST /organizations'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow administrators create organizations'});const body=JSON.parse(e.body||'{}');const name=String(body.name||'').trim();if(!name)return reply(400,{error:'A name is required'});const slug=slugify(body.slug||name);if(!slug)return reply(400,{error:'Could not derive a usable slug from that name'});if(await getOrganization(slug))return reply(409,{error:`An organization with slug "${slug}" already exists`});const org={id:`org_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,name,slug,status:'active',plan:body.plan||'design_partner',createdAt:now(),updatedAt:now()};await saveOrganization(org);return reply(201,org);}if(route==='POST /workflows/generate'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins generate workflows'});const body=JSON.parse(e.body||'{}');if(!body.sop||typeof body.sop!=='string')return reply(400,{error:'A sop description is required'});try{const draft=await generateWorkflowFromSop(body.sop,body.tenantId||a.tenantId||'amazflow');return reply(200,draft);}catch(err){return reply(422,{error:err.message||'Could not generate a workflow from that description'});}}if(route==='GET /leads'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins view leads'});const items=await scanType('LEAD#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='GET /runs'){let items=await scanType('RUN#',a);if(a.role==='FRONTLINE')items=items.filter(r=>r.createdBy===a.userId);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='POST /workflows/{id}/runs'){const id=e.pathParameters?.id;const workflows=await scanType('WORKFLOW#',a);const workflow=workflows.find(w=>w.id===id);if(!workflow)return reply(404,{error:'Workflow not found'});if(a.role!=='SUPER_ADMIN'&&!(workflow.assignedRoles||[]).includes(a.role))return reply(403,{error:'This workflow is not assigned to your role'});if(workflow.status!=='active')return reply(409,{error:'This workflow is not published for execution'});const body=JSON.parse(e.body||'{}');return reply(201,await runWorkflow(workflow,body,a));}if(route==='POST /runs/{id}/cancel'){try{const run=await cancelRun(e.pathParameters?.id,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /runs/{id}/confirmations/{stepId}/confirm'){try{const run=await confirmActionGate(e.pathParameters?.id,e.pathParameters?.stepId,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='GET /agent-tasks'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins view agent tasks'});const items=await scanType('TASK#',a);return reply(200,items.filter(t=>t.status==='PENDING'));}if(route==='POST /agent-tasks/{id}/result'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins resolve agent tasks'});try{const body=JSON.parse(e.body||'{}');const run=await resumeAgentTask(e.pathParameters?.id,body,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /runs/{id}/approvals/{stepId}'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins decide approvals'});try{const body=JSON.parse(e.body||'{}');const run=await resumeApproval(e.pathParameters?.id,e.pathParameters?.stepId,!!body.approved,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /ai/execute'){const body=JSON.parse(e.body||'{}');const allowedOps=['classify','extract','transform','summarize','choose'];if(!allowedOps.includes(body.operation)||typeof body.prompt!=='string')return reply(400,{error:'Invalid bounded AI request'});const out=await ai(body,body.context||{});return reply(200,{model:process.env.BEDROCK_MODEL_ID,provider:'amazon-bedrock',...out});}if(route==='GET /tenants/{tenantId}/summary'){const tenantId=e.pathParameters?.tenantId;if(a.role!=='SUPER_ADMIN'&&tenantId!==a.tenantId)return reply(403,{error:'You can only view your own tenant'});return reply(200,await tenantSummary(tenantId));}if(route==='GET /tenants/{tenantId}/users'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins view team members'});const tenantId=e.pathParameters?.tenantId;if(a.role!=='SUPER_ADMIN'&&tenantId!==a.tenantId)return reply(403,{error:'You can only view your own tenant'});return reply(200,await listTenantUsers(tenantId));}if(route==='POST /tenants/{tenantId}/users/{username}/status'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins manage team members'});const tenantId=e.pathParameters?.tenantId;if(a.role!=='SUPER_ADMIN'&&tenantId!==a.tenantId)return reply(403,{error:'You can only manage your own tenant'});const username=e.pathParameters?.username;const users=await listTenantUsers(tenantId);if(!users.find(u=>u.username===username))return reply(404,{error:'User not found in this tenant'});const body=JSON.parse(e.body||'{}');const Command=body.enabled?AdminEnableUserCommand:AdminDisableUserCommand;await cognito.send(new Command({UserPoolId:process.env.USER_POOL_ID,Username:username}));return reply(200,{username,enabled:!!body.enabled});}return reply(404,{error:'Route not found'});}catch(err){console.error(err);return reply(500,{error:err.message||'Control plane error'});}};
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
@@ -516,6 +635,22 @@ Resources:
       Target: !Sub integrations/${ApiIntegration}
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
+  RunCancelPostRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /runs/{id}/cancel'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+  RunConfirmationPostRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /runs/{id}/confirmations/{stepId}/confirm'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
   TenantSummaryGetRoute:
     Type: AWS::ApiGatewayV2::Route
     Properties:
@@ -556,6 +691,28 @@ Resources:
       FunctionName: !Ref ControlPlaneFunction
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*
+
+  # Sweeps for expired agent tasks and confirmation gates so a run can never sit stuck in
+  # WAITING_AGENT/AWAITING_CONFIRMATION indefinitely -- expiresAt was previously only ever
+  # checked client-side by the Chrome extension, never enforced server-side.
+  SweepScheduleRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: amazflow-dev-sweep-expired
+      ScheduleExpression: rate(1 minute)
+      State: ENABLED
+      Targets:
+        - Id: ControlPlaneSweepTarget
+          Arn: !GetAtt ControlPlaneFunction.Arn
+          Input: '{"source":"amazflow.sweep"}'
+
+  SweepInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ControlPlaneFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt SweepScheduleRule.Arn
 
 Outputs:
   ApiUrl: { Value: !GetAtt HttpApi.ApiEndpoint }

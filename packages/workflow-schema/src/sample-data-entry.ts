@@ -39,7 +39,7 @@ export const sampleDataEntryWorkflow: WorkflowDefinition = {
       name: "Human review",
       type: "approval",
       message: "Review this invoice before it's recorded",
-      roles: ["admin", "operator"],
+      roles: ["CLIENT_ADMIN"],
       next: "append",
       onReject: "rejected",
     },

@@ -19,9 +19,9 @@ const baseStep = z.object({
 
 export const workflowStepSchema = z.discriminatedUnion("type", [
   baseStep.extend({ type: z.literal("ai"), operation: z.enum(["classify", "extract", "transform", "summarize", "choose"]), prompt: z.string(), outputKey: z.string(), allowedValues: z.array(z.string()).optional(), confidenceThreshold: z.number().min(0).max(1).default(0.85) }),
-  baseStep.extend({ type: z.literal("action"), provider: z.enum(["browser", "api", "spreadsheet", "email", "file", "mock"]), operation: z.string(), input: z.record(z.unknown()).default({}), verify: z.object({ path: z.string(), equals: z.unknown() }).optional() }),
+  baseStep.extend({ type: z.literal("action"), provider: z.enum(["browser", "api", "spreadsheet", "email", "file", "mock"]), operation: z.string(), input: z.record(z.unknown()).default({}), verify: z.object({ path: z.string(), equals: z.unknown() }).optional(), requiresConfirmation: z.boolean().optional(), onFailure: z.string().optional() }),
   baseStep.extend({ type: z.literal("condition"), path: z.string(), operator: z.enum(["equals", "notEquals", "exists", "gt", "lt"]), value: z.unknown().optional(), whenTrue: z.string(), whenFalse: z.string() }),
-  baseStep.extend({ type: z.literal("approval"), message: z.string(), roles: z.array(z.string()).default(["admin"]), onReject: z.string().optional() }),
+  baseStep.extend({ type: z.literal("approval"), message: z.string(), roles: z.array(roleSchema).default(["CLIENT_ADMIN"]), onReject: z.string().optional() }),
   baseStep.extend({ type: z.literal("verify"), path: z.string(), operator: z.enum(["equals", "notEquals", "exists", "gt", "lt"]), value: z.unknown().optional(), onFailure: z.string().optional() }),
   baseStep.extend({ type: z.literal("end"), outcome: z.enum(["success", "failed"]) })
 ]);
@@ -44,7 +44,7 @@ export const workflowDefinitionSchema = z.object({
   const ids = new Set(workflow.steps.map(s => s.id));
   if (!ids.has(workflow.startAt)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "startAt must reference a step" });
   for (const step of workflow.steps) {
-    const refs = [step.next, step.type === "condition" ? step.whenTrue : undefined, step.type === "condition" ? step.whenFalse : undefined, step.type === "approval" ? step.onReject : undefined, step.type === "verify" ? step.onFailure : undefined].filter(Boolean) as string[];
+    const refs = [step.next, step.type === "condition" ? step.whenTrue : undefined, step.type === "condition" ? step.whenFalse : undefined, step.type === "approval" ? step.onReject : undefined, step.type === "verify" ? step.onFailure : undefined, step.type === "action" ? step.onFailure : undefined].filter(Boolean) as string[];
     for (const ref of refs) if (!ids.has(ref)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Step ${step.id} references missing step ${ref}` });
     if (step.type === "action" && !workflow.allowedProviders.includes(step.provider)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Provider ${step.provider} is not allowed`, path: ["steps"] });
   }
@@ -53,8 +53,18 @@ export const workflowDefinitionSchema = z.object({
 export type WorkflowDefinition = z.infer<typeof workflowDefinitionSchema>;
 export type WorkflowStep = z.infer<typeof workflowStepSchema>;
 
-export type RunStatus = "RUNNING" | "WAITING_AGENT" | "WAITING_APPROVAL" | "COMPLETED" | "FAILED";
+export type RunStatus = "RUNNING" | "AWAITING_CONFIRMATION" | "WAITING_AGENT" | "WAITING_APPROVAL" | "CANCELLED" | "TIMED_OUT" | "COMPLETED" | "FAILED";
 export type AuditEvent = { id: string; at: string; type: string; stepId?: string; message: string; details?: Record<string, unknown> };
+export type StepResult = {
+  stepId: string;
+  type: "action" | "verify";
+  provider?: string;
+  operation?: string;
+  status: "SUCCEEDED" | "FAILED";
+  resolvedAt: string;
+  actionResult?: { ok: boolean; status?: number; body?: unknown; error?: string };
+  verificationResult?: { passed: boolean; expected: unknown; actual: unknown };
+};
 export type WorkflowRun = {
   id: string;
   tenantId: string;
@@ -62,6 +72,10 @@ export type WorkflowRun = {
   workflowVersion: number;
   status: RunStatus;
   currentStepId?: string;
+  createdBy?: string;
+  confirmedStepIds?: string[];
+  pendingConfirmationId?: string;
+  stepResults?: Record<string, StepResult>;
   context: Record<string, unknown>;
   audit: AuditEvent[];
   createdAt: string;
@@ -84,8 +98,8 @@ export const sampleWorkflow: WorkflowDefinition = {
   steps: [
     { id: "interpret", name: "Interpret request", type: "ai", operation: "extract", prompt: "Extract the requested employee action", outputKey: "decision", allowedValues: ["DISABLE", "REVIEW"], confidenceThreshold: 0.85, next: "safe" },
     { id: "safe", name: "Check certainty", type: "condition", path: "decision.value", operator: "equals", value: "DISABLE", whenTrue: "execute", whenFalse: "approval" },
-    { id: "approval", name: "Human review", type: "approval", message: "Review the requested employee change", roles: ["admin", "operator"], next: "execute", onReject: "rejected" },
-    { id: "execute", name: "Execute in browser", type: "action", provider: "browser", operation: "SET_EMPLOYEE_STATUS", input: { targetPath: "employee.id", status: "DISABLED" }, verify: { path: "result.status", equals: "DISABLED" }, next: "verified" },
+    { id: "approval", name: "Human review", type: "approval", message: "Review the requested employee change", roles: ["CLIENT_ADMIN"], next: "execute", onReject: "rejected" },
+    { id: "execute", name: "Execute in browser", type: "action", provider: "browser", operation: "SET_EMPLOYEE_STATUS", input: { targetPath: "employee.id", status: "DISABLED" }, verify: { path: "result.status", equals: "DISABLED" }, requiresConfirmation: true, next: "verified" },
     { id: "verified", name: "Verify final state", type: "verify", path: "lastAction.result.status", operator: "equals", value: "DISABLED", next: "done", onFailure: "failed" },
     { id: "done", name: "Completed", type: "end", outcome: "success" },
     { id: "rejected", name: "Rejected", type: "end", outcome: "failed" },
