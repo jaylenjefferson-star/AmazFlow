@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { PageHero, StandardPage } from "../site-components";
 import { LeadForm } from "../lead-form";
 import "../marketing.css";
@@ -26,7 +27,7 @@ export default function ContactPage() {
             <div className="contact-options">
               <a href="mailto:sales@amazflow.com">Email sales directly <span>↗</span></a>
               <a href="mailto:security@amazflow.com">Security and compliance <span>↗</span></a>
-              <a href="/app">View the product console <span>↗</span></a>
+              <Link href="/demo">Try the interactive demo <span>↗</span></Link>
             </div>
           </div>
           <div className="contact-form-side">

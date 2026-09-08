@@ -13,4 +13,31 @@ const groups = [
   ["Business operations", ["Spreadsheet execution", "Data entry", "Reporting workflows", "Queue management", "Cross-system updates", "Back-office SOPs"]],
 ];
 
-export default function SolutionsPage() { return <StandardPage><PageHero eyebrow="SOLUTIONS" title="Different departments." accent="Same execution engine." copy="AmazFlow is horizontal by design. Start with the repetitive workflow costing one team the most, then expand across the business without replacing the systems already in place." /><section className="subpage-section alt"><div className="wrap subpage-grid">{groups.map(([name, items]) => <article className="subpage-card" key={name as string}><h3>{name as string}</h3><ul>{(items as string[]).map((item) => <li key={item}>{item}</li>)}</ul></article>)}</div></section><section className="subpage-section"><div className="wrap copy-block"><div className="section-label">THE FIRST QUESTION</div><h2>What work does your team do every day that should already be automated?</h2><p>We begin with volume, handling time, systems touched, error and rework rates, approvals, exceptions, and the outcome that proves the workflow is done. That becomes a concrete implementation and ROI case—not an abstract AI project.</p><Link className="button primary" href="/contact">Bring us your workflow ↗</Link></div></section></StandardPage>; }
+function slugify(name: string) { return name.toLowerCase().replace(/\s+/g, "-"); }
+
+export default function SolutionsPage() {
+  return (
+    <StandardPage>
+      <PageHero eyebrow="SOLUTIONS" title="One flagship team." accent="Five expansion paths." copy="AmazFlow is horizontal by design, but we start every relationship in one place: People operations. Once the first workflow is proven, the same execution engine expands to the departments below." />
+      <section className="subpage-section alt">
+        <div className="wrap subpage-grid">
+          {groups.map(([name, items], index) => (
+            <article className="subpage-card" id={slugify(name as string)} key={name as string}>
+              {index === 0 && <span className="flagship-tag">FLAGSHIP</span>}
+              <h3>{name as string}</h3>
+              <ul>{(items as string[]).map((item) => <li key={item}>{item}</li>)}</ul>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className="subpage-section">
+        <div className="wrap copy-block">
+          <div className="section-label">THE FIRST QUESTION</div>
+          <h2>What work does your team do every day that should already be automated?</h2>
+          <p>We begin with volume, handling time, systems touched, error and rework rates, approvals, exceptions, and the outcome that proves the workflow is done. That becomes a concrete implementation and ROI case — not an abstract AI project.</p>
+          <Link className="button primary" href="/contact">Bring us your workflow ↗</Link>
+        </div>
+      </section>
+    </StandardPage>
+  );
+}

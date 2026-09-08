@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
 
 export function LogoMark({ size = 20 }: { size?: number }) {
   return (
@@ -10,16 +13,173 @@ export function LogoMark({ size = 20 }: { size?: number }) {
   );
 }
 
-export function Logo() { return <Link className="site-logo" href="/" aria-label="AmazFlow home"><span><LogoMark /></span><b>AmazFlow</b></Link>; }
+export function Logo() {
+  return (
+    <Link className="site-logo" href="/" aria-label="AmazFlow home">
+      <span><LogoMark /></span>
+      <b>AmazFlow</b>
+    </Link>
+  );
+}
 
-export function MarketingNav() { return <header className="site-nav"><div className="wrap nav-inner"><Logo /><nav><Link href="/product">Product</Link><Link href="/solutions">Solutions</Link><Link href="/security">Security</Link><Link href="/pricing">Pricing</Link><Link href="/company">Company</Link></nav><div className="nav-actions"><Link href="/app">Product demo</Link><Link className="button nav-cta" href="/contact">Find a workflow <b>↗</b></Link></div></div></header>; }
+export function SkipLink() {
+  return <a className="skip-link" href="#main">Skip to content</a>;
+}
 
-export function MarketingFooter() { return <footer className="site-footer"><div className="wrap footer-grid"><div><Logo /><p>Automate the work between your systems.</p><small>© 2026 AmazFlow. All rights reserved.</small></div><div><b>Platform</b><Link href="/product">Product</Link><Link href="/solutions">Solutions</Link><Link href="/pricing">Pricing</Link><Link href="/app">Product demo</Link></div><div><b>Trust</b><Link href="/security">Security</Link><Link href="/subprocessors">Subprocessors</Link><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link><Link href="/cookie-policy">Cookie Policy</Link><Link href="/acceptable-use">Acceptable Use</Link></div><div><b>Company</b><Link href="/company">About</Link><Link href="/contact">Contact</Link><a href="mailto:sales@amazflow.com">sales@amazflow.com</a><a href="mailto:security@amazflow.com">security@amazflow.com</a></div></div></footer>; }
+const NAV_LINKS = [
+  { href: "/product", label: "Product" },
+  { href: "/solutions", label: "Solutions" },
+  { href: "/security", label: "Security" },
+  { href: "/pricing", label: "Pricing" },
+  { href: "/company", label: "Company" },
+];
 
-export function WorkflowVisual() { return <div className="workflow-visual" aria-label="Example AmazFlow employee offboarding workflow"><div className="visual-top"><span className="live-dot" /> LIVE EXECUTION <b>AF-2048</b></div><div className="source-row"><div><small>EMPLOYEE</small><b>Sarah Chen</b></div><div><small>ACTION</small><b>Offboard</b></div><mark>NEW</mark></div><div className="packet">A</div><div className="route"><div className="route-line" /><Node icon="▦" label="Sheet" done /><Node icon={<LogoMark size={18} />} label="AmazFlow" core /><Node icon="H" label="HRIS" done /><Node icon="◎" label="Identity" done /><Node icon="#" label="Slack" done /></div><div className="visual-result"><div><span>6</span><small>systems updated</small></div><div><span>0</span><small>manual handoffs</small></div><div><span>43s</span><small>total time</small></div><mark>COMPLETE ✓</mark></div></div>; }
+export function MarketingNav() {
+  const [open, setOpen] = useState(false);
 
-function Node({ icon, label, done, core }: { icon: React.ReactNode; label: string; done?: boolean; core?: boolean }) { return <div className={`route-node ${core ? "core" : ""}`}><span>{icon}</span><b>{label}</b>{done && <i>✓</i>}</div>; }
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = ""; };
+  }, [open]);
 
-export function PageHero({ eyebrow, title, accent, copy }: { eyebrow: string; title: string; accent: string; copy: string }) { return <section className="page-hero wrap"><div className="kicker"><span /> {eyebrow}</div><h1>{title}<br /><em>{accent}</em></h1><p>{copy}</p></section>; }
+  return (
+    <header className="site-nav">
+      <div className="wrap nav-inner">
+        <Logo />
 
-export function StandardPage({ children }: { children: React.ReactNode }) { return <div className="marketing-site"><MarketingNav /><main>{children}</main><MarketingFooter /></div>; }
+        <nav className="nav-desktop" aria-label="Primary">
+          {NAV_LINKS.map((link) => <Link key={link.href} href={link.href}>{link.label}</Link>)}
+        </nav>
+
+        <div className="nav-actions">
+          <Link className="nav-signin" href="/console">Sign in</Link>
+          <Link className="button quiet nav-demo" href="/demo">Try the demo</Link>
+          <Link className="button nav-cta" href="/contact">Talk to sales</Link>
+        </div>
+
+        <button
+          type="button"
+          className="nav-toggle"
+          aria-expanded={open}
+          aria-controls="mobile-nav-panel"
+          aria-label={open ? "Close menu" : "Open menu"}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span className="nav-toggle-bars" aria-hidden="true"><i /><i /><i /></span>
+        </button>
+      </div>
+
+      {open && <button type="button" className="nav-overlay" aria-hidden="true" tabIndex={-1} onClick={() => setOpen(false)} />}
+
+      <div id="mobile-nav-panel" className={`nav-mobile-panel ${open ? "open" : ""}`}>
+        <nav aria-label="Mobile">
+          {NAV_LINKS.map((link) => <Link key={link.href} href={link.href} onClick={() => setOpen(false)}>{link.label}</Link>)}
+        </nav>
+        <div className="nav-mobile-actions">
+          <Link className="button quiet" href="/console" onClick={() => setOpen(false)}>Sign in</Link>
+          <Link className="button quiet" href="/demo" onClick={() => setOpen(false)}>Try the interactive demo</Link>
+          <Link className="button primary" href="/contact" onClick={() => setOpen(false)}>Talk to sales</Link>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+export function MarketingFooter() {
+  return (
+    <footer className="site-footer">
+      <div className="wrap footer-grid">
+        <div>
+          <Logo />
+          <p>Automate the work between your systems.</p>
+          <small>© 2026 AmazFlow. All rights reserved.</small>
+        </div>
+        <div>
+          <b>Platform</b>
+          <Link href="/product">Product</Link>
+          <Link href="/solutions">Solutions</Link>
+          <Link href="/pricing">Pricing</Link>
+          <Link href="/demo">Try the interactive demo</Link>
+          <Link href="/console">Sign in</Link>
+        </div>
+        <div>
+          <b>Trust</b>
+          <Link href="/security">Security</Link>
+          <Link href="/subprocessors">Subprocessors</Link>
+          <Link href="/privacy">Privacy</Link>
+          <Link href="/terms">Terms</Link>
+          <Link href="/cookie-policy">Cookie Policy</Link>
+          <Link href="/acceptable-use">Acceptable Use</Link>
+        </div>
+        <div>
+          <b>Company</b>
+          <Link href="/company">About</Link>
+          <Link href="/contact">Contact</Link>
+          <a href="mailto:sales@amazflow.com">sales@amazflow.com</a>
+          <a href="mailto:security@amazflow.com">security@amazflow.com</a>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+export function WorkflowVisual() {
+  return (
+    <div className="workflow-visual" aria-label="Example AmazFlow employee offboarding workflow">
+      <div className="visual-top"><span className="live-dot" aria-hidden="true" /> EXAMPLE EXECUTION <b>AF-2048</b></div>
+      <div className="source-row">
+        <div><small>EMPLOYEE</small><b>Sarah Chen</b></div>
+        <div><small>ACTION</small><b>Offboard</b></div>
+        <mark>COMPLETE</mark>
+      </div>
+      <div className="route" aria-hidden="true">
+        <div className="route-line" />
+        <Node icon="▦" label="Sheet" done />
+        <Node icon={<LogoMark size={18} />} label="AmazFlow" core />
+        <Node icon="H" label="HRIS" done />
+        <Node icon="◎" label="Identity" done />
+        <Node icon="#" label="Slack" done />
+      </div>
+      <div className="visual-result">
+        <div><span>4</span><small>systems updated</small></div>
+        <div><span>0</span><small>manual handoffs</small></div>
+        <div><span>41s</span><small>total time</small></div>
+        <mark>VERIFIED ✓</mark>
+      </div>
+    </div>
+  );
+}
+
+function Node({ icon, label, done, core }: { icon: React.ReactNode; label: string; done?: boolean; core?: boolean }) {
+  return (
+    <div className={`route-node ${core ? "core" : ""}`}>
+      <span>{icon}</span>
+      <b>{label}</b>
+      {done && <i>✓</i>}
+    </div>
+  );
+}
+
+export function PageHero({ eyebrow, title, accent, copy }: { eyebrow: string; title: string; accent: string; copy: string }) {
+  return (
+    <section className="page-hero wrap">
+      <div className="kicker"><span aria-hidden="true" /> {eyebrow}</div>
+      <h1>{title}<br /><em>{accent}</em></h1>
+      <p>{copy}</p>
+    </section>
+  );
+}
+
+export function StandardPage({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="marketing-site">
+      <SkipLink />
+      <MarketingNav />
+      <main id="main">{children}</main>
+      <MarketingFooter />
+    </div>
+  );
+}
