@@ -157,7 +157,7 @@ Resources:
           // comma list and not a real array -- strip the brackets before splitting.
           const auth=e=>{const c=e.requestContext?.authorizer?.jwt?.claims||{};const groups=String(c['cognito:groups']||'').replace(/^\[|\]$/g,'').split(',').map(g=>g.trim());const role=['SUPER_ADMIN','CLIENT_ADMIN','FRONTLINE'].find(r=>groups.includes(r));return {userId:c.sub,tenantId:c['custom:tenant_id'],role};};
           const parse=i=>JSON.parse(i.document.S); const now=()=>new Date().toISOString();
-          const ai=async(step,context)=>{const allowed=Array.isArray(step.allowedValues)?step.allowedValues.map(String):[];const system='You are a bounded operations workflow component. Never choose or invent tools. Return JSON only with keys value and confidence. Confidence must be between 0 and 1.';const prompt=`Operation: ${step.operation}\nInstruction: ${step.prompt}\nAllowed values: ${allowed.length?allowed.join(', '):'not restricted'}\nContext: ${JSON.stringify(context||{})}`;const out=await bedrock.send(new ConverseCommand({modelId:process.env.BEDROCK_MODEL_ID,system:[{text:system}],messages:[{role:'user',content:[{text:prompt}]}],inferenceConfig:{maxTokens:800,temperature:0}}));let text=out.output?.message?.content?.find(x=>x.text)?.text||'{}';text=text.replace(/^```json\s*|\s*```$/g,'');const result=JSON.parse(text);if(typeof result.confidence!=='number'||result.confidence<0||result.confidence>1)throw new Error('Invalid AI confidence');if(allowed.length&&!allowed.includes(String(result.value)))throw new Error('AI returned value outside allowlist');return {result,usage:out.usage};};
+          const ai=async(step,context)=>{const allowed=Array.isArray(step.allowedValues)?step.allowedValues.map(String):[];const system='You are a bounded operations workflow component. Never choose or invent tools. Return JSON with keys "value" and "confidence" (required, confidence between 0 and 1), plus any other field the instruction below explicitly asks you to extract -- omit fields it does not ask for.';const prompt=`Operation: ${step.operation}\nInstruction: ${step.prompt}\nAllowed values: ${allowed.length?allowed.join(', '):'not restricted'}\nContext: ${JSON.stringify(context||{})}`;const out=await bedrock.send(new ConverseCommand({modelId:process.env.BEDROCK_MODEL_ID,system:[{text:system}],messages:[{role:'user',content:[{text:prompt}]}],inferenceConfig:{maxTokens:800,temperature:0}}));let text=out.output?.message?.content?.find(x=>x.text)?.text||'{}';text=text.replace(/^```json\s*|\s*```$/g,'');const result=JSON.parse(text);if(typeof result.confidence!=='number'||result.confidence<0||result.confidence>1)throw new Error('Invalid AI confidence');if(allowed.length&&!allowed.includes(String(result.value)))throw new Error('AI returned value outside allowlist');return {result,usage:out.usage};};
           // Baseline SSRF guard for autonomous api-provider actions: block obviously
           // internal/metadata targets. Not exhaustive (no DNS-rebinding protection) but a
           // reasonable floor given only SUPER_ADMIN authors workflows today.
@@ -212,6 +212,19 @@ Resources:
             throw new Error(`Could not generate a valid workflow: ${lastError}`);
           };
           const valueAt=(obj,path)=>{const keys=String(path||'').split('.');const read=root=>keys.reduce((v,k)=>v?.[k],root);const direct=read(obj);return direct===undefined?read(obj?.values):direct;};const test=(left,op,right)=>op==='equals'?left===right:op==='notEquals'?left!==right:op==='exists'?left!==undefined:op==='gt'?left>right:op==='lt'?left<right:false;
+          // Resolves {{dotted.path}} placeholders in a step's input against the run's own
+          // context (customer's original request plus whatever earlier AI/condition steps have
+          // extracted) before it's ever sent to a browser agent. Without this, an action step's
+          // input is the same static object no matter what the customer actually asked for or
+          // what an earlier step observed -- which is also what would make a real strong-
+          // identifier check (see SET_EMPLOYEE_STATUS in the agent) impossible, since there'd be
+          // no way to carry a specific record's id from the request into the task the agent runs.
+          const interpolate=(value,context)=>{
+            if(typeof value==='string') return value.replace(/\{\{\s*([\w.]+)\s*\}\}/g,(_,path)=>{const resolved=valueAt(context,path);return resolved===undefined?'':String(resolved);});
+            if(Array.isArray(value)) return value.map(v=>interpolate(v,context));
+            if(value&&typeof value==='object'){const out={};for(const k of Object.keys(value)) out[k]=interpolate(value[k],context);return out;}
+            return value;
+          };
           const scanType=async(type,a)=>{
             if(a.role==='SUPER_ADMIN'){
               // Cross-tenant SUPER_ADMIN reads still Scan: there's no cross-tenant GSI yet.
@@ -331,7 +344,7 @@ Resources:
             const out=await db.send(new GetItemCommand({TableName:table,Key:{pk:{S:`TENANT#${tenantId}`},sk:{S:`WORKFLOW#${workflowId}`}}}));
             return out.Item&&out.Item.document?.S?parse(out.Item):null;
           };
-          const ALLOWED_AGENT_OPS=new Set(['READ_TEXT','CLICK','TYPE','SELECT','VERIFY_TEXT','SET_EMPLOYEE_STATUS']);
+          const ALLOWED_AGENT_OPS=new Set(['READ_TEXT','CLICK','TYPE','SELECT','CHECK','SCROLL_TO','WAIT_FOR','VERIFY_TEXT','SET_EMPLOYEE_STATUS']);
           const advance=async(workflow,run,auditStartIdx)=>{
             const settings=await getSettings();
             const audit=(type,message,stepId,details)=>run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type,message,stepId,details});
@@ -395,7 +408,7 @@ Resources:
                   else if(step.onFailure){ next=step.onFailure; }
                   else { run.status='FAILED'; audit('FAILED','Action failed with no failure route configured',step.id); next=undefined; }
                 } else {
-                  const task={id:`task_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,runId:run.id,tenantId:run.tenantId,stepId:step.id,provider:step.provider,operation:step.operation,input:step.input||{},expiresAt:new Date(Date.now()+settings.taskExpiryMs).toISOString(),status:'PENDING'};
+                  const task={id:`task_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,runId:run.id,tenantId:run.tenantId,stepId:step.id,provider:step.provider,operation:step.operation,input:interpolate(step.input||{},run.context),expiresAt:new Date(Date.now()+settings.taskExpiryMs).toISOString(),status:'PENDING'};
                   await save('TASK',task);
                   run.status='WAITING_AGENT'; run.currentStepId=step.id;
                   audit('AGENT_TASK_CREATED',`${step.provider}:${step.operation}`,step.id,{taskId:task.id});

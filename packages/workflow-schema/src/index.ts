@@ -96,10 +96,10 @@ export const sampleWorkflow: WorkflowDefinition = {
   startAt: "interpret",
   allowedProviders: ["browser", "mock"],
   steps: [
-    { id: "interpret", name: "Interpret request", type: "ai", operation: "extract", prompt: "Extract the requested employee action", outputKey: "decision", allowedValues: ["DISABLE", "REVIEW"], confidenceThreshold: 0.85, next: "safe" },
+    { id: "interpret", name: "Interpret request", type: "ai", operation: "extract", prompt: "Extract the requested employee action, and also extract the employee's id if one is mentioned in the request (a code like E-10042) as the field employeeId -- omit employeeId if none is mentioned.", outputKey: "decision", allowedValues: ["DISABLE", "REVIEW"], confidenceThreshold: 0.85, next: "safe" },
     { id: "safe", name: "Check certainty", type: "condition", path: "decision.value", operator: "equals", value: "DISABLE", whenTrue: "execute", whenFalse: "approval" },
     { id: "approval", name: "Human review", type: "approval", message: "Review the requested employee change", roles: ["CLIENT_ADMIN"], next: "execute", onReject: "rejected" },
-    { id: "execute", name: "Execute in browser", type: "action", provider: "browser", operation: "SET_EMPLOYEE_STATUS", input: { targetPath: "employee.id", status: "DISABLED" }, verify: { path: "result.status", equals: "DISABLED" }, requiresConfirmation: true, next: "verified" },
+    { id: "execute", name: "Execute in browser", type: "action", provider: "browser", operation: "SET_EMPLOYEE_STATUS", input: { status: "DISABLED", identifierSelector: '[data-amazflow="employee-id"]', expectedIdentifier: "{{values.decision.employeeId}}" }, verify: { path: "result.status", equals: "DISABLED" }, requiresConfirmation: true, next: "verified" },
     { id: "verified", name: "Verify final state", type: "verify", path: "lastAction.result.status", operator: "equals", value: "DISABLED", next: "done", onFailure: "failed" },
     { id: "done", name: "Completed", type: "end", outcome: "success" },
     { id: "rejected", name: "Rejected", type: "end", outcome: "failed" },
