@@ -560,7 +560,273 @@ Resources:
             }
             return {totalRunsCompleted,totalMinutesSaved:Math.round(totalMinutesSaved),dollarEstimate:Math.round((totalMinutesSaved/60)*BLENDED_HOURLY_RATE)};
           };
-          exports.handler=async e=>{try{if(e.source==='amazflow.sweep'){const result=await sweepExpired();return {ok:true,...result};}const route=e.routeKey||'';if(route==='GET /health')return reply(200,{ok:true,service:'amazflow-control-plane',boundary:process.env.DATA_BOUNDARY,aiRuntime:'amazon-bedrock'});if(route==='POST /leads'){const b=JSON.parse(e.body||'{}');const clean=v=>String(v==null?'':v).slice(0,2000).trim();const email=clean(b.email);const name=clean(b.name);if(clean(b.website))return reply(201,{ok:true});if(!name||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return reply(400,{error:'A name and a valid work email are required'});const lead={id:`lead_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,tenantId:'amazflow',name,email,company:clean(b.company),role:clean(b.role),workflow:clean(b.workflow),volume:clean(b.volume),message:clean(b.message),source:clean(b.source)||'website',status:'new',createdAt:now()};await save('LEAD',lead);try{const text=['New AmazFlow lead','','Name: '+lead.name,'Email: '+lead.email,'Company: '+lead.company,'Role: '+lead.role,'Workflow to automate: '+lead.workflow,'Monthly volume: '+lead.volume,'Notes: '+lead.message,'','Source: '+lead.source,'Received: '+lead.createdAt,'Lead ID: '+lead.id].join('\n');await ses.send(new SendEmailCommand({FromEmailAddress:process.env.LEAD_FROM,Destination:{ToAddresses:[process.env.LEAD_TO]},ReplyToAddresses:[lead.email],Content:{Simple:{Subject:{Data:'New lead: '+lead.name+(lead.company?' - '+lead.company:'')},Body:{Text:{Data:text}}}}}));}catch(mailErr){console.error('lead email failed',mailErr.message);}return reply(201,{ok:true,id:lead.id});}if(route==='POST /agent-authorizations/{code}/exchange'){try{const result=await exchangeAgentCode(e.pathParameters?.code);return reply(200,result);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='GET /agent/tasks'){try{const agentCtx=await agentAuth(e);const items=await scanType('TASK#',{role:'SUPER_ADMIN'});const pending=items.filter(t=>t.tenantId===agentCtx.tenantId&&t.status==='PENDING');return reply(200,pending);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /agent/tasks/{id}/result'){try{const agentCtx=await agentAuth(e);const body=JSON.parse(e.body||'{}');const allTasks=await scanType('TASK#',{role:'SUPER_ADMIN'});const task=allTasks.find(t=>t.id===e.pathParameters?.id);if(!task||task.tenantId!==agentCtx.tenantId)return reply(404,{error:'Task not found'});const run=await resumeAgentTask(task.id,body,{role:'SUPER_ADMIN',userId:agentCtx.agentId,tenantId:agentCtx.tenantId});return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /agent/heartbeat'){try{const agentCtx=await agentAuth(e);const body=JSON.parse(e.body||'{}');await touchAgentHeartbeat(agentCtx.agentId,agentCtx.tenantId,body.version);return reply(200,{ok:true});}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}const a=auth(e);if(!a.role)return reply(403,{error:'Role required'});if(route==='GET /me')return reply(200,a);if(route==='GET /workflows'){const items=await scanType('WORKFLOW#',a);return reply(200,items.sort((x,y)=>String(y.version).localeCompare(String(x.version))));}if(route==='POST /workflows'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins configure workflows'});const body=JSON.parse(e.body||'{}');const shapeError=validateWorkflowShape(body);if(shapeError)return reply(400,{error:shapeError});body.updatedAt=now();await save('WORKFLOW',body);if(body.version){const paddedV=String(body.version).padStart(6,'0');await save('WORKFLOWVERSION',{...body,id:`${body.id}_v${paddedV}`});}return reply(201,body);}if(route==='GET /organizations'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow administrators view organizations'});const orgs=await listOrganizations();return reply(200,orgs.sort((x,y)=>String(x.createdAt).localeCompare(String(y.createdAt))));}if(route==='POST /organizations'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow administrators create organizations'});const body=JSON.parse(e.body||'{}');const name=String(body.name||'').trim();if(!name)return reply(400,{error:'A name is required'});const slug=slugify(body.slug||name);if(!slug)return reply(400,{error:'Could not derive a usable slug from that name'});if(await getOrganization(slug))return reply(409,{error:`An organization with slug "${slug}" already exists`});const org={id:`org_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,name,slug,status:'active',plan:body.plan||'design_partner',createdAt:now(),updatedAt:now()};await saveOrganization(org);return reply(201,org);}if(route==='POST /workflows/generate'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins generate workflows'});const body=JSON.parse(e.body||'{}');if(!body.sop||typeof body.sop!=='string')return reply(400,{error:'A sop description is required'});try{const draft=await generateWorkflowFromSop(body.sop,body.tenantId||a.tenantId||'amazflow');return reply(200,draft);}catch(err){return reply(422,{error:err.message||'Could not generate a workflow from that description'});}}if(route==='GET /leads'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins view leads'});const items=await scanType('LEAD#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='GET /runs'){let items=await scanType('RUN#',a);if(a.role==='FRONTLINE')items=items.filter(r=>r.createdBy===a.userId);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='POST /workflows/{id}/runs'){const id=e.pathParameters?.id;const workflows=await scanType('WORKFLOW#',a);const workflow=workflows.find(w=>w.id===id);if(!workflow)return reply(404,{error:'Workflow not found'});if(a.role!=='SUPER_ADMIN'&&!(workflow.assignedRoles||[]).includes(a.role))return reply(403,{error:'This workflow is not assigned to your role'});if(workflow.status!=='active')return reply(409,{error:'This workflow is not published for execution'});const body=JSON.parse(e.body||'{}');if('description' in body&&!String(body.description||'').trim())return reply(400,{error:'Tell us what you need done before starting.'});return reply(201,await runWorkflow(workflow,body,a));}if(route==='POST /runs/{id}/cancel'){try{const run=await cancelRun(e.pathParameters?.id,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /runs/{id}/confirmations/{stepId}/confirm'){try{const run=await confirmActionGate(e.pathParameters?.id,e.pathParameters?.stepId,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='GET /agents'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins view agents'});const items=await scanType('AGENT#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='POST /agent-authorizations'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins create agents'});const body=JSON.parse(e.body||'{}');const name=String(body.name||'').trim();if(!name)return reply(400,{error:'A name is required'});const targetTenantId=(a.role==='SUPER_ADMIN'&&body.tenantId)?body.tenantId:a.tenantId;const result=await createAgentAndCode(targetTenantId,name,body.allowedDomains,a.userId);return reply(201,result);}if(route==='POST /agents/{id}/revoke'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins revoke agents'});try{const agent=await revokeAgent(e.pathParameters?.id,a);return reply(200,agent);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='GET /agent-tasks'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins view agent tasks'});const items=await scanType('TASK#',a);return reply(200,items.filter(t=>t.status==='PENDING'));}if(route==='POST /agent-tasks/{id}/result'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins resolve agent tasks'});try{const body=JSON.parse(e.body||'{}');const run=await resumeAgentTask(e.pathParameters?.id,body,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /runs/{id}/approvals/{stepId}'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins decide approvals'});try{const body=JSON.parse(e.body||'{}');const run=await resumeApproval(e.pathParameters?.id,e.pathParameters?.stepId,!!body.approved,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /ai/execute'){const body=JSON.parse(e.body||'{}');const allowedOps=['classify','extract','transform','summarize','choose'];if(!allowedOps.includes(body.operation)||typeof body.prompt!=='string')return reply(400,{error:'Invalid bounded AI request'});const out=await ai(body,body.context||{});return reply(200,{model:process.env.BEDROCK_MODEL_ID,provider:'amazon-bedrock',...out});}if(route==='GET /tenants/{tenantId}/summary'){const tenantId=e.pathParameters?.tenantId;if(a.role!=='SUPER_ADMIN'&&tenantId!==a.tenantId)return reply(403,{error:'You can only view your own tenant'});return reply(200,await tenantSummary(tenantId));}if(route==='GET /tenants/{tenantId}/users'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins view team members'});const tenantId=e.pathParameters?.tenantId;if(a.role!=='SUPER_ADMIN'&&tenantId!==a.tenantId)return reply(403,{error:'You can only view your own tenant'});return reply(200,await listTenantUsers(tenantId));}if(route==='POST /tenants/{tenantId}/users/{username}/status'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins manage team members'});const tenantId=e.pathParameters?.tenantId;if(a.role!=='SUPER_ADMIN'&&tenantId!==a.tenantId)return reply(403,{error:'You can only manage your own tenant'});const username=e.pathParameters?.username;const users=await listTenantUsers(tenantId);if(!users.find(u=>u.username===username))return reply(404,{error:'User not found in this tenant'});const body=JSON.parse(e.body||'{}');const Command=body.enabled?AdminEnableUserCommand:AdminDisableUserCommand;await cognito.send(new Command({UserPoolId:process.env.USER_POOL_ID,Username:username}));return reply(200,{username,enabled:!!body.enabled});}return reply(404,{error:'Route not found'});}catch(err){console.error(err);return reply(500,{error:err.message||'Control plane error'});}};
+
+          // ---------- Organization branding (Phase 10 whitelabel prep) ----------
+          // Deliberately narrow: four constrained fields, never arbitrary CSS/HTML. AmazFlow's
+          // own wordmark and product chrome remain dominant everywhere -- this only lets a
+          // customer's own sign-in screen show their name/logo/accent alongside it.
+          const validateBranding=(body)=>{
+            const out={};
+            if('displayName' in body) out.displayName=String(body.displayName||'').trim().slice(0,80);
+            if('loginMessage' in body) out.loginMessage=String(body.loginMessage||'').trim().slice(0,240);
+            if('accent' in body){
+              const v=String(body.accent||'').trim();
+              if(v&&!/^#[0-9a-fA-F]{6}$/.test(v)) throw {status:400,message:'accent must be a 6-digit hex color like #ff765c'};
+              out.accent=v;
+            }
+            if('logoUrl' in body){
+              const v=String(body.logoUrl||'').trim();
+              if(v&&(!/^https:\/\//i.test(v)||isUnsafeUrl(v))) throw {status:400,message:'logoUrl must be a public https:// URL'};
+              out.logoUrl=v;
+            }
+            return out;
+          };
+
+          // ---------- Activity log ----------
+          // Separate from a run's own audit[] (what an execution did). This records what an
+          // ADMIN -- human or via Copilot -- did to the configuration itself, so every
+          // Copilot-driven change is traceable to a named actor, never anonymous.
+          const logActivity=async(tenantId,entry)=>{
+            const id=`act_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+            const doc={id,tenantId,at:now(),...entry};
+            await db.send(new PutItemCommand({TableName:table,Item:{pk:{S:`TENANT#${tenantId}`},sk:{S:`ACTIVITY#${String(Date.now()).padStart(14,'0')}_${id}`},tenantId:{S:tenantId},document:{S:JSON.stringify(doc)},updatedAt:{S:now()}}}));
+            return doc;
+          };
+
+          // ---------- AmazFlow Copilot ----------
+          // A persistent SUPER_ADMIN assistant with real read access to platform data and a
+          // strictly draft-first write path: every write tool below only ever proposes a change
+          // (a COPILOTACTION record) -- it never mutates a live workflow or organization
+          // directly. A human must call the apply endpoint to actually commit it, at which point
+          // it's attributed in the activity log to "Jay via AmazFlow Copilot" rather than the
+          // model silently acting on its own.
+          const COPILOT_SYSTEM='You are AmazFlow Copilot, an internal assistant for AmazFlow\'s own SUPER_ADMIN operator (not a customer-facing assistant). You help configure workflows, diagnose runs, and manage the platform.\nRules you must never break:\n- Only state facts you obtained from a tool call in this conversation. If you have not called a tool that would answer the question, call one before answering. Never guess at a run\'s status, a workflow\'s steps, or why something failed -- always look it up.\n- You cannot directly change anything. Every write tool only proposes a change for a human to review and apply -- say so plainly when you use one ("I\'ve prepared this change, review and apply it below"), and never claim a change is live until the human has applied it.\n- Prefer the smallest change that satisfies the request. When editing a published (active) workflow, always base your edit on its current real content from get_workflow first.\n- Roles must be exactly one of FRONTLINE, CLIENT_ADMIN, SUPER_ADMIN. Providers must be exactly one of browser, api, spreadsheet, email, file, mock. Never invent other values.\n- Be concise. This is an expert operator, not a customer.';
+
+          const COPILOT_TOOLS=[
+            {toolSpec:{name:'list_workflows',description:'List every workflow definition across all customer tenants with id, name, version, status, tenantId, assignedRoles.',inputSchema:{json:{type:'object',properties:{}}}}},
+            {toolSpec:{name:'get_workflow',description:'Get the full definition of one workflow version, including every step. Call this before proposing any edit.',inputSchema:{json:{type:'object',properties:{tenantId:{type:'string'},workflowId:{type:'string'},version:{type:'number',description:'Optional. Omit for the current version.'}},required:['tenantId','workflowId']}}}},
+            {toolSpec:{name:'list_runs',description:'List recent workflow runs, optionally filtered by tenant, workflow, or status.',inputSchema:{json:{type:'object',properties:{tenantId:{type:'string'},workflowId:{type:'string'},status:{type:'string'}}}}}},
+            {toolSpec:{name:'get_run',description:'Get one run in full, including its audit trail and step results. This is the only reliable way to answer "why did this run fail/stop" -- the audit array and stepResults contain the real recorded evidence.',inputSchema:{json:{type:'object',properties:{runId:{type:'string'}},required:['runId']}}}},
+            {toolSpec:{name:'list_organizations',description:'List every customer organization with its slug, status, plan, and current branding settings.',inputSchema:{json:{type:'object',properties:{}}}}},
+            {toolSpec:{name:'list_agents',description:'List browser automation agents, optionally filtered by tenant.',inputSchema:{json:{type:'object',properties:{tenantId:{type:'string'}}}}}},
+            {toolSpec:{name:'list_activity',description:'List recent admin/Copilot-driven configuration changes (the activity log), optionally filtered by tenant.',inputSchema:{json:{type:'object',properties:{tenantId:{type:'string'}}}}}},
+            {toolSpec:{name:'create_draft',description:'Propose starting a new editable draft version of an existing workflow, cloned unchanged from its current content. Use before proposing edits to a published (active) workflow.',inputSchema:{json:{type:'object',properties:{tenantId:{type:'string'},workflowId:{type:'string'}},required:['tenantId','workflowId']}}}},
+            {toolSpec:{name:'duplicate_workflow',description:'Propose copying an existing workflow to a brand-new workflow id as a fresh draft (e.g. for a variant or a different customer).',inputSchema:{json:{type:'object',properties:{tenantId:{type:'string'},workflowId:{type:'string'},newTenantId:{type:'string'},newWorkflowId:{type:'string'},newName:{type:'string'}},required:['tenantId','workflowId','newWorkflowId','newName']}}}},
+            {toolSpec:{name:'update_step',description:'Propose changing fields on one step of a workflow (creating a draft automatically if the workflow is currently published). Pass only the fields to change.',inputSchema:{json:{type:'object',properties:{tenantId:{type:'string'},workflowId:{type:'string'},stepId:{type:'string'},patch:{type:'object',description:'Fields to merge into the step, e.g. {"confidenceThreshold":0.9}'}},required:['tenantId','workflowId','stepId','patch']}}}},
+            {toolSpec:{name:'add_step',description:'Propose adding a new step (commonly type "condition", "approval", or "verify") to a workflow, creating a draft automatically if needed. The step object must include a unique id and a type.',inputSchema:{json:{type:'object',properties:{tenantId:{type:'string'},workflowId:{type:'string'},step:{type:'object'}},required:['tenantId','workflowId','step']}}}},
+            {toolSpec:{name:'assign_workflow_roles',description:'Propose changing which roles (FRONTLINE, CLIENT_ADMIN, SUPER_ADMIN) a workflow is assigned to.',inputSchema:{json:{type:'object',properties:{tenantId:{type:'string'},workflowId:{type:'string'},assignedRoles:{type:'array',items:{type:'string'}}},required:['tenantId','workflowId','assignedRoles']}}}},
+            {toolSpec:{name:'set_workflow_status',description:'Propose publishing a draft (status active) or pausing a published workflow (status paused). This changes what customers can actually run, so treat it as high-risk.',inputSchema:{json:{type:'object',properties:{tenantId:{type:'string'},workflowId:{type:'string'},status:{type:'string',enum:['active','paused']}},required:['tenantId','workflowId','status']}}}},
+            {toolSpec:{name:'update_organization_branding',description:'Propose updating a customer organization\'s sign-in branding: displayName, logoUrl (https only), accent (hex color), loginMessage. AmazFlow\'s own branding always remains dominant regardless of these settings.',inputSchema:{json:{type:'object',properties:{slug:{type:'string'},displayName:{type:'string'},logoUrl:{type:'string'},accent:{type:'string'},loginMessage:{type:'string'}},required:['slug']}}}},
+            {toolSpec:{name:'generate_workflow_draft_from_sop',description:'Propose a brand-new workflow draft generated from a plain-language standard operating procedure description (the Agent Builder). Use when the operator describes a process rather than exact steps.',inputSchema:{json:{type:'object',properties:{tenantId:{type:'string'},sop:{type:'string'}},required:['tenantId','sop']}}}}
+          ];
+
+          const proposeAction=async(userId,tenantId,kind,summary,payload)=>{
+            const id=`copact_${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+            const action={id,userId,tenantId,kind,summary,payload,status:'PENDING',createdAt:now()};
+            await db.send(new PutItemCommand({TableName:table,Item:{pk:{S:'PLATFORM'},sk:{S:`COPILOTACTION#${id}`},document:{S:JSON.stringify(action)},updatedAt:{S:now()}}}));
+            return action;
+          };
+
+          const findWorkflow=async(tenantId,workflowId)=>{
+            const out=await db.send(new GetItemCommand({TableName:table,Key:{pk:{S:`TENANT#${tenantId}`},sk:{S:`WORKFLOW#${workflowId}`}}}));
+            return out.Item&&out.Item.document?.S?parse(out.Item):null;
+          };
+
+          // Copies a workflow's current live content into an unpublished, incrementing-version
+          // draft -- the only way any Copilot write tool is allowed to touch a published
+          // workflow. The live WORKFLOW# doc is never modified until a human explicitly applies
+          // a set_workflow_status publish action.
+          const draftFrom=(workflow)=>({...workflow,version:(workflow.version||1)+1,status:'draft'});
+
+          const runCopilotTool=async(userId,name,input)=>{
+            if(name==='list_workflows'){
+              const items=await scanType('WORKFLOW#',{role:'SUPER_ADMIN'});
+              return items.map(w=>({id:w.id,tenantId:w.tenantId,name:w.name,version:w.version,status:w.status,assignedRoles:w.assignedRoles}));
+            }
+            if(name==='get_workflow'){
+              if(input.version) return await getWorkflowVersion(input.tenantId,input.workflowId,input.version);
+              const w=await findWorkflow(input.tenantId,input.workflowId);
+              if(!w) throw new Error(`No workflow ${input.workflowId} in tenant ${input.tenantId}`);
+              return w;
+            }
+            if(name==='list_runs'){
+              let items=await scanType('RUN#',{role:'SUPER_ADMIN'});
+              if(input.tenantId) items=items.filter(r=>r.tenantId===input.tenantId);
+              if(input.workflowId) items=items.filter(r=>r.workflowId===input.workflowId);
+              if(input.status) items=items.filter(r=>r.status===input.status);
+              return items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))).slice(0,25).map(r=>({id:r.id,tenantId:r.tenantId,workflowId:r.workflowId,status:r.status,currentStepId:r.currentStepId,createdBy:r.createdBy,createdAt:r.createdAt,updatedAt:r.updatedAt}));
+            }
+            if(name==='get_run'){
+              const items=await scanType('RUN#',{role:'SUPER_ADMIN'});
+              const run=items.find(r=>r.id===input.runId);
+              if(!run) throw new Error(`No run ${input.runId}`);
+              return run;
+            }
+            if(name==='list_organizations') return await listOrganizations();
+            if(name==='list_agents'){
+              let items=await scanType('AGENT#',{role:'SUPER_ADMIN'});
+              if(input.tenantId) items=items.filter(x=>x.tenantId===input.tenantId);
+              return items;
+            }
+            if(name==='list_activity'){
+              let items=await scanType('ACTIVITY#',{role:'SUPER_ADMIN'});
+              if(input.tenantId) items=items.filter(x=>x.tenantId===input.tenantId);
+              return items.sort((x,y)=>String(y.at).localeCompare(String(x.at))).slice(0,25);
+            }
+            if(name==='create_draft'){
+              const w=await findWorkflow(input.tenantId,input.workflowId);
+              if(!w) throw new Error(`No workflow ${input.workflowId} in tenant ${input.tenantId}`);
+              const draft=draftFrom(w);
+              const action=await proposeAction(userId,input.tenantId,'WORKFLOW_DRAFT',`New draft v${draft.version} of "${w.name}", cloned unchanged from v${w.version}`,{op:'SAVE_WORKFLOW',workflow:draft,before:w});
+              return {proposed:true,actionId:action.id,summary:action.summary};
+            }
+            if(name==='duplicate_workflow'){
+              const w=await findWorkflow(input.tenantId,input.workflowId);
+              if(!w) throw new Error(`No workflow ${input.workflowId} in tenant ${input.tenantId}`);
+              const targetTenantId=input.newTenantId||input.tenantId;
+              const copy={...w,id:input.newWorkflowId,tenantId:targetTenantId,name:input.newName,version:1,status:'draft'};
+              const shapeError=validateWorkflowShape(copy);
+              if(shapeError) throw new Error(shapeError);
+              const action=await proposeAction(userId,targetTenantId,'WORKFLOW_DUPLICATE',`New workflow "${input.newName}" (${input.newWorkflowId}) copied from "${w.name}"`,{op:'SAVE_WORKFLOW',workflow:copy,before:null});
+              return {proposed:true,actionId:action.id,summary:action.summary};
+            }
+            if(name==='update_step'){
+              const w=await findWorkflow(input.tenantId,input.workflowId);
+              if(!w) throw new Error(`No workflow ${input.workflowId} in tenant ${input.tenantId}`);
+              const before=JSON.parse(JSON.stringify(w));
+              const target=w.status==='draft'?w:draftFrom(w);
+              const stepIndex=target.steps.findIndex(s=>s.id===input.stepId);
+              if(stepIndex<0) throw new Error(`No step ${input.stepId} on workflow ${input.workflowId}`);
+              target.steps=target.steps.map((s,i)=>i===stepIndex?{...s,...input.patch}:s);
+              const shapeError=validateWorkflowShape(target);
+              if(shapeError) throw new Error(shapeError);
+              const action=await proposeAction(userId,input.tenantId,'WORKFLOW_STEP_UPDATE',`${w.status==='draft'?'Update':`New draft v${target.version} updating`} step "${input.stepId}" on "${w.name}"`,{op:'SAVE_WORKFLOW',workflow:target,before});
+              return {proposed:true,actionId:action.id,summary:action.summary};
+            }
+            if(name==='add_step'){
+              const w=await findWorkflow(input.tenantId,input.workflowId);
+              if(!w) throw new Error(`No workflow ${input.workflowId} in tenant ${input.tenantId}`);
+              const before=JSON.parse(JSON.stringify(w));
+              const target=w.status==='draft'?w:draftFrom(w);
+              if(target.steps.some(s=>s.id===input.step?.id)) throw new Error(`Step id "${input.step?.id}" already exists`);
+              target.steps=[...target.steps,input.step];
+              const shapeError=validateWorkflowShape(target);
+              if(shapeError) throw new Error(shapeError);
+              const action=await proposeAction(userId,input.tenantId,'WORKFLOW_STEP_ADD',`${w.status==='draft'?'Add':`New draft v${target.version} adding`} step "${input.step?.id}" (${input.step?.type}) to "${w.name}"`,{op:'SAVE_WORKFLOW',workflow:target,before});
+              return {proposed:true,actionId:action.id,summary:action.summary};
+            }
+            if(name==='assign_workflow_roles'){
+              const w=await findWorkflow(input.tenantId,input.workflowId);
+              if(!w) throw new Error(`No workflow ${input.workflowId} in tenant ${input.tenantId}`);
+              const valid=['FRONTLINE','CLIENT_ADMIN','SUPER_ADMIN'];
+              const roles=(input.assignedRoles||[]).filter(r=>valid.includes(r));
+              if(!roles.length) throw new Error('assignedRoles must include at least one of FRONTLINE, CLIENT_ADMIN, SUPER_ADMIN');
+              const target={...w,assignedRoles:roles};
+              const action=await proposeAction(userId,input.tenantId,'WORKFLOW_ROLES',`Assign "${w.name}" to roles: ${roles.join(', ')}`,{op:'SAVE_WORKFLOW',workflow:target,before:w});
+              return {proposed:true,actionId:action.id,summary:action.summary};
+            }
+            if(name==='set_workflow_status'){
+              const w=await findWorkflow(input.tenantId,input.workflowId);
+              if(!w) throw new Error(`No workflow ${input.workflowId} in tenant ${input.tenantId}`);
+              if(!['active','paused'].includes(input.status)) throw new Error('status must be active or paused');
+              const target={...w,status:input.status};
+              const action=await proposeAction(userId,input.tenantId,'WORKFLOW_STATUS',`${input.status==='active'?'Publish':'Pause'} "${w.name}" v${w.version} (currently ${w.status})`,{op:'SAVE_WORKFLOW',workflow:target,before:w});
+              return {proposed:true,actionId:action.id,summary:action.summary,highRisk:true};
+            }
+            if(name==='update_organization_branding'){
+              const org=await getOrganization(input.slug);
+              if(!org) throw new Error(`No organization with slug ${input.slug}`);
+              const patch=validateBranding(input);
+              const target={...org,branding:{...(org.branding||{}),...patch}};
+              const action=await proposeAction(userId,org.slug,'ORG_BRANDING',`Update sign-in branding for "${org.name}"`,{op:'SAVE_ORG',org:target,before:org});
+              return {proposed:true,actionId:action.id,summary:action.summary};
+            }
+            if(name==='generate_workflow_draft_from_sop'){
+              const draft=await generateWorkflowFromSop(input.sop,input.tenantId||'amazflow');
+              const action=await proposeAction(userId,draft.tenantId,'WORKFLOW_GENERATED',`New workflow draft "${draft.name}" generated from your description`,{op:'SAVE_WORKFLOW',workflow:draft,before:null});
+              return {proposed:true,actionId:action.id,summary:action.summary};
+            }
+            throw new Error(`Unknown tool ${name}`);
+          };
+
+          const loadCopilotConversation=async(userId)=>{
+            const out=await db.send(new GetItemCommand({TableName:table,Key:{pk:{S:'PLATFORM'},sk:{S:`COPILOTCONV#${userId}`}}}));
+            if(out.Item&&out.Item.document?.S) return JSON.parse(out.Item.document.S);
+            return {userId,messages:[]};
+          };
+          const saveCopilotConversation=async(conv)=>db.send(new PutItemCommand({TableName:table,Item:{pk:{S:'PLATFORM'},sk:{S:`COPILOTCONV#${conv.userId}`},document:{S:JSON.stringify(conv)},updatedAt:{S:now()}}}));
+
+          const runCopilotTurn=async(userId,userMessage)=>{
+            const conv=await loadCopilotConversation(userId);
+            const working=[...conv.messages,{role:'user',content:[{text:userMessage}]}];
+            const pendingActions=[];
+            for(let guard=0;guard<6;guard++){
+              const out=await bedrock.send(new ConverseCommand({modelId:process.env.BEDROCK_MODEL_ID,system:[{text:COPILOT_SYSTEM}],messages:working,toolConfig:{tools:COPILOT_TOOLS},inferenceConfig:{maxTokens:1500,temperature:0.2}}));
+              const message=out.output?.message;
+              if(!message) break;
+              working.push(message);
+              if(out.stopReason!=='tool_use'){
+                const text=message.content?.find(c=>c.text)?.text||'';
+                conv.messages=[...conv.messages,{role:'user',content:[{text:userMessage}]},{role:'assistant',content:[{text}]}];
+                await saveCopilotConversation(conv);
+                return {reply:text,pendingActions};
+              }
+              const toolResults=[];
+              for(const block of message.content||[]){
+                if(!block.toolUse) continue;
+                try{
+                  const result=await runCopilotTool(userId,block.toolUse.name,block.toolUse.input||{});
+                  if(result&&result.proposed) pendingActions.push(result);
+                  toolResults.push({toolResult:{toolUseId:block.toolUse.toolUseId,content:[{json:result}]}});
+                }catch(toolErr){
+                  toolResults.push({toolResult:{toolUseId:block.toolUse.toolUseId,content:[{json:{error:toolErr.message}}]},status:'error'});
+                }
+              }
+              working.push({role:'user',content:toolResults});
+            }
+            const fallback="I wasn't able to finish that within my tool-call budget -- try breaking the request into smaller steps.";
+            conv.messages=[...conv.messages,{role:'user',content:[{text:userMessage}]},{role:'assistant',content:[{text:fallback}]}];
+            await saveCopilotConversation(conv);
+            return {reply:fallback,pendingActions};
+          };
+
+          const applyCopilotAction=async(actionId,a)=>{
+            const out=await db.send(new GetItemCommand({TableName:table,Key:{pk:{S:'PLATFORM'},sk:{S:`COPILOTACTION#${actionId}`}}}));
+            if(!out.Item||!out.Item.document?.S) throw {status:404,message:'Proposed action not found'};
+            const action=JSON.parse(out.Item.document.S);
+            if(action.status!=='PENDING') throw {status:409,message:`This action is already ${action.status.toLowerCase()}`};
+            const payload=action.payload;
+            if(payload.op==='SAVE_WORKFLOW'){
+              const shapeError=validateWorkflowShape(payload.workflow);
+              if(shapeError) throw {status:400,message:shapeError};
+              payload.workflow.updatedAt=now();
+              await save('WORKFLOW',payload.workflow);
+              if(payload.workflow.version){
+                const paddedV=String(payload.workflow.version).padStart(6,'0');
+                await save('WORKFLOWVERSION',{...payload.workflow,id:`${payload.workflow.id}_v${paddedV}`});
+              }
+            } else if(payload.op==='SAVE_ORG'){
+              payload.org.updatedAt=now();
+              await saveOrganization(payload.org);
+            } else {
+              throw {status:500,message:`Unknown action payload op ${payload.op}`};
+            }
+            action.status='APPLIED'; action.appliedAt=now(); action.appliedBy=a.userId;
+            await db.send(new PutItemCommand({TableName:table,Item:{pk:{S:'PLATFORM'},sk:{S:`COPILOTACTION#${actionId}`},document:{S:JSON.stringify(action)},updatedAt:{S:now()}}}));
+            await logActivity(action.tenantId,{actor:a.userId,actorLabel:'Jay via AmazFlow Copilot',action:action.kind,summary:action.summary});
+            return action;
+          };
+          const discardCopilotAction=async(actionId)=>{
+            const out=await db.send(new GetItemCommand({TableName:table,Key:{pk:{S:'PLATFORM'},sk:{S:`COPILOTACTION#${actionId}`}}}));
+            if(!out.Item||!out.Item.document?.S) throw {status:404,message:'Proposed action not found'};
+            const action=JSON.parse(out.Item.document.S);
+            if(action.status!=='PENDING') throw {status:409,message:`This action is already ${action.status.toLowerCase()}`};
+            action.status='DISCARDED';
+            await db.send(new PutItemCommand({TableName:table,Item:{pk:{S:'PLATFORM'},sk:{S:`COPILOTACTION#${actionId}`},document:{S:JSON.stringify(action)},updatedAt:{S:now()}}}));
+            return action;
+          };
+
+          exports.handler=async e=>{try{if(e.source==='amazflow.sweep'){const result=await sweepExpired();return {ok:true,...result};}const route=e.routeKey||'';if(route==='GET /health')return reply(200,{ok:true,service:'amazflow-control-plane',boundary:process.env.DATA_BOUNDARY,aiRuntime:'amazon-bedrock'});if(route==='POST /leads'){const b=JSON.parse(e.body||'{}');const clean=v=>String(v==null?'':v).slice(0,2000).trim();const email=clean(b.email);const name=clean(b.name);if(clean(b.website))return reply(201,{ok:true});if(!name||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))return reply(400,{error:'A name and a valid work email are required'});const lead={id:`lead_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,tenantId:'amazflow',name,email,company:clean(b.company),role:clean(b.role),workflow:clean(b.workflow),volume:clean(b.volume),message:clean(b.message),source:clean(b.source)||'website',status:'new',createdAt:now()};await save('LEAD',lead);try{const text=['New AmazFlow lead','','Name: '+lead.name,'Email: '+lead.email,'Company: '+lead.company,'Role: '+lead.role,'Workflow to automate: '+lead.workflow,'Monthly volume: '+lead.volume,'Notes: '+lead.message,'','Source: '+lead.source,'Received: '+lead.createdAt,'Lead ID: '+lead.id].join('\n');await ses.send(new SendEmailCommand({FromEmailAddress:process.env.LEAD_FROM,Destination:{ToAddresses:[process.env.LEAD_TO]},ReplyToAddresses:[lead.email],Content:{Simple:{Subject:{Data:'New lead: '+lead.name+(lead.company?' - '+lead.company:'')},Body:{Text:{Data:text}}}}}));}catch(mailErr){console.error('lead email failed',mailErr.message);}return reply(201,{ok:true,id:lead.id});}if(route==='POST /agent-authorizations/{code}/exchange'){try{const result=await exchangeAgentCode(e.pathParameters?.code);return reply(200,result);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='GET /agent/tasks'){try{const agentCtx=await agentAuth(e);const items=await scanType('TASK#',{role:'SUPER_ADMIN'});const pending=items.filter(t=>t.tenantId===agentCtx.tenantId&&t.status==='PENDING');return reply(200,pending);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /agent/tasks/{id}/result'){try{const agentCtx=await agentAuth(e);const body=JSON.parse(e.body||'{}');const allTasks=await scanType('TASK#',{role:'SUPER_ADMIN'});const task=allTasks.find(t=>t.id===e.pathParameters?.id);if(!task||task.tenantId!==agentCtx.tenantId)return reply(404,{error:'Task not found'});const run=await resumeAgentTask(task.id,body,{role:'SUPER_ADMIN',userId:agentCtx.agentId,tenantId:agentCtx.tenantId});return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /agent/heartbeat'){try{const agentCtx=await agentAuth(e);const body=JSON.parse(e.body||'{}');await touchAgentHeartbeat(agentCtx.agentId,agentCtx.tenantId,body.version);return reply(200,{ok:true});}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='GET /organizations/{slug}/branding'){const org=await getOrganization(e.pathParameters?.slug);if(!org)return reply(404,{error:'Organization not found'});return reply(200,{slug:org.slug,name:org.name,branding:org.branding||{}});}const a=auth(e);if(!a.role)return reply(403,{error:'Role required'});if(route==='GET /me')return reply(200,a);if(route==='GET /workflows'){const items=await scanType('WORKFLOW#',a);return reply(200,items.sort((x,y)=>String(y.version).localeCompare(String(x.version))));}if(route==='POST /workflows'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins configure workflows'});const body=JSON.parse(e.body||'{}');const shapeError=validateWorkflowShape(body);if(shapeError)return reply(400,{error:shapeError});body.updatedAt=now();await save('WORKFLOW',body);if(body.version){const paddedV=String(body.version).padStart(6,'0');await save('WORKFLOWVERSION',{...body,id:`${body.id}_v${paddedV}`});}return reply(201,body);}if(route==='GET /organizations'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow administrators view organizations'});const orgs=await listOrganizations();return reply(200,orgs.sort((x,y)=>String(x.createdAt).localeCompare(String(y.createdAt))));}if(route==='POST /organizations'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow administrators create organizations'});const body=JSON.parse(e.body||'{}');const name=String(body.name||'').trim();if(!name)return reply(400,{error:'A name is required'});const slug=slugify(body.slug||name);if(!slug)return reply(400,{error:'Could not derive a usable slug from that name'});if(await getOrganization(slug))return reply(409,{error:`An organization with slug "${slug}" already exists`});const org={id:`org_${Date.now()}_${Math.random().toString(36).slice(2,8)}`,name,slug,status:'active',plan:body.plan||'design_partner',createdAt:now(),updatedAt:now()};await saveOrganization(org);return reply(201,org);}if(route==='POST /workflows/generate'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins generate workflows'});const body=JSON.parse(e.body||'{}');if(!body.sop||typeof body.sop!=='string')return reply(400,{error:'A sop description is required'});try{const draft=await generateWorkflowFromSop(body.sop,body.tenantId||a.tenantId||'amazflow');return reply(200,draft);}catch(err){return reply(422,{error:err.message||'Could not generate a workflow from that description'});}}if(route==='GET /leads'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow super admins view leads'});const items=await scanType('LEAD#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='GET /runs'){let items=await scanType('RUN#',a);if(a.role==='FRONTLINE')items=items.filter(r=>r.createdBy===a.userId);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='POST /workflows/{id}/runs'){const id=e.pathParameters?.id;const workflows=await scanType('WORKFLOW#',a);const workflow=workflows.find(w=>w.id===id);if(!workflow)return reply(404,{error:'Workflow not found'});if(a.role!=='SUPER_ADMIN'&&!(workflow.assignedRoles||[]).includes(a.role))return reply(403,{error:'This workflow is not assigned to your role'});if(workflow.status!=='active')return reply(409,{error:'This workflow is not published for execution'});const body=JSON.parse(e.body||'{}');if('description' in body&&!String(body.description||'').trim())return reply(400,{error:'Tell us what you need done before starting.'});return reply(201,await runWorkflow(workflow,body,a));}if(route==='POST /runs/{id}/cancel'){try{const run=await cancelRun(e.pathParameters?.id,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /runs/{id}/confirmations/{stepId}/confirm'){try{const run=await confirmActionGate(e.pathParameters?.id,e.pathParameters?.stepId,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='GET /agents'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins view agents'});const items=await scanType('AGENT#',a);return reply(200,items.sort((x,y)=>String(y.createdAt).localeCompare(String(x.createdAt))));}if(route==='POST /agent-authorizations'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins create agents'});const body=JSON.parse(e.body||'{}');const name=String(body.name||'').trim();if(!name)return reply(400,{error:'A name is required'});const targetTenantId=(a.role==='SUPER_ADMIN'&&body.tenantId)?body.tenantId:a.tenantId;const result=await createAgentAndCode(targetTenantId,name,body.allowedDomains,a.userId);return reply(201,result);}if(route==='POST /agents/{id}/revoke'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins revoke agents'});try{const agent=await revokeAgent(e.pathParameters?.id,a);return reply(200,agent);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='GET /agent-tasks'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins view agent tasks'});const items=await scanType('TASK#',a);return reply(200,items.filter(t=>t.status==='PENDING'));}if(route==='POST /agent-tasks/{id}/result'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins resolve agent tasks'});try{const body=JSON.parse(e.body||'{}');const run=await resumeAgentTask(e.pathParameters?.id,body,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /runs/{id}/approvals/{stepId}'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins decide approvals'});try{const body=JSON.parse(e.body||'{}');const run=await resumeApproval(e.pathParameters?.id,e.pathParameters?.stepId,!!body.approved,a);return reply(200,run);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /ai/execute'){const body=JSON.parse(e.body||'{}');const allowedOps=['classify','extract','transform','summarize','choose'];if(!allowedOps.includes(body.operation)||typeof body.prompt!=='string')return reply(400,{error:'Invalid bounded AI request'});const out=await ai(body,body.context||{});return reply(200,{model:process.env.BEDROCK_MODEL_ID,provider:'amazon-bedrock',...out});}if(route==='GET /tenants/{tenantId}/summary'){const tenantId=e.pathParameters?.tenantId;if(a.role!=='SUPER_ADMIN'&&tenantId!==a.tenantId)return reply(403,{error:'You can only view your own tenant'});return reply(200,await tenantSummary(tenantId));}if(route==='GET /tenants/{tenantId}/users'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins view team members'});const tenantId=e.pathParameters?.tenantId;if(a.role!=='SUPER_ADMIN'&&tenantId!==a.tenantId)return reply(403,{error:'You can only view your own tenant'});return reply(200,await listTenantUsers(tenantId));}if(route==='POST /tenants/{tenantId}/users/{username}/status'){if(a.role==='FRONTLINE')return reply(403,{error:'Only tenant admins manage team members'});const tenantId=e.pathParameters?.tenantId;if(a.role!=='SUPER_ADMIN'&&tenantId!==a.tenantId)return reply(403,{error:'You can only manage your own tenant'});const username=e.pathParameters?.username;const users=await listTenantUsers(tenantId);if(!users.find(u=>u.username===username))return reply(404,{error:'User not found in this tenant'});const body=JSON.parse(e.body||'{}');const Command=body.enabled?AdminEnableUserCommand:AdminDisableUserCommand;await cognito.send(new Command({UserPoolId:process.env.USER_POOL_ID,Username:username}));return reply(200,{username,enabled:!!body.enabled});}if(route==='POST /organizations/{slug}/branding'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'Only AmazFlow administrators manage organization branding'});const org=await getOrganization(e.pathParameters?.slug);if(!org)return reply(404,{error:'Organization not found'});let patch;try{patch=validateBranding(JSON.parse(e.body||'{}'));}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}org.branding={...(org.branding||{}),...patch};org.updatedAt=now();await saveOrganization(org);return reply(200,org);}if(route==='GET /copilot/conversation'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'AmazFlow Copilot is only available to AmazFlow administrators'});return reply(200,await loadCopilotConversation(a.userId));}if(route==='POST /copilot/messages'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'AmazFlow Copilot is only available to AmazFlow administrators'});const body=JSON.parse(e.body||'{}');const message=String(body.message||'').trim();if(!message)return reply(400,{error:'A message is required'});try{const result=await runCopilotTurn(a.userId,message);return reply(200,result);}catch(err){console.error('copilot turn failed',err);return reply(502,{error:'AmazFlow Copilot could not complete that request'});}}if(route==='POST /copilot/actions/{id}/apply'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'AmazFlow Copilot is only available to AmazFlow administrators'});try{const action=await applyCopilotAction(e.pathParameters?.id,a);return reply(200,action);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}if(route==='POST /copilot/actions/{id}/discard'){if(a.role!=='SUPER_ADMIN')return reply(403,{error:'AmazFlow Copilot is only available to AmazFlow administrators'});try{const action=await discardCopilotAction(e.pathParameters?.id);return reply(200,action);}catch(err){if(err&&err.status)return reply(err.status,{error:err.message});throw err;}}return reply(404,{error:'Route not found'});}catch(err){console.error(err);return reply(500,{error:err.message||'Control plane error'});}};
 
   HttpApi:
     Type: AWS::ApiGatewayV2::Api
@@ -795,6 +1061,57 @@ Resources:
     Properties:
       ApiId: !Ref HttpApi
       RouteKey: 'POST /tenants/{tenantId}/users/{username}/status'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+
+  # Public: the login page reads an organization's branding before anyone is authenticated.
+  # Only ever returns four display fields (never a secret) -- see validateBranding.
+  OrganizationBrandingGetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /organizations/{slug}/branding'
+      Target: !Sub integrations/${ApiIntegration}
+  OrganizationBrandingPostRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /organizations/{slug}/branding'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+
+  # AmazFlow Copilot (SUPER_ADMIN only, enforced in the handler).
+  CopilotConversationGetRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'GET /copilot/conversation'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+  CopilotMessagesPostRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /copilot/messages'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+  CopilotActionApplyPostRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /copilot/actions/{id}/apply'
+      Target: !Sub integrations/${ApiIntegration}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+  CopilotActionDiscardPostRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: 'POST /copilot/actions/{id}/discard'
       Target: !Sub integrations/${ApiIntegration}
       AuthorizationType: JWT
       AuthorizerId: !Ref JwtAuthorizer
