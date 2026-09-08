@@ -72,8 +72,8 @@ Resources:
       AllowedOAuthFlows: [code]
       AllowedOAuthScopes: [openid, email, profile]
       SupportedIdentityProviders: [COGNITO]
-      CallbackURLs: ['https://amazflow.com/app/']
-      LogoutURLs: ['https://amazflow.com/app/']
+      CallbackURLs: ['https://amazflow.com/app/', 'https://amazflow.com/console/']
+      LogoutURLs: ['https://amazflow.com/app/', 'https://amazflow.com/console/']
       AccessTokenValidity: 60
       IdTokenValidity: 60
       RefreshTokenValidity: 7
