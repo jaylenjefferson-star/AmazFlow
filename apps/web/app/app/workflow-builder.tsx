@@ -16,7 +16,7 @@ function defaultStep(type: (typeof STEP_TYPES)[number], id: string): WorkflowSte
     case "ai": return { id, name, type, operation: "extract", prompt: "", outputKey: "result", confidenceThreshold: 0.85 };
     case "action": return { id, name, type, provider: "mock", operation: "", input: {} };
     case "condition": return { id, name, type, path: "", operator: "equals", whenTrue: id, whenFalse: id };
-    case "approval": return { id, name, type, message: "", roles: ["admin"] };
+    case "approval": return { id, name, type, message: "", roles: ["CLIENT_ADMIN"] };
     case "verify": return { id, name, type, path: "", operator: "equals" };
     case "end": return { id, name, type, outcome: "success" };
     default: throw new Error(`Unhandled step type: ${type}`);
