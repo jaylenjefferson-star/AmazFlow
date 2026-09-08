@@ -1,7 +1,7 @@
 type AgentTask = { id: string; operation: string; input: Record<string, unknown>; expiresAt: string };
 
 const DEFAULT_API = "https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com";
-const allowed = new Set(["READ_TEXT", "CLICK", "TYPE", "SELECT", "VERIFY_TEXT", "SET_EMPLOYEE_STATUS"]);
+const allowed = new Set(["READ_TEXT", "CLICK", "TYPE", "SELECT", "CHECK", "SCROLL_TO", "WAIT_FOR", "VERIFY_TEXT", "SET_EMPLOYEE_STATUS"]);
 
 async function getConfig() {
   const stored = await chrome.storage.local.get(["apiBase", "agentToken"]);
