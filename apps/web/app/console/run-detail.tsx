@@ -195,7 +195,7 @@ export function RunDetailScreen({
       {run.status === "WAITING_APPROVAL" && approvalStep && (
         <div className="console-run-card">
           <p className="console-approval-message">{approvalStep.message}</p>
-          {role === "CLIENT_ADMIN" ? (
+          {role !== "FRONTLINE" ? (
             <>
               <div className="console-approval-actions">
                 <button className="console-btn console-btn-primary" onClick={() => act("approve")} disabled={busy !== null}>

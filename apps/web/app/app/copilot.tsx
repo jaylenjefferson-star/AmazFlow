@@ -13,7 +13,13 @@ type CopilotAction = {
   payload: { op: string; workflow?: any; org?: any; before?: any };
 };
 
-export function CopilotPanel({ request }: { request: (path: string, options?: RequestInit) => Promise<any> }) {
+export function CopilotPanel({
+  request,
+  context,
+}: {
+  request: (path: string, options?: RequestInit) => Promise<any>;
+  context?: { section: string; entityId?: string };
+}) {
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -68,7 +74,7 @@ export function CopilotPanel({ request }: { request: (path: string, options?: Re
     setSending(true);
     setError(null);
     try {
-      const result = await request("/copilot/messages", { method: "POST", body: JSON.stringify({ message: text }) });
+      const result = await request("/copilot/messages", { method: "POST", body: JSON.stringify({ message: text, context }) });
       setMessages((current) => [...current, { role: "assistant", text: result.reply || "" }]);
       if ((result.pendingActions as CopilotActionSummary[] | undefined)?.length) await loadPending();
     } catch (err) {
