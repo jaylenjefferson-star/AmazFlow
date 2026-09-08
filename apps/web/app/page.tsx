@@ -71,8 +71,8 @@ export default function MarketingHome() {
                 <p>Jay Jefferson spent his career inside healthcare operations at Virta Health and Oracle, and built AmazFlow after seeing the busywork firsthand. <Link href="/company">More about Jay →</Link></p>
               </article>
               <article className="credibility-card">
-                <b>Design-partner stage</b>
-                <p>We're onboarding a small number of design partners and building the proof case with each one, in the open.</p>
+                <b>"The strongest part of the AmazFlow model is the focus on execution."</b>
+                <p>Lauren, VP of Clinical Operations at a digital health company. <Link href="/company">Read the full story →</Link></p>
               </article>
               <article className="credibility-card">
                 <b>AWS-native from day one</b>

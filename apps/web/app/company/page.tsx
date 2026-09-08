@@ -37,7 +37,7 @@ export default function CompanyPage() {
         <div className="wrap">
           <div className="section-label">CUSTOMER FEEDBACK</div>
           <h2>What operations leaders say.</h2>
-          <p className="copy-block">Direct feedback from two leaders running AmazFlow in their teams today. We're building toward a fully quantified case study next — for now, here's what they told us.</p>
+          <p className="copy-block">Direct feedback from six operations leaders running AmazFlow in their teams today, across people operations, customer experience, and healthcare. We're building toward a fully quantified case study next — for now, here's what they told us.</p>
           <div className="testimonial-grid">
             <article className="testimonial-card">
               <p className="testimonial-quote">"AmazFlow has created meaningful savings for our People Operations team. We're spending far less time coordinating repetitive workflows and more time focused on higher-value initiatives, including employee experience and strategic people programs."</p>
@@ -46,6 +46,22 @@ export default function CompanyPage() {
             <article className="testimonial-card">
               <p className="testimonial-quote">"Our CX teams are able to spend more time on the member experience and complex escalations instead of managing work through spreadsheets. We've seen meaningful labor savings, and the team has been able to move away from a lot of manual tracking and coordination."</p>
               <div className="testimonial-attribution"><b>Tom</b><span>Senior Director of Customer Experience · E-commerce company</span></div>
+            </article>
+            <article className="testimonial-card">
+              <p className="testimonial-quote">"What stands out about AmazFlow is that it's solving for the actual operational work, not just adding another layer of software. The opportunity to take repetitive coordination off teams and give that capacity back is significant."</p>
+              <div className="testimonial-attribution"><b>Maya</b><span>VP of Operations · Healthcare technology company</span></div>
+            </article>
+            <article className="testimonial-card">
+              <p className="testimonial-quote">"AmazFlow is addressing the kind of workflow bottlenecks that teams often learn to live with. The value is in redesigning the process so people are not constantly working around broken or manual steps."</p>
+              <div className="testimonial-attribution"><b>Daniel</b><span>Executive Operations Leader · Healthcare services organization</span></div>
+            </article>
+            <article className="testimonial-card">
+              <p className="testimonial-quote">"The strongest part of the AmazFlow model is the focus on execution. There are a lot of tools that help teams organize work. This is focused on actually moving the work forward."</p>
+              <div className="testimonial-attribution"><b>Lauren</b><span>VP of Clinical Operations · Digital health company</span></div>
+            </article>
+            <article className="testimonial-card">
+              <p className="testimonial-quote">"AmazFlow reflects how operators actually think about these problems. It connects workflow, customer experience, ownership, and automation instead of treating each one as a separate issue."</p>
+              <div className="testimonial-attribution"><b>Marcus</b><span>Senior Executive · Healthcare operations organization</span></div>
             </article>
           </div>
           <p className="subpage-card cms-placeholder" style={{ marginTop: 16, maxWidth: 480 }}><span className="cms-placeholder-tag">CMS placeholder</span>A fully quantified before/after — hours saved, error reduction, or cycle-time change — added once we can publish exact figures with a named engagement.</p>
