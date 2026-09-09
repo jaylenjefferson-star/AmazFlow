@@ -12,6 +12,7 @@ import { WorkflowBuilder } from "./workflow-builder";
 import { CopilotPanel } from "./copilot";
 import { Overview } from "./overview";
 import { RunsPanel } from "./runs-panel";
+import type { ExecutorInvokeResult } from "../console/run-detail";
 import { ClientsPanel } from "./clients-panel";
 import { ConnectionsPanel } from "./connections-panel";
 import { AuditPanel } from "./audit-panel";
@@ -311,6 +312,15 @@ export default function ProductConsole() {
     }
   };
 
+  // POST /runs/{id}/executor/invoke doesn't return a WorkflowRun (it returns a grant/harness
+  // diagnostic result), so it can't reuse postRunAction's setRuns update -- refresh() afterward
+  // instead, since a real call writes an EXECUTOR_PROGRESS audit entry the run list should reflect.
+  const invokeExecutorAction = async (r: WorkflowRun): Promise<ExecutorInvokeResult> => {
+    const result = (await request(`/runs/${r.id}/executor/invoke`, { method: "POST" })) as ExecutorInvokeResult;
+    await refresh().catch(() => undefined);
+    return result;
+  };
+
   const setTicketStatus = async (ticket: Ticket, status: string) => {
     setBusyTicketId(ticket.id);
     try {
@@ -437,6 +447,7 @@ export default function ProductConsole() {
           onCancelRun={cancelRunAction}
           onRetry={view.section === "exceptions" ? retryRun : undefined}
           retryingId={retryingRunId}
+          onInvokeExecutor={role === "SUPER_ADMIN" ? invokeExecutorAction : undefined}
         />
       )}
 
@@ -466,7 +477,7 @@ export default function ProductConsole() {
           <div className="product-panelhead" style={{ marginTop: 18 }}><div><p className="product-eyebrow">CONNECTED AGENTS</p><h2>Authorized browsers</h2></div><button disabled={agentsLoading} onClick={() => { setAgentsLoading(true); refresh().finally(() => setAgentsLoading(false)); }}>{agentsLoading ? "Refreshing…" : "Refresh"}</button></div>
           {agentsLoading ? <p className="product-empty">Loading agents…</p> : agents.length === 0 ? <p className="product-empty">No agents connected yet.</p> : agents.map((agentItem) => <div className="product-orgrow" key={agentItem.id}><span className="product-glyph">◈</span><div><b>{agentItem.name}</b><small>{agentItem.status === "revoked" ? "Revoked" : agentItem.lastSeenAt ? `Last seen ${new Date(agentItem.lastSeenAt).toLocaleString()}` : "Never connected"}{agentItem.version ? ` · v${agentItem.version}` : ""}</small></div>{agentItem.status === "revoked" ? <mark>revoked</mark> : <button disabled={revokingAgentId === agentItem.id} onClick={() => revokeAgentById(agentItem.id)}>{revokingAgentId === agentItem.id ? "Revoking…" : "Revoke"}</button>}</div>)}
           <div className="product-panelhead" style={{ marginTop: 18 }}><div><p className="product-eyebrow">PENDING AGENT TASKS</p><h2>Waiting on a browser step</h2></div><button disabled={tasksLoading} onClick={loadAgentTasks}>Refresh</button></div>
-          {tasksLoading ? <p className="product-empty">Loading tasks…</p> : agentTasks.length === 0 ? <p className="product-empty">No runs are currently waiting on the browser agent.</p> : agentTasks.map((task) => <div className="product-runrow" key={task.id}><span className="product-dot" /><div><b>{task.operation}</b><small>run {task.runId} · step {task.stepId} · expires {new Date(task.expiresAt).toLocaleTimeString()}</small></div><mark>{task.status}</mark></div>)}
+          {tasksLoading ? <p className="product-empty">Loading tasks…</p> : agentTasks.length === 0 ? <p className="product-empty">No runs are currently waiting on the browser agent.</p> : agentTasks.map((task) => { const taskRun = runs.find((r) => r.id === task.runId); const taskWorkflow = taskRun ? workflows.find((w) => w.id === taskRun.workflowId) : undefined; return <button className="product-runrow product-runrow-clickable" key={task.id} onClick={() => setView({ section: "runs", entityId: task.runId })}><span className="product-dot" /><div><b>{taskWorkflow?.name ?? task.operation}</b><small>{taskWorkflow ? `${task.operation} · step ${task.stepId}` : `run ${task.runId} · step ${task.stepId}`} · expires {new Date(task.expiresAt).toLocaleTimeString()}</small></div><mark>{task.status}</mark></button>; })}
         </section></div>
       )}
 

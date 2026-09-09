@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import type { AmazFlowRole, WorkflowDefinition, WorkflowRun } from "@amazflow/workflow-schema";
-import { RunDetailScreen } from "../console/run-detail";
+import { RunDetailScreen, type ExecutorInvokeResult } from "../console/run-detail";
 
 type Mode = "runs" | "approvals" | "exceptions";
 
@@ -47,6 +47,7 @@ export function RunsPanel({
   onCancelRun,
   onRetry,
   retryingId,
+  onInvokeExecutor,
 }: {
   mode: Mode;
   runs: WorkflowRun[];
@@ -63,6 +64,7 @@ export function RunsPanel({
   onCancelRun: (run: WorkflowRun) => Promise<void>;
   onRetry?: (run: WorkflowRun) => Promise<void>;
   retryingId?: string | null;
+  onInvokeExecutor?: (run: WorkflowRun) => Promise<ExecutorInvokeResult>;
 }) {
   const [statusFilter, setStatusFilter] = useState(initialStatusFilter || "all");
   const [orgFilter, setOrgFilter] = useState("all");
@@ -100,6 +102,7 @@ export function RunsPanel({
           onConfirm={() => onConfirm(selectedRun)}
           onFixRequest={() => onFixRequest(selectedRun)}
           onCancelRun={() => onCancelRun(selectedRun)}
+          onInvokeExecutor={onInvokeExecutor ? () => onInvokeExecutor(selectedRun) : undefined}
         />
       </div>
     );

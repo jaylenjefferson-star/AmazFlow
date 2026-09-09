@@ -42,6 +42,23 @@ export function roleLabel(role: AmazFlowRole): string {
   return role === "CLIENT_ADMIN" ? "Team admin" : "Team member";
 }
 
+// SUPER_ADMIN-only troubleshooting label: which real execution mechanism handled a step.
+// 'browser' is the only provider that goes through the Chrome extension today -- everything
+// else is either the engine itself (api/mock) or a not-yet-built connector.
+const PROVIDER_BACKEND_LABELS: Record<string, string> = {
+  browser: "Chrome extension agent",
+  api: "AmazFlow API call",
+  spreadsheet: "Spreadsheet connector",
+  email: "Email connector",
+  file: "File connector",
+  mock: "Simulated (mock)",
+};
+
+export function providerBackendLabel(provider?: string): string {
+  if (!provider) return "Unknown";
+  return PROVIDER_BACKEND_LABELS[provider] ?? provider;
+}
+
 function humanizeSegment(segment: string): string {
   return segment
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")

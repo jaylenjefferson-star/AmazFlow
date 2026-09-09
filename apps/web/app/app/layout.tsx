@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Product Demo",
+  title: "AmazFlow Control Plane",
   description: "Operate the AmazFlow execution control plane.",
 };
 

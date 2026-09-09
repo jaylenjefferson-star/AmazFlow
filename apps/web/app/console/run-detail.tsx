@@ -8,12 +8,25 @@ import {
   completedDurationLine,
   completionVerdict,
   interpretationSummary,
+  providerBackendLabel,
   stageLabel,
   statusInfo,
   verificationStatement,
 } from "./copy";
 
 type ConsoleWorkflow = WorkflowDefinition & { manualMinutesEstimate?: number };
+
+// Response shape from POST /runs/{id}/executor/invoke -- UI-only, not part of the shared
+// workflow-schema package since it's specific to this one diagnostic route.
+export type ExecutorInvokeResult = {
+  grantIssued: boolean;
+  grantId: string;
+  stepId: string;
+  confirmationGranted: boolean;
+  harnessInvoked: boolean;
+  harnessText?: string | null;
+  harnessError?: string;
+};
 
 function buildStages(workflow: WorkflowDefinition, run: WorkflowRun): WorkflowStep[] {
   const stepsById = new Map(workflow.steps.map((step) => [step.id, step]));
@@ -48,6 +61,7 @@ export function RunDetailScreen({
   onConfirm,
   onFixRequest,
   onCancelRun,
+  onInvokeExecutor,
 }: {
   run: WorkflowRun;
   workflow: ConsoleWorkflow;
@@ -58,19 +72,21 @@ export function RunDetailScreen({
   onConfirm: () => Promise<void>;
   onFixRequest: () => Promise<void>;
   onCancelRun: () => Promise<void>;
+  onInvokeExecutor?: () => Promise<ExecutorInvokeResult>;
 }) {
   const status = statusInfo(run.status);
   const stages = useMemo(() => buildStages(workflow, run), [workflow, run]);
   const currentIndex = stages.findIndex((step) => step.id === run.currentStepId);
-  const [busy, setBusy] = useState<"approve" | "reject" | "confirm" | "fix" | "cancel" | null>(null);
+  const [busy, setBusy] = useState<"approve" | "reject" | "confirm" | "fix" | "cancel" | "executor" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [overlayOpen, setOverlayOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
+  const [executorResult, setExecutorResult] = useState<ExecutorInvokeResult | null>(null);
 
   const terminal = ["COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"].includes(run.status);
   const canCancel = CANCELLABLE.has(run.status) && (role !== "FRONTLINE" || run.createdBy === currentUserId);
 
-  const act = async (kind: "approve" | "reject" | "confirm" | "fix" | "cancel") => {
+  const act = async (kind: "approve" | "reject" | "confirm" | "fix" | "cancel" | "executor") => {
     setBusy(kind);
     setActionError(null);
     try {
@@ -81,6 +97,8 @@ export function RunDetailScreen({
       else if (kind === "cancel") {
         await onCancelRun();
         setCancelling(false);
+      } else if (kind === "executor" && onInvokeExecutor) {
+        setExecutorResult(await onInvokeExecutor());
       }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "That didn’t go through. Try again.");
@@ -92,6 +110,57 @@ export function RunDetailScreen({
   const approvalStep = workflow.steps.find((step) => step.id === run.currentStepId && step.type === "approval") as
     | Extract<WorkflowStep, { type: "approval" }>
     | undefined;
+
+  // Shared by the COMPLETED and (SUPER_ADMIN-only) FAILED cards -- the underlying data
+  // (run.stepResults, provider/operation) is populated identically for both terminal states,
+  // so a failed run gets the same real evidence a completed one does instead of a dead end.
+  const renderEvidenceTimeline = () => (
+    <div className="console-evidence-timeline">
+      {stages.map((step) => {
+        const result = run.stepResults?.[step.id];
+        if (!result) return null;
+        if (result.type === "verify") {
+          const passed = result.verificationResult?.passed;
+          return (
+            <div className="console-evidence-row" key={step.id}>
+              <span className={`console-evidence-check ${passed ? "ok" : "bad"}`}>{passed ? "✓" : "!"}</span>
+              <div>
+                <b>{passed ? "Verified" : "Verification failed"}</b>
+                <p>{HOW_WAS_THIS_CHECKED}</p>
+                {result.verificationResult && (
+                  <div className="console-evidence-facts">
+                    <span>
+                      Expected <b>{String(result.verificationResult.expected)}</b>
+                    </span>
+                    <span>
+                      Observed <b>{String(result.verificationResult.actual)}</b>
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div className="console-evidence-row" key={step.id}>
+            <span className={`console-evidence-check ${result.status === "SUCCEEDED" ? "ok" : "bad"}`}>
+              {result.status === "SUCCEEDED" ? "✓" : "!"}
+            </span>
+            <div>
+              <b>{step.name}</b>
+              <p>{result.status === "SUCCEEDED" ? "Completed" : "Failed"}</p>
+              {role === "SUPER_ADMIN" && result.provider && (
+                <p className="console-evidence-meta">
+                  Ran via {providerBackendLabel(result.provider)}
+                  {result.operation ? ` · ${result.operation}` : ""}
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 
   return (
     <div>
@@ -214,6 +283,42 @@ export function RunDetailScreen({
         </div>
       )}
 
+      {run.status === "WAITING_AGENT" && role === "SUPER_ADMIN" && (() => {
+        const waitingStep = workflow.steps.find(
+          (step) => step.id === run.currentStepId && step.type === "action"
+        ) as Extract<WorkflowStep, { type: "action" }> | undefined;
+        return (
+          <div className="console-run-card">
+            <p className="console-eyebrow" style={{ marginBottom: 10 }}>SUPER ADMIN · DIAGNOSTIC</p>
+            <p className="console-verification" style={{ fontWeight: 800 }}>
+              Waiting on {waitingStep?.provider === "browser" ? "a connected Chrome extension agent" : "the configured agent"}
+              {waitingStep?.operation ? ` to run ${waitingStep.operation}` : ""}.
+            </p>
+            <p style={{ color: "var(--muted)", marginBottom: 16 }}>
+              Invoking the AmazFlow Executor asks it to review this step and report progress into
+              the run’s audit trail. It does <b>not</b> perform the browser action itself — that
+              still requires a connected Chrome extension agent to pick up this step.
+            </p>
+            {onInvokeExecutor && (
+              <div className="console-approval-actions">
+                <button className="console-btn console-btn-diagnostic" onClick={() => act("executor")} disabled={busy !== null}>
+                  {busy === "executor" ? "Invoking…" : "Invoke AmazFlow Executor"}
+                </button>
+              </div>
+            )}
+            {actionError && <p className="console-approval-note" style={{ color: "var(--ink)", fontWeight: 700 }}>{actionError}</p>}
+            {executorResult && (
+              <div className="console-evidence-facts" style={{ marginTop: 14, flexDirection: "column", gap: 4 }}>
+                <span>Grant issued <b>{String(executorResult.grantIssued)}</b></span>
+                <span>Harness invoked <b>{String(executorResult.harnessInvoked)}</b></span>
+                {executorResult.harnessText && <span>Executor said: <b>{executorResult.harnessText}</b></span>}
+                {executorResult.harnessError && <span>Harness error: <b>{executorResult.harnessError}</b></span>}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {run.status === "COMPLETED" && (
         <div className="console-run-card">
           {(() => {
@@ -227,45 +332,7 @@ export function RunDetailScreen({
           })()}
           <p className="console-verification">{verificationStatement(run, workflow)}</p>
 
-          <div className="console-evidence-timeline">
-            {stages.map((step) => {
-              const result = run.stepResults?.[step.id];
-              if (!result) return null;
-              if (result.type === "verify") {
-                const passed = result.verificationResult?.passed;
-                return (
-                  <div className="console-evidence-row" key={step.id}>
-                    <span className={`console-evidence-check ${passed ? "ok" : "bad"}`}>{passed ? "✓" : "!"}</span>
-                    <div>
-                      <b>{passed ? "Verified" : "Verification failed"}</b>
-                      <p>{HOW_WAS_THIS_CHECKED}</p>
-                      {result.verificationResult && (
-                        <div className="console-evidence-facts">
-                          <span>
-                            Expected <b>{String(result.verificationResult.expected)}</b>
-                          </span>
-                          <span>
-                            Observed <b>{String(result.verificationResult.actual)}</b>
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              }
-              return (
-                <div className="console-evidence-row" key={step.id}>
-                  <span className={`console-evidence-check ${result.status === "SUCCEEDED" ? "ok" : "bad"}`}>
-                    {result.status === "SUCCEEDED" ? "✓" : "!"}
-                  </span>
-                  <div>
-                    <b>{step.name}</b>
-                    <p>{result.status === "SUCCEEDED" ? "Completed" : "Failed"}</p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          {renderEvidenceTimeline()}
 
           <details className="console-disclosure">
             <summary>How was this checked?</summary>
@@ -301,9 +368,13 @@ export function RunDetailScreen({
           <div className="console-failed-icon">!</div>
           <h2 style={{ font: "800 22px var(--font-display)", margin: "0 0 10px" }}>Needs a look</h2>
           <p style={{ color: "var(--muted)", marginBottom: 20 }}>AmazFlow stopped before making any change, because it couldn’t confirm the expected result.</p>
-          <a className="console-btn console-btn-primary" href="mailto:sales@amazflow.com?subject=A%20workflow%20run%20needs%20a%20look">
-            Contact your AmazFlow team
-          </a>
+          {role === "SUPER_ADMIN" ? (
+            renderEvidenceTimeline()
+          ) : (
+            <a className="console-btn console-btn-primary" href="mailto:sales@amazflow.com?subject=A%20workflow%20run%20needs%20a%20look">
+              Contact your AmazFlow team
+            </a>
+          )}
         </div>
       )}
     </div>
