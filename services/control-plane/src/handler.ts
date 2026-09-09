@@ -416,25 +416,67 @@ const saveOrganization = async (org) =>
 // context until looked up.
 const hashToken = (token) =>
   crypto.createHash("sha256").update(token).digest("hex");
+// installationId identifies one browser profile. Re-authorizing the same browser -- after a
+// sign-out, an expired session, or a restart -- reuses that browser's agent record instead of
+// minting another one. Without it every reconnect left another "Never connected" agent behind.
 const createAgentAndCode = async (
   tenantId,
   name,
   allowedDomains,
   createdBy,
   userRole,
+  installationId,
 ) => {
-  const agent = {
-    id: `agent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    tenantId,
-    name,
-    allowedDomains: Array.isArray(allowedDomains) ? allowedDomains : [],
-    status: "active",
-    createdBy,
-    createdAt: now(),
-    updatedAt: now(),
-    lastSeenAt: null,
-    version: null,
-  };
+  let agent = null;
+  if (installationId) {
+    const existing = await scanType("AGENT#", { role: "SUPER_ADMIN" });
+    agent =
+      existing.find(
+        (a) =>
+          a.tenantId === tenantId &&
+          a.installationId === installationId &&
+          a.createdBy === createdBy,
+      ) || null;
+  }
+  if (agent) {
+    // Superseding this browser's own credential: any token previously issued to this agent is
+    // retired here, so a reconnect never leaves an extra live credential behind.
+    const creds = await scanType("AGENTCRED#", { role: "SUPER_ADMIN" });
+    for (const cred of creds) {
+      if (cred.agentId !== agent.id || cred.status !== "active" || !cred.tokenHash)
+        continue;
+      cred.status = "superseded";
+      cred.supersededAt = now();
+      await db.send(
+        new PutItemCommand({
+          TableName: table,
+          Item: {
+            pk: { S: "PLATFORM" },
+            sk: { S: `AGENTCRED#${cred.tokenHash}` },
+            document: { S: JSON.stringify(cred) },
+            updatedAt: { S: now() },
+          },
+        }),
+      );
+    }
+    agent.name = name || agent.name;
+    agent.status = "active";
+    agent.updatedAt = now();
+  } else {
+    agent = {
+      id: `agent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      tenantId,
+      name,
+      allowedDomains: Array.isArray(allowedDomains) ? allowedDomains : [],
+      status: "active",
+      createdBy,
+      installationId: installationId || null,
+      createdAt: now(),
+      updatedAt: now(),
+      lastSeenAt: null,
+      version: null,
+    };
+  }
   await save("AGENT", agent);
   const code = crypto.randomBytes(24).toString("hex");
   const settings = await getSettings();
@@ -493,6 +535,7 @@ const exchangeAgentCode = async (code) => {
     tenantId: codeDoc.tenantId,
     userId: codeDoc.userId,
     userRole: codeDoc.userRole,
+    tokenHash: hashToken(token),
     createdAt: now(),
     status: "active",
   };
@@ -549,7 +592,13 @@ const agentAuth = async (e) => {
     throw { status: 401, message: "Invalid agent token" };
   const cred = JSON.parse(out.Item.document.S);
   if (cred.status !== "active")
-    throw { status: 401, message: "This agent credential has been revoked" };
+    throw {
+      status: 401,
+      message:
+        cred.status === "superseded"
+          ? "This browser was reconnected. Sign in again from the AmazFlow extension."
+          : "This agent credential has been revoked",
+    };
   const agentOut = await db.send(
     new GetItemCommand({
       TableName: table,
@@ -3726,6 +3775,9 @@ exports.handler = async (e) => {
         body.allowedDomains,
         a.userId,
         a.role,
+        typeof body.installationId === "string"
+          ? body.installationId.slice(0, 200)
+          : null,
       );
       await logActivity(targetTenantId, {
         actor: a.userId,

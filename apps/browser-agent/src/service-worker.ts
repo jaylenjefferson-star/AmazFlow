@@ -1,248 +1,223 @@
-type AgentTask = { id: string; operation: string; input: Record<string, unknown>; expiresAt: string; tenantId?: string; workflowId?: string; assignedRoles?: string[]; createdBy?: string };
+import { API, AuthError, refreshSession, revokeRefreshToken, signIn, type Session } from "./auth.js";
 
-// What POST /agent/tasks/{id}/claim returns. The grant -- not this agent's long-lived bearer
-// token -- is what actually authorizes the two calls that follow, and AmazFlow binds it to one
-// run, workflow version and step, accepts each of its tools exactly once, and expires it in
-// minutes. Nothing here is worth persisting: a grant that outlives the step it was minted for is
-// useless, so it stays in this one function's scope and is never written to chrome.storage.
-type TaskClaim = {
-  task: AgentTask;
-  grant: string;
-  grantId: string;
-  runId: string;
-  stepId: string;
-  claimExpiresAt: string;
+type AgentTask = {
+  id: string; operation: string; input: Record<string, unknown>; expiresAt: string;
+  tenantId?: string; workflowId?: string; assignedRoles?: string[]; createdBy?: string;
+};
+type TaskClaim = { task: AgentTask; grant: string; grantId: string; runId: string; stepId: string; claimExpiresAt: string };
+type AgentRecord = { id: string; name: string; token: string; tenantId: string };
+type Status = {
+  state: "signed_out" | "connected" | "working" | "error";
+  detail?: string;
+  lastHeartbeatAt?: string | null;
+  lastResult?: { at: string; operation: string; ok: boolean; detail: string } | null;
 };
 
-const DEFAULT_API = "https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com";
-const allowed = new Set(["READ_TEXT", "CLICK", "TYPE", "SELECT", "CHECK", "SCROLL_TO", "WAIT_FOR", "VERIFY_TEXT", "SET_EMPLOYEE_STATUS"]);
+const ALLOWED_OPS = new Set(["READ_TEXT", "CLICK", "TYPE", "SELECT", "CHECK", "SCROLL_TO", "WAIT_FOR", "VERIFY_TEXT", "SET_EMPLOYEE_STATUS"]);
+const VERSION = () => chrome.runtime.getManifest().version;
 
-async function getConfig() {
-  const stored = await chrome.storage.local.get(["apiBase", "agentToken"]);
-  return { apiBase: (stored.apiBase as string) || DEFAULT_API, agentToken: (stored.agentToken as string) || "" };
+const get = <T,>(keys: string[]) => chrome.storage.local.get(keys) as unknown as Promise<T>;
+const set = (values: Record<string, unknown>) => chrome.storage.local.set(values);
+
+async function setStatus(patch: Partial<Status>) {
+  const { status } = await get<{ status?: Status }>(["status"]);
+  await set({ status: { ...(status ?? { state: "signed_out" }), ...patch } });
 }
 
-async function hasHostPermission(origin: string) {
-  return chrome.permissions.contains({ origins: [`${origin}/*`] });
+// Everything the old build stored belonged to the page-handshake flow: a token obtained by
+// watching a tab for a ?code=, plus the tab id it was watching. None of it can be migrated into
+// the new model -- those credentials were minted without an installation id, so reusing one
+// would register a second agent for this same browser, which is exactly the duplication the
+// Agents list already filled up with. Clear it once and let the person sign in.
+const LEGACY_KEYS = ["agentToken", "agentId", "agentName", "tenantId", "userId", "userRole", "pendingConnectTabId", "lastConnectionError", "currentTask"];
+async function migrateLegacyState() {
+  const stored = await chrome.storage.local.get([...LEGACY_KEYS, "schemaVersion"]);
+  if (stored.schemaVersion === 2) return;
+  await chrome.storage.local.remove(LEGACY_KEYS);
+  await set({ schemaVersion: 2 });
+  if (stored.agentToken) {
+    await setStatus({ state: "signed_out", detail: "This browser was connected with an older AmazFlow agent. Sign in once to reconnect." });
+  }
+}
+
+// Stable per-installation identifier. The control plane keys agent records on it, so signing in
+// again -- after a sign-out, a token expiry, or a browser restart -- reuses this browser's agent
+// record instead of creating another one.
+async function installationId(): Promise<string> {
+  const { installationId: existing } = await get<{ installationId?: string }>(["installationId"]);
+  if (existing) return existing;
+  const created = crypto.randomUUID();
+  await set({ installationId: created });
+  return created;
+}
+
+async function currentSession(): Promise<Session | null> {
+  const { session } = await get<{ session?: Session }>(["session"]);
+  if (!session) return null;
+  if (session.expiresAt > Date.now() + 60_000) return session;
+  if (!session.refreshToken) return null;
+  try {
+    const refreshed = await refreshSession(session.refreshToken);
+    await set({ session: refreshed });
+    return refreshed;
+  } catch {
+    return null;
+  }
+}
+
+// Registers (or re-registers) this browser as an agent of the signed-in user's organization and
+// exchanges the one-time code for the agent credential the /agent/* routes accept. Both calls
+// are made by the extension itself; no AmazFlow page is involved and nothing is put in a URL.
+async function registerAgent(session: Session, tenantId: string): Promise<AgentRecord> {
+  const authorize = await fetch(`${API}/agent-authorizations`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${session.idToken}` },
+    body: JSON.stringify({
+      name: `${session.email.split("@")[0]} · Chrome`,
+      installationId: await installationId(),
+      ...(session.role === "SUPER_ADMIN" ? { tenantId } : {}),
+    }),
+  });
+  const authorized = await authorize.json();
+  if (!authorize.ok) throw new AuthError(authorized.error || `Could not register this browser (${authorize.status})`, "RegisterFailed");
+  const exchange = await fetch(`${API}/agent-authorizations/${encodeURIComponent(authorized.code)}/exchange`, { method: "POST" });
+  const credential = await exchange.json();
+  if (!exchange.ok) throw new AuthError(credential.error || `Could not activate this browser (${exchange.status})`, "ExchangeFailed");
+  return { id: credential.agentId, name: credential.agentName || "AmazFlow Agent", token: credential.token, tenantId: credential.tenantId };
+}
+
+async function connect(email: string, password: string, tenantId?: string) {
+  const session = await signIn(email, password);
+  await set({ session });
+  const agent = await registerAgent(session, tenantId || session.tenantId);
+  await set({ agent });
+  await heartbeat(agent);
+  await setStatus({ state: "connected", detail: undefined });
+  scheduleAlarms();
+  return agent;
+}
+
+async function disconnect() {
+  const { session } = await get<{ session?: Session }>(["session"]);
+  await revokeRefreshToken(session?.refreshToken);
+  await chrome.storage.local.remove(["session", "agent", "currentTask", "activityLog"]);
+  await setStatus({ state: "signed_out", detail: undefined, lastHeartbeatAt: null, lastResult: null });
+}
+
+async function heartbeat(agent: AgentRecord) {
+  const response = await fetch(`${API}/agent/heartbeat`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agent.token },
+    body: JSON.stringify({ version: VERSION() }),
+  });
+  if (!response.ok) throw new Error(`Heartbeat failed (${response.status})`);
+  await setStatus({ lastHeartbeatAt: new Date().toISOString() });
 }
 
 type ActivityEntry = { at: string; operation: string; selector?: string; ok: boolean; detail: string };
-
-// Feeds the popup's "Recent activity" list -- the only place a person watching the extension
-// (rather than the tab it's acting on, which they may not be looking at the instant it runs) can
-// see what the agent actually did. Capped so this never grows into a real log store.
 async function logActivity(entry: ActivityEntry) {
-  const { activityLog } = await chrome.storage.local.get(["activityLog"]);
-  const next = [entry, ...(Array.isArray(activityLog) ? activityLog : [])].slice(0, 20);
-  await chrome.storage.local.set({ activityLog: next });
+  const { activityLog } = await get<{ activityLog?: ActivityEntry[] }>(["activityLog"]);
+  await set({ activityLog: [entry, ...(Array.isArray(activityLog) ? activityLog : [])].slice(0, 20) });
+  await setStatus({ lastResult: { at: entry.at, operation: entry.operation, ok: entry.ok, detail: entry.detail } });
 }
 
 function scheduleAlarms() {
   chrome.alarms.create("amazflow-poll", { periodInMinutes: 0.25 });
   chrome.alarms.create("amazflow-heartbeat", { periodInMinutes: 2 });
 }
+chrome.runtime.onInstalled.addListener(() => { void migrateLegacyState().then(scheduleAlarms); });
+chrome.runtime.onStartup.addListener(() => { void migrateLegacyState().then(scheduleAlarms); });
 
-async function sendHeartbeat(apiBase: string, agentToken: string) {
-  const response = await fetch(`${apiBase}/agent/heartbeat`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agentToken },
-    body: JSON.stringify({ version: chrome.runtime.getManifest().version }),
-  });
-  if (!response.ok) throw new Error(`Heartbeat failed (${response.status})`);
+// The agent acts on whichever tab the step names, and falls back to the focused tab only when a
+// step names no destination. Nothing here consults a per-site grant: host access is granted once
+// to the extension by Chrome at install time, and *which* page may be touched is decided by the
+// server-signed execution grant, not by a toggle in this popup.
+const INJECTABLE = /^https?:/;
+async function targetTabFor(task: AgentTask): Promise<chrome.tabs.Tab | null> {
+  const wanted = typeof task.input?.url === "string" ? (task.input.url as string) : null;
+  const tabs = await chrome.tabs.query({});
+  if (wanted) {
+    let origin: string;
+    try { origin = new URL(wanted).origin; } catch { return null; }
+    const exact = tabs.find((t) => t.url === wanted && INJECTABLE.test(t.url ?? ""));
+    if (exact) return exact;
+    const sameOrigin = tabs.find((t) => t.url?.startsWith(origin));
+    if (sameOrigin) return sameOrigin;
+    return await chrome.tabs.create({ url: wanted, active: false });
+  }
+  const [focused] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (focused?.url && INJECTABLE.test(focused.url)) return focused;
+  return tabs.find((t) => INJECTABLE.test(t.url ?? "")) ?? null;
 }
 
-chrome.runtime.onInstalled.addListener(scheduleAlarms);
-chrome.runtime.onStartup.addListener(scheduleAlarms);
+async function runOnce(agent: AgentRecord) {
+  const tasks: AgentTask[] = await fetch(`${API}/agent/tasks`, { headers: { "X-AmazFlow-Agent-Token": agent.token } })
+    .then((r) => (r.ok ? r.json() : []))
+    .catch(() => []);
 
-const exchangingCodes = new Set<string>();
-
-async function exchangeAuthorizationCode(tabId: number, url: string) {
-  const { pendingConnectTabId } = await chrome.storage.local.get(["pendingConnectTabId"]);
-  if (!pendingConnectTabId || tabId !== pendingConnectTabId) return;
-  let code: string | null = null;
-  try {
-    code = new URL(url).searchParams.get("code");
-  } catch {
-    return;
-  }
-  if (!code || exchangingCodes.has(code)) return;
-
-  exchangingCodes.add(code);
-  const { apiBase } = await getConfig();
-  try {
-    const response = await fetch(`${apiBase}/agent-authorizations/${encodeURIComponent(code)}/exchange`, { method: "POST" });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error || "Exchange failed");
-    await chrome.storage.local.set({
-      agentToken: body.token,
-      agentId: body.agentId,
-      agentName: body.agentName || "AmazFlow Browser Agent",
-      tenantId: body.tenantId,
-      userId: body.userId,
-      userRole: body.userRole,
-    });
-    await chrome.storage.local.remove(["pendingConnectTabId", "lastConnectionError"]);
-    await sendHeartbeat(apiBase, body.token);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    await chrome.storage.local.set({ lastConnectionError: `Connection failed: ${message}` });
-    console.error("AmazFlow agent connect failed", error);
-  } finally {
-    exchangingCodes.delete(code);
-  }
-}
-
-// Completes the "Connect to AmazFlow" flow started from the popup: watches the specific tab it
-// opened (not every tab, to avoid ever matching on an unrelated page) for the ?code=... the
-// /agent-authorize page pushes into its own URL via history.replaceState once a human approves,
-// then exchanges that one-time code server-side for an agent-scoped credential. The popup never
-// handles the human's Cognito session at all.
-chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
-  if (changeInfo.url) await exchangeAuthorizationCode(tabId, changeInfo.url);
-});
-
-chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
-  void exchangeAuthorizationCode(details.tabId, details.url);
-}, { url: [{ hostEquals: "amazflow.com", pathPrefix: "/agent-authorize" }] });
-
-chrome.alarms.onAlarm.addListener(async (alarm) => {
-  if (alarm.name === "amazflow-heartbeat") {
-    const { apiBase, agentToken } = await getConfig();
-    if (!agentToken) return;
-    await sendHeartbeat(apiBase, agentToken).catch(() => undefined);
-    return;
-  }
-
-  if (alarm.name !== "amazflow-poll") return;
-
-  // Fallback for the one-time "Connect to AmazFlow" handshake. chrome.tabs.onUpdated and
-  // webNavigation.onHistoryStateUpdated are supposed to catch the ?code=... the authorize page
-  // pushes via history.replaceState once a human approves, but this is a pure client-side URL
-  // change (no navigation, no network request) and this MV3 service worker can be asleep at
-  // that exact moment -- Chrome does not reliably wake it for that specific event. This alarm is
-  // already running every 15s regardless, so it also just directly checks the pending connect
-  // tab's current URL, which needs no event to have fired at all.
-  const { pendingConnectTabId } = await chrome.storage.local.get(["pendingConnectTabId"]);
-  if (pendingConnectTabId) {
-    try {
-      const tab = await chrome.tabs.get(pendingConnectTabId);
-      if (tab.url) await exchangeAuthorizationCode(pendingConnectTabId, tab.url);
-    } catch {
-      // The tab was closed before authorizing -- stop polling for it.
-      await chrome.storage.local.remove(["pendingConnectTabId"]);
-    }
-  }
-
-  const { apiBase, agentToken } = await getConfig();
-  if (!agentToken) return;
-
-  const tasks = await fetch(`${apiBase}/agent/tasks`, { headers: { "X-AmazFlow-Agent-Token": agentToken } })
-    .then((r) => (r.ok ? (r.json() as Promise<AgentTask[]>) : []))
-    .catch(() => [] as AgentTask[]);
-  
-  // Security: Get agent's tenant and user role to ensure proper filtering
-  const { tenantId: myTenantId, userRole } = await chrome.storage.local.get(["tenantId", "userRole"]);
-  
-  // Filter tasks to only those the user is authorized to execute
-  const validTasks = tasks.filter((t) => {
-    // Must be from our tenant (prevent cross-tenant leakage)
-    if (myTenantId && t.tenantId && t.tenantId !== myTenantId) return false;
-    
-    // Must be an allowed operation
-    if (!allowed.has(t.operation)) return false;
-    
-    // Must not be expired
-    if (new Date(t.expiresAt).getTime() <= Date.now()) return false;
-    
-    // Permission check: workflow must be assigned to user's role
-    // SUPER_ADMIN can execute anything, others must have their role in assignedRoles
-    if (userRole !== "SUPER_ADMIN" && t.assignedRoles && t.assignedRoles.length > 0) {
-      if (!t.assignedRoles.includes(userRole)) return false;
-    }
-    
-    return true;
-  });
-  
-  const candidate = validTasks[0]; // Take first valid task
+  // The server already scopes this list to the agent's organization, role, and ownership. These
+  // are cheap local checks so the agent never claims work this build could not carry out.
+  const candidate = tasks.find(
+    (t) => ALLOWED_OPS.has(t.operation) && new Date(t.expiresAt).getTime() > Date.now() && (!t.tenantId || t.tenantId === agent.tenantId),
+  );
   if (!candidate) return;
 
-  // Resolve the target tab and its permission grant BEFORE claiming. Claiming takes a lease that
-  // blocks every other connected agent from the step for minutes, so it must not be taken for a
-  // task this browser was never going to be able to run.
-  const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!activeTab?.id || !activeTab.url) return;
-  const origin = new URL(activeTab.url).origin;
-  if (!(await hasHostPermission(origin))) return;
-
-  // Claim it. Exactly one agent wins; anyone else gets a 409 and simply waits for the next tick.
-  // This is what replaced "every agent in the tenant sees the same pending task and all of them
-  // act on it" -- previously two open browsers performed the same click and the loser only found
-  // out when its result was rejected, after the side effect had already happened twice.
+  const tab = await targetTabFor(candidate);
   const selector = typeof candidate.input?.selector === "string" ? (candidate.input.selector as string) : undefined;
+  if (!tab?.id) {
+    await logActivity({ at: new Date().toISOString(), operation: candidate.operation, selector, ok: false, detail: "No page available to act on — open the target site in a tab." });
+    return;
+  }
+
+  // Claim before touching the page: exactly one agent wins the lease, so two browsers signed into
+  // the same organization can never both perform the same action.
   let claim: TaskClaim;
   try {
-    const claimResponse = await fetch(`${apiBase}/agent/tasks/${candidate.id}/claim`, {
+    const response = await fetch(`${API}/agent/tasks/${candidate.id}/claim`, {
       method: "POST",
-      headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agentToken },
+      headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agent.token },
     });
-    const claimBody = await claimResponse.json();
-    if (!claimResponse.ok) throw new Error(claimBody.error || `Claim failed (${claimResponse.status})`);
-    claim = claimBody as TaskClaim;
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || `Claim failed (${response.status})`);
+    claim = body as TaskClaim;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // A lost race is the normal, uninteresting case and shouldn't fill the operator's activity
-    // list; anything else is worth showing, because it means this agent can't take work at all.
     if (!/already/i.test(message)) {
-      await logActivity({ at: new Date().toISOString(), operation: candidate.operation, selector, ok: false, detail: `Couldn't claim the task -- ${message}` });
+      await logActivity({ at: new Date().toISOString(), operation: candidate.operation, selector, ok: false, detail: `Couldn’t claim the task — ${message}` });
     }
     return;
   }
 
   const task = claim.task || candidate;
-  const grant = claim.grant;
-  await chrome.storage.local.set({
-    currentTask: { operation: task.operation, stepId: claim.stepId, runId: claim.runId, selector, claimExpiresAt: claim.claimExpiresAt },
-  });
+  await set({ currentTask: { operation: task.operation, stepId: claim.stepId, runId: claim.runId, selector, claimExpiresAt: claim.claimExpiresAt, url: tab.url ?? null } });
+  await setStatus({ state: "working", detail: `${task.operation} · step ${claim.stepId}` });
 
-  await chrome.scripting.executeScript({ target: { tabId: activeTab.id }, files: ["content.js"] }).catch(() => undefined);
-  const response = await chrome.tabs.sendMessage(activeTab.id, { type: "AMAZFLOW_TASK", task }).catch((error) => ({ ok: false, error: String(error) }));
+  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] }).catch(() => undefined);
+  const response = await chrome.tabs.sendMessage(tab.id, { type: "AMAZFLOW_TASK", task }).catch((error) => ({ ok: false, error: String(error) }));
 
-  // Always report back, success or failure -- the run needs to know either way (it either
-  // advances or routes to the step's onFailure/FAILED), rather than silently expiring the task
-  // with no evidence of what happened.
-  const evidence = { url: activeTab.url, title: activeTab.title || null, origin, observedAt: new Date().toISOString() };
-  const result = response?.ok
-    ? { ok: true, ...response.result, evidence }
-    : { ok: false, error: response?.error || "Unknown error", evidence };
+  const evidence = { url: tab.url ?? null, title: tab.title ?? null, observedAt: new Date().toISOString() };
+  const result = response?.ok ? { ok: true, ...response.result, evidence } : { ok: false, error: response?.error || "Unknown error", evidence };
 
-  // Write the evidence note into the run's own audit trail before submitting the terminal
-  // result. It is the same Gateway-mediated record_step_result tool the managed executor uses,
-  // authorized by the same grant, and it is deliberately separate from the result submission:
-  // if reporting the result then fails, the run still carries a durable record of what this
-  // browser did and on which page, instead of the step looking like it never ran.
-  await fetch(`${apiBase}/agent/tools/record-step-result`, {
+  // Evidence first, then the terminal result: if reporting the result fails, the run still holds a
+  // durable record of what this browser did and where, instead of the step looking like it never ran.
+  await fetch(`${API}/agent/tools/record-step-result`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      grant,
+      grant: claim.grant,
       stepId: claim.stepId,
       status: result.ok ? "SUCCEEDED" : "FAILED",
-      note: `${task.operation}${selector ? ` on ${selector}` : ""} at ${evidence.url}${result.ok ? "" : ` -- ${String(result.error)}`}`,
+      note: `${task.operation}${selector ? ` on ${selector}` : ""} at ${evidence.url}${result.ok ? "" : ` — ${String(result.error)}`}`,
     }),
   }).catch(() => undefined);
 
-  // Report back to the control plane before logging anything locally as "Completed" -- the
-  // browser action can succeed while this call still fails (network blip, the task already
-  // expired server-side, or the claim lease ran out), and the operator's activity log should
-  // reflect whether the run actually resumed, not just whether the DOM action worked. A
-  // rejected/expired result won't succeed on retry, so only network failures get retried.
   let reported = false;
   let reportError: string | undefined;
   for (let attempt = 0; attempt < 3 && !reported; attempt++) {
     try {
-      const res = await fetch(`${apiBase}/agent/tasks/${task.id}/result`, {
+      const res = await fetch(`${API}/agent/tasks/${task.id}/result`, {
         method: "POST",
-        headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agentToken, "X-AmazFlow-Execution-Grant": grant },
+        headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agent.token, "X-AmazFlow-Execution-Grant": claim.grant },
         body: JSON.stringify(result),
       });
       if (res.ok) { reported = true; break; }
@@ -255,11 +230,61 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   }
 
   await chrome.storage.local.remove(["currentTask"]);
+  await setStatus({ state: "connected", detail: undefined });
   await logActivity({
     at: new Date().toISOString(),
     operation: task.operation,
     selector,
     ok: Boolean(result.ok) && reported,
-    detail: !result.ok ? String(result.error || "Failed") : reported ? "Completed" : `Ran, but AmazFlow didn't record it -- ${reportError}`,
+    detail: !result.ok ? String(result.error || "Failed") : reported ? "Completed" : `Ran, but AmazFlow didn’t record it — ${reportError}`,
+  });
+}
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  const { agent } = await get<{ agent?: AgentRecord }>(["agent"]);
+  if (!agent) return;
+  if (alarm.name === "amazflow-heartbeat") {
+    await heartbeat(agent).catch(async (error) => {
+      // A revoked or deleted agent is the one failure the person has to act on; everything else
+      // is transient and the next tick retries.
+      await setStatus({ state: "error", detail: error instanceof Error ? error.message : String(error) });
+    });
+    return;
+  }
+  if (alarm.name !== "amazflow-poll") return;
+  await runOnce(agent).catch(async (error) => {
+    await setStatus({ state: "error", detail: error instanceof Error ? error.message : String(error) });
   });
 });
+
+// The popup is a view onto this worker, never the owner of the connection: it can start a
+// sign-in, read state, or disconnect, and closing it changes nothing about polling or execution.
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === "AMAZFLOW_CONNECT") {
+    connect(message.email, message.password, message.tenantId)
+      .then((agent) => sendResponse({ ok: true, agent: { id: agent.id, name: agent.name, tenantId: agent.tenantId } }))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+  if (message?.type === "AMAZFLOW_DISCONNECT") {
+    disconnect().then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  if (message?.type === "AMAZFLOW_RECONNECT") {
+    (async () => {
+      const session = await currentSession();
+      if (!session) throw new AuthError("Your AmazFlow session expired. Sign in again.", "Expired");
+      const agent = await registerAgent(session, session.tenantId);
+      await set({ agent });
+      await heartbeat(agent);
+      await setStatus({ state: "connected", detail: undefined });
+      scheduleAlarms();
+    })()
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+  return undefined;
+});
+
+void migrateLegacyState().then(scheduleAlarms);

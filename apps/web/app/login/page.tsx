@@ -10,12 +10,10 @@ import "../auth.css";
 type OrgBranding = { displayName?: string; logoUrl?: string; accent?: string; loginMessage?: string };
 
 // A safe `next` is any same-origin relative path -- "/foo", never "//foo" (protocol-relative,
-// resolves to an external host) or anything containing "://". Previously this only allowlisted
-// "/app" and "/console" by name, which silently dropped every other real deep link -- including
-// /agent-authorize/, the page the extension's "Connect to AmazFlow" flow depends on: a
-// not-yet-signed-in user bounced through /login lost their destination and landed in their normal
-// console instead, with no sign anything had gone wrong and no code ever handed back to the
-// extension.
+// resolves to an external host) or anything containing "://". This previously allowlisted "/app"
+// and "/console" by name, which silently dropped every other real deep link: a not-yet-signed-in
+// user bounced through /login lost their destination and landed in their normal console instead,
+// with no sign anything had gone wrong.
 function isSafeNext(next: string | null): next is string {
   return !!next && next.startsWith("/") && !next.startsWith("//") && !next.includes("://");
 }

@@ -201,6 +201,47 @@ const check = (name, fn) => fn().then(() => { pass++; console.log("  PASS  " + n
     assert.equal(JSON.parse(store.get(`TENANT#${TENANT}|TASK#task_3`).document.S).claimedBy, "agent_b");
   });
 
+  // --- one browser, many sign-ins: the agent record must not multiply
+  console.log("\nAGENT REGISTRATION IDEMPOTENCE\n");
+  const asAdmin = (body) =>
+    handler({
+      routeKey: "POST /agent-authorizations",
+      requestContext: { authorizer: { jwt: { claims: { sub: "user_admin", "custom:tenant_id": TENANT, "cognito:groups": "[CLIENT_ADMIN]" } } } },
+      headers: {},
+      body: JSON.stringify(body),
+    }).then((r) => ({ status: r.statusCode, body: JSON.parse(r.body) }));
+  const agentsNow = () => [...store.values()].filter((i) => i.sk.S.startsWith("AGENT#")).map((i) => JSON.parse(i.document.S));
+
+  let firstToken;
+  await check("signing in twice from one browser reuses its agent record", async () => {
+    const before = agentsNow().length;
+    const one = await asAdmin({ name: "jaylen · Chrome", installationId: "install-abc" });
+    assert.equal(one.status, 201, JSON.stringify(one.body));
+    const first = await call("POST /agent-authorizations/{code}/exchange", { pathParameters: { code: one.body.code } });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    firstToken = first.body.token;
+
+    const two = await asAdmin({ name: "jaylen · Chrome", installationId: "install-abc" });
+    assert.equal(two.status, 201, JSON.stringify(two.body));
+    assert.equal(two.body.agent.id, one.body.agent.id, "same installation must map to the same agent");
+    assert.equal(agentsNow().length, before + 1, "exactly one new agent record for the two sign-ins");
+  });
+
+  await check("the superseded credential from the earlier sign-in stops working", async () => {
+    const res = await call("GET /agent/tasks", { token: firstToken });
+    assert.equal(res.status, 401);
+    assert.match(res.body.error, /sign in again/i);
+  });
+
+  await check("a different browser still gets its own agent", async () => {
+    const before = agentsNow().length;
+    const other = await asAdmin({ name: "jaylen · Laptop", installationId: "install-xyz" });
+    assert.equal(other.status, 201);
+    assert.equal(agentsNow().length, before + 1);
+    const ids = new Set(agentsNow().filter((a) => a.installationId).map((a) => a.installationId));
+    assert.equal(ids.size, 2, "two installations, two agents");
+  });
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   process.exit(fail ? 1 : 0);
 })();

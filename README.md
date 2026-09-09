@@ -39,8 +39,9 @@ The server also independently re-tests a step's `verify` contract against what t
 
 1. Build it: `pnpm --filter @amazflow/browser-agent build` (produces `apps/browser-agent/dist`, which is gitignored like any other build output).
 2. In Chrome, go to `chrome://extensions`, enable Developer mode, and click "Load unpacked", then select `apps/browser-agent/dist`.
-3. Open the extension popup and click **Connect to AmazFlow**. Sign in normally if needed, name the browser agent, and authorize it. The extension exchanges the short-lived authorization code automatically.
-4. Open the tab where a workflow's browser action should run and click "Enable on this site" in the popup — Chrome will prompt to confirm the grant. The agent only acts on origins explicitly enabled this way.
+3. Open the extension popup and sign in with your AmazFlow account. That is the whole setup.
+
+The agent is a self-contained application: it authenticates against Cognito itself, registers this browser as an agent of your organization, and stays connected across popup closes and browser restarts. There is no authorization page, no per-site enablement, and no AmazFlow tab to keep open. Host access is granted once by Chrome when the extension is installed; *which* page a step may touch is decided by the server-signed execution grant, not by a toggle in the popup.
 
 ## Core API
 

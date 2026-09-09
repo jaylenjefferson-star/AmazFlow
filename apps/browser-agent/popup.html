@@ -1,51 +1,59 @@
 <!doctype html><html><head><meta charset="utf-8"><style>
-body{font:13px system-ui;width:280px;padding:16px;background:#fffaf0;color:#1e211d}
-b{font-size:17px}
+body{font:13px system-ui;width:320px;padding:16px;background:#fffaf0;color:#1e211d}
+h1{font-size:17px;margin:0 0 2px}
+.ver{font-size:10px;color:#a3a59c;margin-bottom:12px}
 label{display:block;margin-top:10px;font-weight:600;font-size:11px;color:#74766e}
-input{width:100%;box-sizing:border-box;margin-top:4px;padding:7px 8px;border:1px solid #dcd7c9;border-radius:7px;font:12px/1.3 ui-monospace,monospace}
-button{margin-top:10px;width:100%;border:1px solid #1e211d;border-radius:8px;background:#ff765c;color:#1e211d;padding:8px;font-weight:700;font-size:12px;cursor:pointer}
-button.quiet{background:transparent}
-button:disabled{opacity:.55;cursor:default;background:#e2f2e6}
-.status{margin-top:6px;font-size:11px;color:#74766e}
-.connected{background:#e2f0e5;border:1px solid #dcd7c9;border-radius:8px;padding:10px;margin-top:8px}
-.connected b{font-size:13px;display:block}
-.connected small{color:#476351}
-small{display:block;margin-top:12px;color:#74766e;line-height:1.5}
-hr{border:0;border-top:1px solid #ece7d8;margin:14px 0}
-.activity-label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#74766e;font-weight:700;margin-top:12px;display:block}
-.activity-log{margin-top:6px;max-height:170px;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
-.activity-empty{font-size:11px;color:#a3a59c;margin-top:6px}
-.activity-row{border:1px solid #ece7d8;border-radius:7px;padding:6px 8px;font-size:11px}
-.activity-row .op{font-weight:700;display:flex;justify-content:space-between;gap:6px}
-.activity-row .sel{font:10px ui-monospace,monospace;color:#74766e;margin-top:2px;word-break:break-all}
-.activity-row .detail{margin-top:2px;color:#74766e}
-.running{border:1px solid #1e211d;border-radius:8px;padding:8px 10px;margin-top:10px;background:#fff2ec}
-.running .op{font-weight:800;font-size:12px;display:flex;align-items:center;gap:6px}
-.running .meta{font-size:10px;color:#74766e;margin-top:3px;word-break:break-all}
-.running .dot{width:7px;height:7px;border-radius:50%;background:#ff765c;animation:pulse 1.1s ease-in-out infinite}
+input,select{width:100%;box-sizing:border-box;margin-top:4px;padding:8px;border:1px solid #dcd7c9;border-radius:7px;font:12px system-ui;background:#fff}
+button{margin-top:12px;width:100%;border:1px solid #1e211d;border-radius:8px;background:#ff765c;color:#1e211d;padding:9px;font-weight:700;font-size:12px;cursor:pointer}
+button.quiet{background:transparent;font-weight:600}
+button:disabled{opacity:.55;cursor:default}
+.err{color:#9f2d20;font-size:11px;margin-top:10px;font-weight:600}
+.panel{border:1px solid #dcd7c9;border-radius:9px;padding:11px;margin-top:10px;background:#fff}
+.row{display:flex;justify-content:space-between;gap:10px;font-size:11px;padding:3px 0}
+.row span:first-child{color:#74766e}
+.row span:last-child{font-weight:700;text-align:right;word-break:break-word}
+.state{display:flex;align-items:center;gap:7px;font-weight:800;font-size:13px}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.ok .dot{background:#2f7a45}
+.work .dot{background:#ff765c;animation:pulse 1.1s ease-in-out infinite}
+.bad .dot{background:#9f2d20}
+.off .dot{background:#a3a59c}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
-.activity-ok .op b{color:#2f7a45}
-.activity-fail .op b{color:#9f2d20}
+.task{border:1px solid #1e211d;border-radius:8px;padding:9px;margin-top:10px;background:#fff2ec}
+.task .op{font-weight:800;font-size:12px}
+.meta{font-size:10px;color:#74766e;margin-top:3px;word-break:break-all}
+.hint{font-size:10.5px;color:#74766e;line-height:1.5;margin-top:12px}
+.result{font-size:11px;margin-top:8px;padding:8px;border-radius:7px;border:1px solid #ece7d8}
+.result.good{background:#e9f4ec}.result.bad{background:#fbecea}
 </style></head><body>
-<b>AmazFlow Agent</b>
-<div id="disconnectedView">
-  <p class="status">Not connected to AmazFlow.</p>
-  <p id="connectError" class="status" style="color:#9f2d20;display:none"></p>
-  <button id="connect">Connect to AmazFlow →</button>
-  <small>Opens an AmazFlow tab where you sign in normally and authorize this browser as an agent. No token copying.</small>
+<h1>AmazFlow Agent</h1>
+<div class="ver" id="version"></div>
+
+<div id="signedOut">
+  <div class="hint" style="margin-top:0">Sign in with your AmazFlow account. This browser becomes an execution agent for your organization — no site-by-site setup, and nothing to keep open.</div>
+  <label>Work email<input id="email" type="email" autocomplete="username" placeholder="you@company.com"></label>
+  <label>Password<input id="password" type="password" autocomplete="current-password"></label>
+  <div id="orgWrap" style="display:none"><label>Organization<input id="tenant" placeholder="Organization slug"></label></div>
+  <button id="connect">Connect this browser</button>
+  <div class="err" id="signInError" style="display:none"></div>
 </div>
-<div id="connectedView" style="display:none">
-  <div class="connected">
-    <b id="agentNameLabel"></b>
-    <small id="agentTenantLabel"></small>
+
+<div id="signedIn" style="display:none">
+  <div class="panel">
+    <div class="state" id="stateLine"><span class="dot"></span><span id="stateText"></span></div>
+    <div class="meta" id="stateDetail"></div>
   </div>
-  <button id="disconnect" class="quiet">Disconnect</button>
-  <hr />
-  <div id="siteStatus" class="status"></div>
-  <button id="enableSite">Enable on this site</button>
-  <div id="runningTask" class="running" style="display:none"></div>
-  <span class="activity-label">Recent activity</span>
-  <div id="activityLog" class="activity-log"></div>
+  <div class="panel">
+    <div class="row"><span>Signed in</span><span id="userLabel"></span></div>
+    <div class="row"><span>Organization</span><span id="orgLabel"></span></div>
+    <div class="row"><span>Agent</span><span id="agentLabel"></span></div>
+    <div class="row"><span>Last heartbeat</span><span id="heartbeatLabel"></span></div>
+  </div>
+  <div id="taskCard" class="task" style="display:none"></div>
+  <div id="resultCard" class="result" style="display:none"></div>
+  <button id="reconnect" class="quiet" style="display:none">Reconnect this browser</button>
+  <button id="disconnect" class="quiet">Sign out</button>
+  <div class="hint">Workflows you start in AmazFlow run here automatically. You can close this popup.</div>
 </div>
 <script src="popup.js"></script>
 </body></html>

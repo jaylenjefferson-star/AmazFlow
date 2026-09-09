@@ -33,6 +33,8 @@ const invariants = [
   ["a stalled lease returns the task to the pool", /status\s*===\s*['"]CLAIMED['"][\s\S]{0,220}claimExpiresAt/, /status\s*===\s*['"]CLAIMED['"][\s\S]{0,260}claimExpiresAt/],
   ["the server re-tests the step's own verify contract", /Independent action verification failed/, /Independent action verification failed/],
   ["a failed verification is audited distinctly", /VERIFICATION_FAILED/, /VERIFICATION_FAILED/],
+  ["agent registration is idempotent per browser installation", /a\.installationId === installationId|a\.installationId===installationId/, /a\.installationId === installationId/],
+  ["a superseded credential stops authenticating", /status\s*===\s*['"]superseded['"]/, /status === "superseded"/],
   ["evidence attributes the result to an agent and grant", /evidence:\s*\{[\s\S]{0,200}grantId/, /grantId: grantPayload \? grantPayload\.grantId : null/],
 ];
 

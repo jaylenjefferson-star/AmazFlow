@@ -1,113 +1,133 @@
-const POPUP_DEFAULT_API = "https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com";
-const CONNECT_URL = "https://amazflow.com/agent-authorize/";
+// A view onto the service worker, never the owner of the connection. Everything shown here is
+// read from chrome.storage, which the worker keeps current whether or not this popup is open.
+type Status = {
+  state: "signed_out" | "connected" | "working" | "error";
+  detail?: string;
+  lastHeartbeatAt?: string | null;
+  lastResult?: { at: string; operation: string; ok: boolean; detail: string } | null;
+};
+type Session = { email: string; role: string; tenantId: string };
+type AgentRecord = { id: string; name: string; tenantId: string };
+type CurrentTask = { operation: string; stepId: string; runId: string; selector?: string; claimExpiresAt: string; url?: string | null };
 
-type PopupActivityEntry = { at: string; operation: string; selector?: string; ok: boolean; detail: string };
+const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const escapeHtml = (v: string) => v.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
+const clock = (iso?: string | null) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—");
 
-function el<T extends HTMLElement>(id: string) { return document.getElementById(id) as T; }
+const STATE_COPY: Record<Status["state"], { text: string; cls: string }> = {
+  signed_out: { text: "Not connected", cls: "off" },
+  connected: { text: "Connected · watching for work", cls: "ok" },
+  working: { text: "Running a workflow step", cls: "work" },
+  error: { text: "Needs attention", cls: "bad" },
+};
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] as string);
-}
+async function render() {
+  el<HTMLElement>("version").textContent = `v${chrome.runtime.getManifest().version}`;
+  const { session, agent, status, currentTask } = (await chrome.storage.local.get(["session", "agent", "status", "currentTask"])) as {
+    session?: Session; agent?: AgentRecord; status?: Status; currentTask?: CurrentTask;
+  };
+  const connected = Boolean(session && agent);
+  el<HTMLElement>("signedOut").style.display = connected ? "none" : "block";
+  el<HTMLElement>("signedIn").style.display = connected ? "block" : "none";
 
-function renderActivity(log: PopupActivityEntry[]) {
-  const container = el<HTMLElement>("activityLog");
-  if (!log.length) {
-    container.innerHTML = `<p class="activity-empty">Nothing yet -- this fills in as soon as a workflow step runs on a tab you've enabled.</p>`;
+  if (!connected) {
+    const detail = status?.detail;
+    const banner = el<HTMLElement>("signInError");
+    banner.textContent = detail ?? "";
+    banner.style.display = detail ? "block" : "none";
     return;
   }
-  container.innerHTML = log
-    .slice(0, 8)
-    .map((entry) => {
-      const time = new Date(entry.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-      const selectorLine = entry.selector ? `<div class="sel">${escapeHtml(entry.selector)}</div>` : "";
-      return `<div class="activity-row ${entry.ok ? "activity-ok" : "activity-fail"}">
-        <div class="op"><b>${entry.ok ? "✓" : "✕"} ${escapeHtml(entry.operation)}</b><span>${time}</span></div>
-        ${selectorLine}
-        <div class="detail">${escapeHtml(entry.detail)}</div>
-      </div>`;
-    })
-    .join("");
-}
 
-async function currentTabOrigin(): Promise<string | null> {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tab?.url) return null;
-  try { return new URL(tab.url).origin; } catch { return null; }
-}
+  const state = status?.state === "signed_out" ? "connected" : (status?.state ?? "connected");
+  const copy = STATE_COPY[state];
+  el<HTMLElement>("stateLine").className = `state ${copy.cls}`;
+  el<HTMLElement>("stateText").textContent = copy.text;
+  el<HTMLElement>("stateDetail").textContent = status?.detail ?? "";
+  el<HTMLElement>("userLabel").textContent = session!.email;
+  el<HTMLElement>("orgLabel").textContent = agent!.tenantId;
+  el<HTMLElement>("agentLabel").textContent = agent!.name;
+  el<HTMLElement>("heartbeatLabel").textContent = clock(status?.lastHeartbeatAt);
+  el<HTMLButtonElement>("reconnect").style.display = state === "error" ? "block" : "none";
 
-async function refreshStatus() {
-  const { agentToken, agentName, tenantId, lastConnectionError } = await chrome.storage.local.get(["agentToken", "agentName", "tenantId", "lastConnectionError"]);
-  const connected = Boolean(agentToken);
-
-  el<HTMLElement>("disconnectedView").style.display = connected ? "none" : "block";
-  el<HTMLElement>("connectedView").style.display = connected ? "block" : "none";
-
-  const connectError = el<HTMLElement>("connectError");
-  connectError.textContent = typeof lastConnectionError === "string" ? lastConnectionError : "";
-  connectError.style.display = lastConnectionError ? "block" : "none";
-  if (!connected) return;
-
-  el<HTMLElement>("agentNameLabel").textContent = (agentName as string) || "Browser Agent";
-  el<HTMLElement>("agentTenantLabel").textContent = `Connected · ${tenantId || "unknown org"}`;
-
-  const origin = await currentTabOrigin();
-  const siteStatus = el<HTMLElement>("siteStatus");
-  const siteButton = el<HTMLButtonElement>("enableSite");
-  if (!origin) {
-    siteStatus.textContent = "Open a target tab to enable this site.";
-    siteButton.disabled = true;
-    return;
-  }
-  const granted = await chrome.permissions.contains({ origins: [`${origin}/*`] });
-  siteStatus.textContent = granted ? `Enabled on ${origin}` : `Not enabled on ${origin}`;
-  siteButton.disabled = granted;
-  siteButton.textContent = granted ? "Enabled" : `Enable on ${origin}`;
-
-  // What this agent is holding a lease on right now. Until the agent claimed its work there
-  // was nothing to show here -- a task was either invisible or already in the history -- so a
-  // step that hung looked identical to no work existing at all.
-  const runningEl = el<HTMLElement>("runningTask");
-  const { currentTask } = await chrome.storage.local.get(["currentTask"]);
-  const active = currentTask as { operation: string; stepId: string; runId: string; selector?: string; claimExpiresAt: string } | undefined;
-  if (active && new Date(active.claimExpiresAt).getTime() > Date.now()) {
-    const secondsLeft = Math.max(0, Math.round((new Date(active.claimExpiresAt).getTime() - Date.now()) / 1000));
-    runningEl.style.display = "block";
-    runningEl.innerHTML = `<div class="op"><span class="dot"></span>Running ${escapeHtml(active.operation)}</div>
-      <div class="meta">Step ${escapeHtml(active.stepId)} of run ${escapeHtml(active.runId)}</div>
-      ${active.selector ? `<div class="meta">${escapeHtml(active.selector)}</div>` : ""}
-      <div class="meta">Claimed by this browser · ${secondsLeft}s left on the lease</div>`;
+  const taskCard = el<HTMLElement>("taskCard");
+  if (currentTask && new Date(currentTask.claimExpiresAt).getTime() > Date.now()) {
+    const left = Math.max(0, Math.round((new Date(currentTask.claimExpiresAt).getTime() - Date.now()) / 1000));
+    taskCard.style.display = "block";
+    taskCard.innerHTML = `<div class="op">${escapeHtml(currentTask.operation)}</div>
+      <div class="meta">Step ${escapeHtml(currentTask.stepId)} · run ${escapeHtml(currentTask.runId)}</div>
+      ${currentTask.selector ? `<div class="meta">${escapeHtml(currentTask.selector)}</div>` : ""}
+      ${currentTask.url ? `<div class="meta">${escapeHtml(currentTask.url)}</div>` : ""}
+      <div class="meta">Lease held by this browser · ${left}s left</div>`;
   } else {
-    runningEl.style.display = "none";
+    taskCard.style.display = "none";
   }
 
-  const { activityLog } = await chrome.storage.local.get(["activityLog"]);
-  renderActivity(Array.isArray(activityLog) ? (activityLog as PopupActivityEntry[]) : []);
+  const resultCard = el<HTMLElement>("resultCard");
+  const last = status?.lastResult;
+  if (last) {
+    resultCard.style.display = "block";
+    resultCard.className = `result ${last.ok ? "good" : "bad"}`;
+    resultCard.innerHTML = `<b>${last.ok ? "✓" : "✕"} ${escapeHtml(last.operation)}</b> · ${clock(last.at)}<div class="meta">${escapeHtml(last.detail)}</div>`;
+  } else {
+    resultCard.style.display = "none";
+  }
 }
 
-// Live-updates the log while the popup is open and a poll happens to land mid-view, instead of
-// only reflecting whatever the log looked like at the moment the popup was opened.
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && (changes.activityLog || changes.currentTask)) refreshStatus();
-});
+chrome.storage.onChanged.addListener((_changes, area) => { if (area === "local") void render(); });
+// The lease countdown is the one thing that changes with no storage write behind it.
+setInterval(() => { void render(); }, 1000);
 
 el<HTMLButtonElement>("connect").addEventListener("click", async () => {
-  const { apiBase } = await chrome.storage.local.get(["apiBase"]);
-  if (!apiBase) await chrome.storage.local.set({ apiBase: POPUP_DEFAULT_API });
-  const tab = await chrome.tabs.create({ url: CONNECT_URL });
-  if (tab.id) await chrome.storage.local.set({ pendingConnectTabId: tab.id });
-  window.close();
+  const button = el<HTMLButtonElement>("connect");
+  const banner = el<HTMLElement>("signInError");
+  const email = el<HTMLInputElement>("email").value.trim();
+  const password = el<HTMLInputElement>("password").value;
+  if (!email || !password) {
+    banner.textContent = "Enter your AmazFlow email and password.";
+    banner.style.display = "block";
+    return;
+  }
+  button.disabled = true;
+  button.textContent = "Connecting…";
+  banner.style.display = "none";
+  const tenant = el<HTMLInputElement>("tenant").value.trim();
+  const response = await chrome.runtime.sendMessage({ type: "AMAZFLOW_CONNECT", email, password, tenantId: tenant || undefined });
+  // The password only ever existed in this popup's memory and the message to the worker; drop it
+  // as soon as the attempt resolves either way.
+  el<HTMLInputElement>("password").value = "";
+  button.disabled = false;
+  button.textContent = "Connect this browser";
+  if (!response?.ok) {
+    banner.textContent = response?.error || "Could not connect. Try again.";
+    banner.style.display = "block";
+    return;
+  }
+  await render();
 });
 
 el<HTMLButtonElement>("disconnect").addEventListener("click", async () => {
-  await chrome.storage.local.remove(["agentToken", "agentId", "agentName", "tenantId", "lastConnectionError", "userId", "userRole", "currentTask"]);
-  await refreshStatus();
+  await chrome.runtime.sendMessage({ type: "AMAZFLOW_DISCONNECT" });
+  await render();
 });
 
-el<HTMLButtonElement>("enableSite").addEventListener("click", async () => {
-  const origin = await currentTabOrigin();
-  if (!origin) return;
-  await chrome.permissions.request({ origins: [`${origin}/*`] });
-  await refreshStatus();
+el<HTMLButtonElement>("reconnect").addEventListener("click", async () => {
+  const button = el<HTMLButtonElement>("reconnect");
+  button.disabled = true;
+  button.textContent = "Reconnecting…";
+  const response = await chrome.runtime.sendMessage({ type: "AMAZFLOW_RECONNECT" });
+  button.disabled = false;
+  button.textContent = "Reconnect this browser";
+  if (!response?.ok) {
+    const banner = el<HTMLElement>("stateDetail");
+    banner.textContent = response?.error || "Could not reconnect.";
+  }
+  await render();
 });
 
-refreshStatus();
+// A super admin can name the organization this browser should act for; everyone else is bound to
+// the organization on their own account and never sees the field.
+el<HTMLInputElement>("email").addEventListener("blur", () => {
+  el<HTMLElement>("orgWrap").style.display = /@amazflow\.com$/i.test(el<HTMLInputElement>("email").value.trim()) ? "block" : "none";
+});
+
+void render();
