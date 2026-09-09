@@ -1,4 +1,4 @@
-type AgentTask = { id: string; operation: string; input: Record<string, unknown>; expiresAt: string };
+type AgentTask = { id: string; operation: string; input: Record<string, unknown>; expiresAt: string; tenantId?: string; workflowId?: string; assignedRoles?: string[]; createdBy?: string };
 
 const DEFAULT_API = "https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com";
 const allowed = new Set(["READ_TEXT", "CLICK", "TYPE", "SELECT", "CHECK", "SCROLL_TO", "WAIT_FOR", "VERIFY_TEXT", "SET_EMPLOYEE_STATUS"]);
@@ -53,6 +53,8 @@ async function exchangeAuthorizationCode(tabId: number, url: string) {
       agentId: body.agentId,
       agentName: body.agentName || "AmazFlow Browser Agent",
       tenantId: body.tenantId,
+      userId: body.userId,
+      userRole: body.userRole,
     });
     await chrome.storage.local.remove(["pendingConnectTabId", "lastConnectionError"]);
     await sendHeartbeat(apiBase, body.token);
@@ -93,7 +95,31 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   const tasks = await fetch(`${apiBase}/agent/tasks`, { headers: { "X-AmazFlow-Agent-Token": agentToken } })
     .then((r) => (r.ok ? (r.json() as Promise<AgentTask[]>) : []))
     .catch(() => [] as AgentTask[]);
-  const task = tasks.find((t) => new Date(t.expiresAt).getTime() > Date.now() && allowed.has(t.operation));
+  
+  // Security: Get agent's tenant and user role to ensure proper filtering
+  const { tenantId: myTenantId, userRole } = await chrome.storage.local.get(["tenantId", "userRole"]);
+  
+  // Filter tasks to only those the user is authorized to execute
+  const validTasks = tasks.filter((t) => {
+    // Must be from our tenant (prevent cross-tenant leakage)
+    if (myTenantId && t.tenantId && t.tenantId !== myTenantId) return false;
+    
+    // Must be an allowed operation
+    if (!allowed.has(t.operation)) return false;
+    
+    // Must not be expired
+    if (new Date(t.expiresAt).getTime() <= Date.now()) return false;
+    
+    // Permission check: workflow must be assigned to user's role
+    // SUPER_ADMIN can execute anything, others must have their role in assignedRoles
+    if (userRole !== "SUPER_ADMIN" && t.assignedRoles && t.assignedRoles.length > 0) {
+      if (!t.assignedRoles.includes(userRole)) return false;
+    }
+    
+    return true;
+  });
+  
+  const task = validTasks[0]; // Take first valid task
   if (!task) return;
 
   const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });

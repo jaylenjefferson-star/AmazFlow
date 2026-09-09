@@ -3,7 +3,7 @@
 // engine lives entirely inside the ZipFile in infrastructure/aws-cdk/amazflow-dev.yaml.
 import type { WorkflowDefinition, WorkflowRun, WorkflowStep } from "@amazflow/workflow-schema";
 
-export type AgentTask = { id: string; runId: string; tenantId: string; stepId: string; provider: string; operation: string; input: Record<string, unknown>; expiresAt: string; status: "PENDING" | "COMPLETED" };
+export type AgentTask = { id: string; runId: string; tenantId: string; stepId: string; provider: string; operation: string; input: Record<string, unknown>; expiresAt: string; status: "PENDING" | "COMPLETED"; workflowId?: string; assignedRoles?: string[]; createdBy?: string };
 export type Approval = { runId: string; stepId: string; message: string; roles: string[]; status: "PENDING" | "APPROVED" | "REJECTED" };
 export interface Store {
   getWorkflow(id: string): Promise<WorkflowDefinition | undefined>;
@@ -72,7 +72,7 @@ export class WorkflowEngine {
           this.event(run, "ACTION_COMPLETED", `${step.provider}:${step.operation}`, step.id);
           run.currentStepId = step.next;
         } else {
-          const task: AgentTask = { id: uid("task"), runId: run.id, tenantId: run.tenantId, stepId: step.id, provider: step.provider, operation: step.operation, input: this.resolve(step.input, run.context), expiresAt: new Date(Date.now()+5*60_000).toISOString(), status: "PENDING" };
+          const task: AgentTask = { id: uid("task"), runId: run.id, tenantId: run.tenantId, stepId: step.id, provider: step.provider, operation: step.operation, input: this.resolve(step.input, run.context), expiresAt: new Date(Date.now()+5*60_000).toISOString(), status: "PENDING", workflowId: workflow.id, assignedRoles: workflow.assignedRoles, createdBy: run.createdBy };
           await this.store.saveTask(task);
           run.status = "WAITING_AGENT";
           this.event(run, "AGENT_TASK_CREATED", `${step.provider}:${step.operation}`, step.id, { taskId: task.id });

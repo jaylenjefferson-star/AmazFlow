@@ -47,7 +47,7 @@ el<HTMLButtonElement>("connect").addEventListener("click", async () => {
 });
 
 el<HTMLButtonElement>("disconnect").addEventListener("click", async () => {
-  await chrome.storage.local.remove(["agentToken", "agentId", "agentName", "tenantId", "lastConnectionError"]);
+  await chrome.storage.local.remove(["agentToken", "agentId", "agentName", "tenantId", "lastConnectionError", "userId", "userRole"]);
   await refreshStatus();
 });
 
