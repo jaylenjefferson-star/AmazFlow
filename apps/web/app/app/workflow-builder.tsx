@@ -41,6 +41,13 @@ export function WorkflowBuilder({ workflow, canEdit, onChange }: { workflow: Wor
   const [showJson, setShowJson] = useState(false);
   const [jsonDraft, setJsonDraft] = useState(() => JSON.stringify(workflow, null, 2));
   const [jsonError, setJsonError] = useState<string | null>(null);
+  // Per-step raw text for the action-step Input (JSON) field, keyed by step id. Necessary
+  // because the field used to bind its value straight to JSON.parse(step.input) -- every
+  // keystroke that didn't happen to leave valid JSON behind (i.e. almost every keystroke)
+  // silently failed to parse, so the textarea's value snapped back to the last-valid state
+  // and undid whatever the person just typed. Tracking the literal text here means the field
+  // always shows what was typed; it only commits into step.input once that text parses.
+  const [actionInputDrafts, setActionInputDrafts] = useState<Record<string, string>>({});
   const stepIds = workflow.steps.map((step) => step.id);
 
   const updateStep = (index: number, patch: Record<string, unknown>) => {
@@ -127,7 +134,26 @@ export function WorkflowBuilder({ workflow, canEdit, onChange }: { workflow: Wor
             {step.type === "action" && <div className="wf-step-body">
               <label className="wf-field"><small>Provider</small><select value={step.provider} disabled={!canEdit} onChange={(event) => updateStep(index, { provider: event.target.value as (typeof PROVIDERS)[number] })}>{PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}</select></label>
               <label className="wf-field"><small>Operation</small><input value={step.operation} disabled={!canEdit} onChange={(event) => updateStep(index, { operation: event.target.value })} /></label>
-              <label className="wf-field wf-full"><small>Input (JSON)</small><textarea value={JSON.stringify(step.input ?? {}, null, 2)} disabled={!canEdit} onChange={(event) => { try { updateStep(index, { input: JSON.parse(event.target.value || "{}") }); } catch { /* wait for valid JSON */ } }} /></label>
+              <label className="wf-field wf-full">
+                <small>Input (JSON)</small>
+                <textarea
+                  value={actionInputDrafts[step.id] ?? JSON.stringify(step.input ?? {}, null, 2)}
+                  disabled={!canEdit}
+                  spellCheck={false}
+                  onChange={(event) => {
+                    const raw = event.target.value;
+                    setActionInputDrafts((prev) => ({ ...prev, [step.id]: raw }));
+                    try { updateStep(index, { input: JSON.parse(raw || "{}") }); } catch { /* keep the draft, wait for valid JSON */ }
+                  }}
+                />
+                {(() => {
+                  const draft = actionInputDrafts[step.id];
+                  if (draft === undefined) return null;
+                  try { JSON.parse(draft || "{}"); return null; } catch (error) {
+                    return <p className="wf-json-error">{error instanceof Error ? error.message : "Invalid JSON"} -- not saved yet</p>;
+                  }
+                })()}
+              </label>
               <label className="wf-field"><small>Verify path (optional)</small><input value={step.verify?.path ?? ""} disabled={!canEdit} onChange={(event) => updateStep(index, { verify: event.target.value ? { path: event.target.value, equals: step.verify?.equals ?? "" } : undefined })} /></label>
               <label className="wf-field"><small>Verify equals</small><input value={String(step.verify?.equals ?? "")} disabled={!canEdit || !step.verify} onChange={(event) => step.verify && updateStep(index, { verify: { ...step.verify, equals: event.target.value } })} /></label>
               <StepTarget label="Next step" value={step.next} stepIds={stepIds} allowNone onChange={(value) => updateStep(index, { next: value })} />
