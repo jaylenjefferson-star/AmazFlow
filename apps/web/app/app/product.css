@@ -161,3 +161,7 @@
 .wf-req-list{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}
 .wf-req-list small{color:var(--muted,#74766e);font-size:11px;flex:1 1 240px}
 .wf-req-problems{margin:10px 0 0;padding-left:18px;color:#9f2d20;font-size:11.5px;line-height:1.6}
+.wf-trigger{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:6px}
+.wf-inline{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;margin:0}
+.wf-inline input[type=number]{width:74px}
+.wf-trigger-note{display:block;color:var(--muted,#74766e);font-size:11px;margin-top:6px}

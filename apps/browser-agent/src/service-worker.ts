@@ -5,7 +5,11 @@ type AgentTask = {
   tenantId?: string; workflowId?: string; assignedRoles?: string[]; createdBy?: string;
   executionTarget?: "browser_extension" | "desktop_agent"; destination?: string | null;
 };
-type TaskClaim = { task: AgentTask; grant: string; grantId: string; runId: string; stepId: string; claimExpiresAt: string };
+type TaskClaim = {
+  task: AgentTask; grant: string; grantId: string; runId: string; stepId: string; claimExpiresAt: string;
+  // What a person should be shown. Ids, leases and grants stay inside this file.
+  display?: { workflowName: string; stepName: string; stepNumber: number | null; stepCount: number | null };
+};
 type AgentRecord = { id: string; name: string; token: string; tenantId: string };
 type Status = {
   state: "signed_out" | "connected" | "working" | "error";
@@ -125,7 +129,7 @@ async function heartbeat(agent: AgentRecord) {
   await setStatus({ lastHeartbeatAt: new Date().toISOString() });
 }
 
-type ActivityEntry = { at: string; operation: string; selector?: string; ok: boolean; detail: string };
+type ActivityEntry = { at: string; operation: string; selector?: string; ok: boolean; detail: string; workflowName?: string | null; stepName?: string | null };
 async function logActivity(entry: ActivityEntry) {
   const { activityLog } = await get<{ activityLog?: ActivityEntry[] }>(["activityLog"]);
   await set({ activityLog: [entry, ...(Array.isArray(activityLog) ? activityLog : [])].slice(0, 20) });
@@ -288,6 +292,8 @@ async function runOnce(agent: AgentRecord) {
     operation: task.operation,
     selector,
     ok: Boolean(result.ok) && reported,
+    workflowName: claim.display?.workflowName ?? null,
+    stepName: claim.display?.stepName ?? null,
     detail: !result.ok ? String(result.error || "Failed") : reported ? "Completed" : `Ran, but AmazFlow didn’t record it — ${reportError}`,
   });
 }
@@ -309,8 +315,52 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   });
 });
 
+// --- Entry point: starting work from the extension itself -------------------------------------
+// A signed-in person can start any workflow AmazFlow has approved for them without opening the web
+// app. The control plane still decides what is runnable and whether it can run right now.
+async function runnableWorkflows() {
+  const session = await currentSession();
+  if (!session) throw new Error("Your AmazFlow session expired. Sign in again.");
+  const response = await fetch(`${API}/workflows`, { headers: { authorization: `Bearer ${session.idToken}` } });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Could not load your workflows");
+  return (body as { id: string; name: string; status: string; customerSummary?: string }[])
+    .filter((w) => w.status === "active")
+    .map((w) => ({ id: w.id, name: w.name, summary: w.customerSummary ?? "" }));
+}
+
+// Preflight comes back as machine detail. A person needs to be told which app to open, not which
+// surface reported which status.
+function readyMessage(preflight: { surfaces?: { target: string; status: string }[] } | undefined) {
+  const blocked = (preflight?.surfaces ?? []).filter((s) => s.status !== "connected");
+  if (!blocked.length) return "This workflow can’t start right now.";
+  return blocked
+    .map((s) => {
+      const app = s.target === "desktop_agent" ? "AmazFlow Desktop App" : "AmazFlow browser extension";
+      if (s.status === "not_installed") return `Part of this workflow runs on your Mac. Install the ${app} and sign in.`;
+      if (s.status === "offline") return `Open the ${app} and sign in — it isn’t connected right now.`;
+      if (s.status === "missing_permissions") return `The ${app} needs macOS Accessibility permission before it can run this.`;
+      return `The ${app} needs updating before it can run this.`;
+    })
+    .join(" ");
+}
+
+async function startWorkflow(workflowId: string) {
+  const session = await currentSession();
+  if (!session) throw new Error("Your AmazFlow session expired. Sign in again.");
+  const response = await fetch(`${API}/workflows/${encodeURIComponent(workflowId)}/runs`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${session.idToken}` },
+    body: JSON.stringify({}),
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(response.status === 409 && body.preflight ? readyMessage(body.preflight) : body.error || "Could not start that workflow");
+  return { started: true };
+}
+
 // The popup is a view onto this worker, never the owner of the connection: it can start a
-// sign-in, read state, or disconnect, and closing it changes nothing about polling or execution.
+// sign-in, start a workflow, read state, or disconnect, and closing it changes nothing about
+// polling or execution.
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "AMAZFLOW_CONNECT") {
     connect(message.email, message.password, message.tenantId)
@@ -320,6 +370,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
   if (message?.type === "AMAZFLOW_DISCONNECT") {
     disconnect().then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+  if (message?.type === "AMAZFLOW_WORKFLOWS") {
+    runnableWorkflows()
+      .then((workflows) => sendResponse({ ok: true, workflows }))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+  if (message?.type === "AMAZFLOW_START") {
+    startWorkflow(message.workflowId)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) }));
     return true;
   }
   if (message?.type === "AMAZFLOW_RECONNECT") {

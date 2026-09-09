@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld("amazflow", {
   state: () => ipcRenderer.invoke("agent:state"),
   connect: (email: string, password: string, tenantId?: string) => ipcRenderer.invoke("agent:connect", email, password, tenantId),
   disconnect: () => ipcRenderer.invoke("agent:disconnect"),
+  workflows: () => ipcRenderer.invoke("agent:workflows"),
+  start: (workflowId: string) => ipcRenderer.invoke("agent:start", workflowId),
   reconnect: () => ipcRenderer.invoke("agent:reconnect"),
   toggle: (running: boolean) => ipcRenderer.invoke("agent:toggle", running),
   openPermission: (which: "accessibility" | "screen") => ipcRenderer.invoke("agent:openPermission", which),

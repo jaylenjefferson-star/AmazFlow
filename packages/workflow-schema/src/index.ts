@@ -94,6 +94,14 @@ export const workflowDefinitionSchema = z.object({
   assignedRoles: z.array(roleSchema).default(["FRONTLINE", "CLIENT_ADMIN"]),
   manualMinutesEstimate: z.number().positive().optional(),
   customerSummary: z.string().optional(),
+  // The fourth entry point. A workflow can start because a person asked for it in the app, from
+  // an agent, or because its own schedule came due -- all three produce the same run.
+  trigger: z.object({
+    type: z.literal("schedule"),
+    everyMinutes: z.number().int().min(5).max(10080),
+    enabled: z.boolean().default(false),
+    lastFiredAt: z.string().datetime().optional()
+  }).optional(),
   startAt: z.string().min(1),
   steps: z.array(workflowStepSchema).min(1),
   allowedProviders: z.array(z.enum(["browser", "desktop", "api", "spreadsheet", "email", "file", "mock"])).min(1)

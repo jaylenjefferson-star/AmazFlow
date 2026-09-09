@@ -22,6 +22,13 @@ button:disabled{opacity:.55;cursor:default}
 .task{border:1px solid #1e211d;border-radius:8px;padding:9px;margin-top:10px;background:#fff2ec}
 .task .op{font-weight:800;font-size:12px}
 .meta{font-size:10px;color:#74766e;margin-top:3px;word-break:break-all}
+.section-label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#74766e;font-weight:700;margin-top:14px}
+.wf-list{margin-top:6px;display:flex;flex-direction:column;gap:5px;max-height:150px;overflow-y:auto}
+.wf-start{margin:0;width:100%;text-align:left;border:1px solid #dcd7c9;border-radius:7px;background:#fff;padding:7px 9px;cursor:pointer}
+.wf-start:hover:not(:disabled){border-color:#1e211d}
+.wf-start b{display:block;font-size:12px}
+.wf-start small{display:block;color:#74766e;font-size:10px;margin-top:2px;font-weight:500}
+.empty{font-size:11px;color:#a3a59c;margin:6px 0 0}
 .hint{font-size:10.5px;color:#74766e;line-height:1.5;margin-top:12px}
 .result{font-size:11px;margin-top:8px;padding:8px;border-radius:7px;border:1px solid #ece7d8}
 .result.good{background:#e9f4ec}.result.bad{background:#fbecea}
@@ -50,6 +57,9 @@ button:disabled{opacity:.55;cursor:default}
     <div class="row"><span>Last heartbeat</span><span id="heartbeatLabel"></span></div>
   </div>
   <div id="taskCard" class="task" style="display:none"></div>
+  <span class="section-label">Start a workflow</span>
+  <div id="workflowList" class="wf-list"></div>
+  <div id="startError" class="err" style="display:none"></div>
   <div id="resultCard" class="result" style="display:none"></div>
   <button id="reconnect" class="quiet" style="display:none">Reconnect this browser</button>
   <button id="disconnect" class="quiet">Sign out</button>

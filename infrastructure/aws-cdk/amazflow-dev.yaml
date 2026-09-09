@@ -498,7 +498,13 @@ Resources:
             run.audit.push({id:`aud_${run.audit.length+1}`,at:now(),type:'AGENT_TASK_CLAIMED',stepId:task.stepId,message:`Browser agent claimed ${task.operation} for ${task.stepId}`,details:{taskId:task.id,agentId:agentCtx.agentId,grantId,expiresAt:task.claimExpiresAt}});
             run.updatedAt=now();
             await saveRunWithAudit(run,auditStartIdx);
-            return {task,grant,grantId,runId:run.id,stepId:task.stepId,workflowId:run.workflowId,claimExpiresAt:task.claimExpiresAt,verify:step.verify||null,executionTarget:task.executionTarget||'browser_extension',destination:task.destination||null};
+            // The agent UIs show people what is happening, and people do not think in run ids,
+            // step ids or operation names. The server already knows the workflow and step by name,
+            // so it sends those rather than leaving each agent to render internals.
+            const stepIndex=(workflow.steps||[]).filter(x=>x.type!=='end').findIndex(x=>x.id===task.stepId);
+            const stepCount=(workflow.steps||[]).filter(x=>x.type!=='end').length;
+            return {task,grant,grantId,runId:run.id,stepId:task.stepId,workflowId:run.workflowId,claimExpiresAt:task.claimExpiresAt,verify:step.verify||null,executionTarget:task.executionTarget||'browser_extension',destination:task.destination||null,
+              display:{workflowName:workflow.name,stepName:step.name,stepNumber:stepIndex>=0?stepIndex+1:null,stepCount:stepCount||null}};
           };
           const touchAgentHeartbeat=async(agentId,tenantId,version,capabilities,permissions)=>{
             const out=await db.send(new GetItemCommand({TableName:table,Key:{pk:{S:`TENANT#${tenantId}`},sk:{S:`AGENT#${agentId}`}}}));
@@ -899,7 +905,30 @@ Resources:
                 timedOutRuns++;
               }
             }
-            return {expiredTasks:expiredTasks.length,releasedClaims:stalledClaims.length,expiredConfirmations:expiredConfirmations.length,timedOutRuns};
+            // Scheduled workflows are the entry point nobody has to be present for. The sweep
+            // already wakes every minute, so this rides along rather than adding a second timer.
+            // A schedule only fires when its own agents are actually ready -- a trigger that
+            // manufactures runs nothing can execute is worse than one that waits.
+            let triggeredRuns=0;
+            const allWorkflows=await scanType('WORKFLOW#',{role:'SUPER_ADMIN'});
+            for(const workflow of allWorkflows){
+              const trigger=workflow.trigger;
+              if(!trigger||trigger.type!=='schedule'||!trigger.enabled) continue;
+              if(workflow.status!=='active') continue;
+              const everyMs=Math.max(5,Number(trigger.everyMinutes)||0)*60000;
+              if(!everyMs) continue;
+              const last=trigger.lastFiredAt?new Date(trigger.lastFiredAt).getTime():0;
+              if(nowMs-last<everyMs) continue;
+              const preflight=await preflightFor(workflow,workflow.tenantId);
+              if(!preflight.ready) continue;
+              try{
+                await runWorkflow(workflow,{trigger:'schedule'},{role:'SUPER_ADMIN',userId:`trigger:${workflow.id}`,tenantId:workflow.tenantId});
+                triggeredRuns++;
+              }catch(err){ console.error('scheduled trigger failed',workflow.id,err&&err.message); }
+              workflow.trigger={...trigger,lastFiredAt:now()};
+              await save('WORKFLOW',workflow);
+            }
+            return {expiredTasks:expiredTasks.length,releasedClaims:stalledClaims.length,expiredConfirmations:expiredConfirmations.length,timedOutRuns,triggeredRuns};
           };
           const BLENDED_HOURLY_RATE=35; // Placeholder blended rate until per-tenant rates exist.
           const listTenantUsers=async(tenantId)=>{

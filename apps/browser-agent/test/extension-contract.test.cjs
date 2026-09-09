@@ -51,6 +51,25 @@ const checks = [
   ["the extension id is pinned so reloads keep one identity", typeof manifest.key === "string" && manifest.key.length > 300],
 ];
 
+
+// The customer-facing vocabulary rule. A person starting a workflow should never have to learn
+// that a pending-agent task, a lease, an execution grant or record_step_result exists -- those are
+// how the control plane coordinates work, not what the work is. The mechanism stays in the worker
+// or agent process; the UI shows the workflow, the step, and what happened.
+// Comments in the source explain the very vocabulary this rule bans, so they are stripped first.
+const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'\\])\/\/.*$/gm, "$1");
+const MECHANISM = /\b(lease|execution grant|grantId|claimed|claiming|pending[- ]agent|agent task|record[_ -]step[_ -]result|taskId|runId|stepId)\b/i;
+function mechanismLeaks(source) {
+  // Only strings a person can actually read.
+  const literals = [...source.matchAll(/`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g)].map((m) => m[0]);
+  return literals.filter((lit) => MECHANISM.test(lit) && !lit.includes("AMAZFLOW_") && !lit.startsWith('"agent:'));
+}
+
+const popupLeaks = mechanismLeaks(stripComments(popup) + stripComments(html));
+checks.push(["the popup never shows leases, grants, claims or task ids", popupLeaks.length === 0 || (console.log("        leaked:", popupLeaks.slice(0, 4).join(" | ")), false)]);
+checks.push(["a person can start a workflow from the extension", popup.includes("AMAZFLOW_START") && sw.includes("startWorkflow")]);
+checks.push(["a blocked start says which app to open", sw.includes("readyMessage") && /Install the |Open the /.test(sw)]);
+
 let fail = 0;
 console.log("\nEXTENSION PRODUCT CONTRACT\n");
 for (const [name, ok] of checks) {

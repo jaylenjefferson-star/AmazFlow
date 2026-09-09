@@ -159,6 +159,30 @@ export function WorkflowBuilder({ workflow, canEdit, onChange }: { workflow: Wor
       </div>
       <label className="wf-field wf-full"><small>Description</small><input value={workflow.description ?? ""} disabled={!canEdit} onChange={(event) => onChange({ ...workflow, description: event.target.value })} /></label>
       <label className="wf-field wf-full"><small>Customer-facing summary</small><input value={workflow.customerSummary ?? ""} disabled={!canEdit} placeholder="Plain-English sentence shown on the customer's workflow card" onChange={(event) => onChange({ ...workflow, customerSummary: event.target.value || undefined })} /></label>
+      <div className="wf-field wf-full">
+        <small>Starts when</small>
+        <div className="wf-trigger">
+          {/* A workflow always starts on request -- from the app or from either agent. A schedule
+              is an additional entry point, not a different kind of workflow. */}
+          <label className="wf-inline">
+            <input type="checkbox" disabled={!canEdit} checked={Boolean(workflow.trigger?.enabled)} onChange={(event) => onChange({
+              ...workflow,
+              trigger: event.target.checked
+                ? { type: "schedule", everyMinutes: workflow.trigger?.everyMinutes ?? 60, enabled: true }
+                : workflow.trigger ? { ...workflow.trigger, enabled: false } : undefined,
+            })} />
+            Also start it on a schedule
+          </label>
+          {workflow.trigger?.enabled && (
+            <label className="wf-inline">every
+              <input type="number" min={5} max={10080} step={5} disabled={!canEdit} value={workflow.trigger.everyMinutes}
+                onChange={(event) => onChange({ ...workflow, trigger: { ...workflow.trigger!, everyMinutes: Math.max(5, Number(event.target.value) || 5) } })} />
+              minutes
+            </label>
+          )}
+        </div>
+        <small className="wf-trigger-note">Anyone assigned can start this from AmazFlow, the browser extension, or the desktop app. A schedule only fires when the agents it needs are actually connected.</small>
+      </div>
       <label className="wf-field"><small>Manual minutes estimate</small><input type="number" min={0} step={1} value={workflow.manualMinutesEstimate ?? ""} disabled={!canEdit} onChange={(event) => onChange({ ...workflow, manualMinutesEstimate: event.target.value ? Number(event.target.value) : undefined })} /></label>
 
       {(() => {

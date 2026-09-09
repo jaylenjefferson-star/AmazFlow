@@ -4,14 +4,16 @@ type Snapshot = {
   status: {
     state: string; detail?: string; lastHeartbeatAt: string | null;
     permissions: { accessibility: boolean; screenRecording: boolean } | null;
-    currentTask: { action: string; stepId: string; runId: string; destination: string | null; claimExpiresAt: string } | null;
-    lastResult: { at: string; action: string; ok: boolean; detail: string } | null;
+    currentActivity: { workflowName: string; stepName: string; stepNumber: number | null; stepCount: number | null; where: string | null } | null;
+    lastResult: { at: string; title: string; ok: boolean; detail: string } | null;
   };
 };
 type AmazFlowBridge = {
   state(): Promise<Snapshot>;
   connect(email: string, password: string, tenantId?: string): Promise<{ ok: boolean; error?: string }>;
   disconnect(): Promise<unknown>;
+  workflows(): Promise<{ ok: boolean; workflows?: { id: string; name: string; summary: string }[]; error?: string }>;
+  start(workflowId: string): Promise<{ ok: boolean; error?: string }>;
   reconnect(): Promise<{ ok: boolean; error?: string }>;
   toggle(running: boolean): Promise<unknown>;
   openPermission(which: "accessibility" | "screen"): Promise<unknown>;
@@ -28,8 +30,8 @@ const clock = (iso?: string | null) => (iso ? new Date(iso).toLocaleTimeString([
 
 const COPY: Record<string, { text: string; cls: string }> = {
   signed_out: { text: "Not connected", cls: "off" },
-  connected: { text: "Connected · watching for work", cls: "ok" },
-  working: { text: "Running a workflow step", cls: "work" },
+  connected: { text: "Ready", cls: "ok" },
+  working: { text: "Working", cls: "work" },
   paused: { text: "Stopped", cls: "off" },
   error: { text: "Needs attention", cls: "bad" },
 };
@@ -64,15 +66,15 @@ function render(snapshot: Snapshot) {
   sc.textContent = perms?.screenRecording ? "Granted" : "Not granted";
   el<HTMLButtonElement>("scFix").style.display = perms?.screenRecording ? "none" : "inline-block";
 
-  const task = snapshot.status.currentTask;
+  // What the agent is doing, in the words the person who started it would use.
+  const activity = snapshot.status.currentActivity;
   const card = el("taskCard");
-  if (task && new Date(task.claimExpiresAt).getTime() > Date.now()) {
-    const left = Math.max(0, Math.round((new Date(task.claimExpiresAt).getTime() - Date.now()) / 1000));
+  if (activity) {
+    const progress = activity.stepNumber && activity.stepCount ? `Step ${activity.stepNumber} of ${activity.stepCount}` : "";
     card.style.display = "block";
-    card.innerHTML = `<b>${esc(task.action)}</b>
-      <div class="meta">Step ${esc(task.stepId)} · run ${esc(task.runId)}</div>
-      ${task.destination ? `<div class="meta">Authorized for ${esc(task.destination)}</div>` : ""}
-      <div class="meta">Lease held by this Mac · ${left}s left</div>`;
+    card.innerHTML = `<b>${esc(activity.workflowName)}</b>
+      <div class="meta">${esc(activity.stepName)}${progress ? ` · ${progress}` : ""}</div>
+      ${activity.where ? `<div class="meta">in ${esc(activity.where)}</div>` : ""}`;
   } else card.style.display = "none";
 
   const last = snapshot.status.lastResult;
@@ -80,12 +82,13 @@ function render(snapshot: Snapshot) {
   if (last) {
     result.style.display = "block";
     result.className = `result ${last.ok ? "good" : "bad"}`;
-    result.innerHTML = `<b>${last.ok ? "✓" : "✕"} ${esc(last.action)}</b> · ${clock(last.at)}<div class="meta">${esc(last.detail)}</div>`;
+    result.innerHTML = `<b>${last.ok ? "✓" : "✕"} ${esc(last.title)}</b> · ${clock(last.at)}<div class="meta">${esc(last.detail)}</div>`;
   } else result.style.display = "none";
 }
 
 window.amazflow.onState(render);
 void window.amazflow.state().then(render);
+void loadWorkflows();
 setInterval(() => { if (latest) render(latest); }, 1000);
 
 el("connect").addEventListener("click", async () => {
@@ -103,6 +106,38 @@ el("connect").addEventListener("click", async () => {
   if (!response.ok) { banner.textContent = response.error ?? "Could not connect."; banner.style.display = "block"; return; }
   render(await window.amazflow.state());
 });
+
+// --- Entry point: start a workflow from this app --------------------------------------------
+async function loadWorkflows() {
+  const list = el("workflowList");
+  list.innerHTML = `<p class="empty">Loading your workflows…</p>`;
+  const response = await window.amazflow.workflows();
+  if (!response.ok) { list.innerHTML = `<p class="empty">${esc(response.error ?? "Couldn’t load your workflows.")}</p>`; return; }
+  const workflows = response.workflows ?? [];
+  if (!workflows.length) { list.innerHTML = `<p class="empty">No workflows are assigned to you yet.</p>`; return; }
+  list.innerHTML = workflows
+    .map((w) => `<button class="wf-start" data-id="${esc(w.id)}"><b>${esc(w.name)}</b>${w.summary ? `<small>${esc(w.summary)}</small>` : ""}</button>`)
+    .join("");
+  for (const button of Array.from(list.querySelectorAll("button.wf-start")) as HTMLButtonElement[]) {
+    button.addEventListener("click", async () => {
+      const original = button.innerHTML;
+      const banner = el("startError");
+      button.disabled = true;
+      button.innerHTML = "<b>Starting…</b>";
+      const started = await window.amazflow.start(button.dataset.id as string);
+      button.disabled = false;
+      if (!started.ok) {
+        button.innerHTML = original;
+        banner.textContent = started.error ?? "Couldn’t start that workflow.";
+        banner.style.display = "block";
+        return;
+      }
+      banner.style.display = "none";
+      button.innerHTML = "<b>Started ✓</b>";
+      setTimeout(() => { button.innerHTML = original; }, 2500);
+    });
+  }
+}
 
 el("disconnect").addEventListener("click", async () => { await window.amazflow.disconnect(); render(await window.amazflow.state()); });
 el("reconnect").addEventListener("click", async () => { await window.amazflow.reconnect(); render(await window.amazflow.state()); });

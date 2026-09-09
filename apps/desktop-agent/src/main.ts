@@ -100,6 +100,14 @@ ipcMain.handle("agent:connect", async (_e, email: string, password: string, tena
   catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
 });
 ipcMain.handle("agent:disconnect", async () => { await agent.disconnect(); return { ok: true }; });
+ipcMain.handle("agent:workflows", async () => {
+  try { return { ok: true, workflows: await agent.workflows() }; }
+  catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
+});
+ipcMain.handle("agent:start", async (_e, workflowId: string) => {
+  try { await agent.startWorkflow(workflowId); return { ok: true }; }
+  catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
+});
 ipcMain.handle("agent:reconnect", async () => {
   try { await agent.reconnect(); return { ok: true }; }
   catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }

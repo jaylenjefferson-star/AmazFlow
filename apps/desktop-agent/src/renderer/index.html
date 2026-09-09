@@ -24,6 +24,13 @@ button:disabled{opacity:.55;cursor:default}
 .hint{font-size:10.5px;color:#74766e;line-height:1.5;margin-top:12px}
 .result{font-size:11px;margin-top:8px;padding:8px;border-radius:7px;border:1px solid #ece7d8}
 .result.good{background:#e9f4ec}.result.bad{background:#fbecea}
+.section-label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#74766e;font-weight:700;margin-top:14px}
+.wf-list{margin-top:6px;display:flex;flex-direction:column;gap:5px;max-height:160px;overflow-y:auto}
+.wf-start{margin:0;width:100%;text-align:left;border:1px solid #dcd7c9;border-radius:7px;background:#fff;padding:7px 9px;cursor:pointer}
+.wf-start:hover:not(:disabled){border-color:#1e211d}
+.wf-start b{display:block;font-size:12px}
+.wf-start small{display:block;color:#74766e;font-size:10px;margin-top:2px;font-weight:500}
+.empty{font-size:11px;color:#a3a59c;margin:6px 0 0}
 .perm{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;padding:5px 0;border-top:1px solid #f0ece0}
 .perm:first-child{border-top:0}
 .granted{color:#2f7a45;font-weight:700}.denied{color:#9f2d20;font-weight:700}
@@ -57,6 +64,9 @@ button:disabled{opacity:.55;cursor:default}
     <div class="perm"><div><b>Screen Recording</b><div class="meta">Only needed for steps that capture visual evidence. Captures the target app's window, never the whole screen.</div></div><div style="text-align:right"><span id="scState"></span><br><button class="small quiet" id="scFix" style="display:none">Open Settings</button></div></div>
   </div>
   <div id="taskCard" class="task" style="display:none"></div>
+  <span class="section-label">Start a workflow</span>
+  <div id="workflowList" class="wf-list"></div>
+  <div id="startError" class="err" style="display:none"></div>
   <div id="resultCard" class="result" style="display:none"></div>
   <button id="toggle" class="quiet"></button>
   <button id="reconnect" class="quiet" style="display:none">Reconnect this Mac</button>

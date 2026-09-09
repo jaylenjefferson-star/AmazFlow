@@ -7,9 +7,11 @@ export type Status = {
   detail?: string;
   lastHeartbeatAt: string | null;
   permissions: { accessibility: boolean; screenRecording: boolean } | null;
-  currentTask: { action: string; stepId: string; runId: string; destination: string | null; claimExpiresAt: string } | null;
-  lastResult: { at: string; action: string; ok: boolean; detail: string } | null;
+  // Deliberately nothing about tasks, leases or grants: this is what a person is shown.
+  currentActivity: { workflowName: string; stepName: string; stepNumber: number | null; stepCount: number | null; where: string | null } | null;
+  lastResult: { at: string; title: string; ok: boolean; detail: string } | null;
 };
+export type RunnableWorkflow = { id: string; name: string; summary: string };
 
 export type Store = {
   read(): Promise<{ session?: Session; agent?: AgentRecord; installationId?: string }>;
@@ -20,6 +22,7 @@ type TaskClaim = {
   task: { id: string; operation: string; input: Record<string, unknown> };
   grant: string; runId: string; stepId: string; claimExpiresAt: string;
   executionTarget: string; destination: string | null;
+  display?: { workflowName: string; stepName: string; stepNumber: number | null; stepCount: number | null };
 };
 
 const POLL_MS = 15000;
@@ -33,7 +36,7 @@ export class DesktopAgent {
   private pollTimer: NodeJS.Timeout | null = null;
   private beatTimer: NodeJS.Timeout | null = null;
   private busy = false;
-  status: Status = { state: "signed_out", lastHeartbeatAt: null, permissions: null, currentTask: null, lastResult: null };
+  status: Status = { state: "signed_out", lastHeartbeatAt: null, permissions: null, currentActivity: null, lastResult: null };
 
   constructor(private store: Store, private version: string, private onChange: () => void) {}
 
@@ -82,7 +85,7 @@ export class DesktopAgent {
     this.session = null;
     this.agent = null;
     await this.store.write({ session: null, agent: null });
-    this.set({ state: "signed_out", detail: undefined, lastHeartbeatAt: null, currentTask: null, lastResult: null });
+    this.set({ state: "signed_out", detail: undefined, lastHeartbeatAt: null, currentActivity: null, lastResult: null });
   }
 
   start() {
@@ -109,6 +112,50 @@ export class DesktopAgent {
       running: this.running(),
       status: this.status,
     };
+  }
+
+  // --- Entry point: starting work from this app, rather than from the web app ---------------
+  // The control plane still decides what is runnable and whether it can run right now; this only
+  // asks. A workflow with no desktop steps is just as startable from here.
+  async workflows(): Promise<RunnableWorkflow[]> {
+    const session = await this.validSession();
+    if (!session) throw new Error("Your AmazFlow session expired. Sign in again.");
+    const response = await fetch(`${API}/workflows`, { headers: { authorization: `Bearer ${session.idToken}` } });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || "Could not load your workflows");
+    return (body as { id: string; name: string; status: string; customerSummary?: string }[])
+      .filter((w) => w.status === "active")
+      .map((w) => ({ id: w.id, name: w.name, summary: w.customerSummary ?? "" }));
+  }
+
+  async startWorkflow(workflowId: string) {
+    const session = await this.validSession();
+    if (!session) throw new Error("Your AmazFlow session expired. Sign in again.");
+    const response = await fetch(`${API}/workflows/${encodeURIComponent(workflowId)}/runs`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${session.idToken}` },
+      body: JSON.stringify({}),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      // Preflight comes back as machine detail; a person needs to be told which app to open.
+      if (response.status === 409 && body.preflight) {
+        const blocked = (body.preflight.surfaces ?? []).filter((x: { status: string }) => x.status !== "connected");
+        throw new Error(
+          blocked
+            .map((x: { target: string; status: string }) => {
+              const app = x.target === "desktop_agent" ? "AmazFlow Desktop App" : "AmazFlow browser extension";
+              if (x.status === "not_installed") return `Part of this workflow runs in the browser. Install the ${app} and sign in.`;
+              if (x.status === "offline") return `Open the ${app} and sign in — it isn’t connected right now.`;
+              if (x.status === "missing_permissions") return `The ${app} needs macOS Accessibility permission before it can run this.`;
+              return `The ${app} needs updating before it can run this.`;
+            })
+            .join(" ") || "This workflow can’t start right now.",
+        );
+      }
+      throw new Error(body.error || "Could not start that workflow");
+    }
+    return { started: true };
   }
 
   private async validSession(): Promise<Session | null> {
@@ -201,7 +248,13 @@ export class DesktopAgent {
     }
     this.set({
       state: "working",
-      currentTask: { action: claim.task.operation, stepId: claim.stepId, runId: claim.runId, destination: claim.destination, claimExpiresAt: claim.claimExpiresAt },
+      currentActivity: {
+        workflowName: claim.display?.workflowName ?? "A workflow",
+        stepName: claim.display?.stepName ?? "Making a change",
+        stepNumber: claim.display?.stepNumber ?? null,
+        stepCount: claim.display?.stepCount ?? null,
+        where: claim.destination,
+      },
     });
 
     let outcome;
@@ -249,13 +302,17 @@ export class DesktopAgent {
 
     this.set({
       state: "connected",
-      currentTask: null,
+      currentActivity: null,
       detail: undefined,
       lastResult: {
         at: new Date().toISOString(),
-        action: claim.task.operation,
+        title: claim.display?.workflowName ?? claim.task.operation,
         ok: Boolean(outcome.ok) && reported,
-        detail: !outcome.ok ? String(outcome.error ?? "Failed") : reported ? "Completed" : `Ran, but AmazFlow didn’t record it — ${reportError}`,
+        detail: !outcome.ok
+          ? String(outcome.error ?? "Failed")
+          : reported
+            ? (claim.display?.stepName ?? "Completed")
+            : `Ran, but AmazFlow didn’t record it — ${reportError}`,
       },
     });
   }

@@ -57,6 +57,24 @@ let allowed = true;
 try { assertDestination("desktop.open_app", { app: "TextEdit" }, "TextEdit"); } catch { allowed = false; }
 checks.push(["a step matching the grant's destination is allowed", allowed]);
 
+
+// The customer-facing vocabulary rule. A person starting a workflow should never have to learn
+// that a pending-agent task, a lease, an execution grant or record_step_result exists -- those are
+// how the control plane coordinates work, not what the work is. The mechanism stays in the worker
+// or agent process; the UI shows the workflow, the step, and what happened.
+const MECHANISM = /\b(lease|execution grant|grantId|claimed|claiming|pending[- ]agent|agent task|record[_ -]step[_ -]result|taskId|runId|stepId)\b/i;
+function mechanismLeaks(source) {
+  // Only strings a person can actually read.
+  const literals = [...source.matchAll(/`(?:[^`\\]|\\.)*`|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g)].map((m) => m[0]);
+  return literals.filter((lit) => MECHANISM.test(lit) && !lit.includes("AMAZFLOW_") && !lit.startsWith('"agent:'));
+}
+
+const renderer = stripComments(read("renderer.js")) + read(path.join("renderer", "index.html"));
+const rendererLeaks = mechanismLeaks(renderer);
+checks.push(["the app window never shows leases, grants, claims or task ids", rendererLeaks.length === 0 || (console.log("        leaked:", rendererLeaks.slice(0, 4).join(" | ")), false)]);
+checks.push(["a person can start a workflow from the app", renderer.includes("loadWorkflows") && agent.includes("startWorkflow")]);
+checks.push(["a blocked start says which app to open", /Install the |Open the /.test(agent)]);
+
 let fail = 0;
 console.log("\nDESKTOP AGENT CONTRACT\n");
 for (const [name, ok] of checks) {
