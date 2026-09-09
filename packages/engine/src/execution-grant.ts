@@ -11,12 +11,22 @@ export const executionGrantPayloadSchema = z.object({
   stepId: z.string().min(1),
   allowedTools: z.array(z.string().min(1)).min(1).max(30),
   confirmationGranted: z.boolean(),
+  // Which agent, on which surface, may perform which action, and where. Optional so grants minted
+  // before agent surfaces existed still verify, but every field present is checked on the way back
+  // in -- a desktop agent cannot present a browser step's grant, and neither can act on a
+  // destination the server did not name.
+  taskId: z.string().min(1).nullable().optional(),
+  agentId: z.string().min(1).nullable().optional(),
+  agentType: z.enum(["CHROME_EXTENSION", "DESKTOP_AGENT"]).nullable().optional(),
+  executionTarget: z.enum(["browser_extension", "desktop_agent"]).nullable().optional(),
+  actionType: z.string().min(1).nullable().optional(),
+  destination: z.string().nullable().optional(),
   issuedAt: z.number().int().nonnegative(),
   expiresAt: z.number().int().positive()
 });
 
 export type ExecutionGrantPayload = z.infer<typeof executionGrantPayloadSchema>;
-export type GrantExpectation = Partial<Pick<ExecutionGrantPayload, "runId" | "tenantId" | "workflowId" | "workflowVersion" | "stepId">> & { tool?: string };
+export type GrantExpectation = Partial<Pick<ExecutionGrantPayload, "runId" | "tenantId" | "workflowId" | "workflowVersion" | "stepId" | "taskId" | "agentId" | "agentType" | "executionTarget" | "actionType">> & { tool?: string };
 
 export interface GrantReplayStore {
   consume(grantId: string, expiresAt: number): Promise<boolean>;
@@ -45,7 +55,7 @@ export class ExecutionGrantService {
     if (actual.length !== wanted.length || !timingSafeEqual(actual, wanted)) throw new Error("Invalid execution grant signature");
     const payload = executionGrantPayloadSchema.parse(JSON.parse(decode(encoded)));
     if (payload.expiresAt <= Math.floor(nowMs / 1000)) throw new Error("Execution grant expired");
-    for (const key of ["runId", "tenantId", "workflowId", "workflowVersion", "stepId"] as const) {
+    for (const key of ["runId", "tenantId", "workflowId", "workflowVersion", "stepId", "taskId", "agentId", "agentType", "executionTarget", "actionType"] as const) {
       if (expected[key] !== undefined && payload[key] !== expected[key]) throw new Error(`Execution grant ${key} mismatch`);
     }
     if (expected.tool && !payload.allowedTools.includes(expected.tool)) throw new Error("Tool is not authorized by this execution grant");

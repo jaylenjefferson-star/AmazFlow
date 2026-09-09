@@ -1,0 +1,48 @@
+{
+  "name": "@amazflow/desktop-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AmazFlow Desktop Agent",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && mkdir -p dist/renderer && cp src/renderer/index.html dist/renderer/",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "start": "pnpm build && electron .",
+    "package:mac": "pnpm build && electron-builder --mac --dir",
+    "dist:mac": "pnpm build && electron-builder --mac",
+    "test": "node test/agent-contract.test.cjs"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.3",
+    "@types/node": "^22.13.4"
+  },
+  "build": {
+    "appId": "com.amazflow.desktopagent",
+    "productName": "AmazFlow Agent",
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "extendInfo": {
+        "NSAppleEventsUsageDescription": "AmazFlow Agent uses Accessibility automation to run the desktop workflow steps your organization has approved.",
+        "NSScreenCaptureUsageDescription": "AmazFlow Agent captures a screenshot only when an approved workflow step explicitly requires visual evidence."
+      }
+    }
+  }
+}

@@ -426,6 +426,7 @@ const createAgentAndCode = async (
   createdBy,
   userRole,
   installationId,
+  profile,
 ) => {
   let agent = null;
   if (installationId) {
@@ -477,6 +478,15 @@ const createAgentAndCode = async (
       version: null,
     };
   }
+  if (profile) {
+    agent.agentType = profile.agentType === "DESKTOP_AGENT" ? "DESKTOP_AGENT" : "CHROME_EXTENSION";
+    agent.capabilities = Array.isArray(profile.capabilities)
+      ? profile.capabilities.filter((c) => typeof c === "string").slice(0, 60)
+      : [];
+    agent.platform = typeof profile.platform === "string" ? profile.platform.slice(0, 80) : null;
+    agent.version = typeof profile.version === "string" ? profile.version.slice(0, 40) : agent.version;
+  }
+  if (!agent.agentType) agent.agentType = "CHROME_EXTENSION";
   await save("AGENT", agent);
   const code = crypto.randomBytes(24).toString("hex");
   const settings = await getSettings();
@@ -632,8 +642,33 @@ const agentAuth = async (e) => {
 // enforced here is not enforced at all. Mirrors the same rules the human-facing routes
 // use: super admins see the whole tenant, other roles only see work for workflows
 // assigned to their role, and FRONTLINE additionally only sees runs they started.
+const AGENT_TYPE_FOR_TARGET = {
+  browser_extension: "CHROME_EXTENSION",
+  desktop_agent: "DESKTOP_AGENT",
+};
+const executionTargetFor = (step) =>
+  step.executionTarget || (step.provider === "desktop" ? "desktop_agent" : "browser_extension");
+// What the grant pins the action to: the origin a browser step may act on, or the application a
+// desktop step may drive. The agent is refused if it tries to act anywhere else.
+const destinationFor = (target, input) => {
+  if (target === "desktop_agent")
+    return typeof input.app === "string" ? input.app : typeof input.window === "string" ? input.window : null;
+  if (typeof input.url === "string") {
+    try { return new URL(input.url).origin; } catch { return null; }
+  }
+  return null;
+};
+// An agent may only see work its own surface can carry out. The task's execution target decides
+// which agent type is eligible, and the capability list the agent advertised at registration
+// decides whether this build implements the action -- so an older agent is passed over instead of
+// claiming work it would fail, and a desktop agent can never be handed a browser step.
 const agentMayRunTask = (task, ctx) => {
   if (task.tenantId !== ctx.tenantId) return false;
+  const target = task.executionTarget || "browser_extension";
+  const agentType = ctx.agent?.agentType || "CHROME_EXTENSION";
+  if (AGENT_TYPE_FOR_TARGET[target] !== agentType) return false;
+  const capabilities = Array.isArray(ctx.agent?.capabilities) ? ctx.agent.capabilities : null;
+  if (capabilities && !capabilities.includes(task.operation)) return false;
   if (ctx.userRole === "SUPER_ADMIN") return true;
   const assigned = Array.isArray(task.assignedRoles) ? task.assignedRoles : [];
   if (!assigned.includes(ctx.userRole)) return false;
@@ -736,6 +771,12 @@ const claimAgentTask = async (taskId, agentCtx) => {
     confirmationGranted:
       step.requiresConfirmation !== true ||
       (run.confirmedStepIds || []).includes(task.stepId),
+    taskId: task.id,
+    agentId: agentCtx.agentId,
+    agentType: agentCtx.agent?.agentType || "CHROME_EXTENSION",
+    executionTarget: task.executionTarget || "browser_extension",
+    actionType: task.operation,
+    destination: task.destination || null,
   });
   const grantId = JSON.parse(
     Buffer.from(grant.split(".")[1], "base64url").toString("utf8"),
@@ -771,6 +812,8 @@ const claimAgentTask = async (taskId, agentCtx) => {
     workflowId: run.workflowId,
     claimExpiresAt: task.claimExpiresAt,
     verify: step.verify || null,
+    executionTarget: task.executionTarget || "browser_extension",
+    destination: task.destination || null,
   };
 };
 // Identity and scope come entirely from the verified grant, never from anything the caller
@@ -1386,6 +1429,8 @@ const advance = async (workflow, run, auditStartIdx) => {
           provider: step.provider,
           operation: step.operation,
           input: interpolate(step.input || {}, run.context),
+          executionTarget: executionTargetFor(step),
+          destination: destinationFor(executionTargetFor(step), interpolate(step.input || {}, run.context)),
           expiresAt: new Date(Date.now() + settings.taskExpiryMs).toISOString(),
           status: "PENDING",
           workflowId: workflow.id,
@@ -1570,7 +1615,7 @@ const runWorkflow = async (workflow, input, a) => {
 // grantToken is required on the agent route and omitted for the operator's own
 // /agent-tasks/{id}/result console route, which is already Cognito-authenticated and
 // role-checked at the gateway.
-const resumeAgentTask = async (taskId, result, a, grantToken) => {
+const resumeAgentTask = async (taskId, result, a, grantToken, reportingAgent) => {
   const allTasks = await scanType("TASK#", { role: "SUPER_ADMIN" });
   const task = allTasks.find((t) => t.id === taskId);
   if (!task) throw { status: 404, message: "Task not found" };
@@ -1620,6 +1665,11 @@ const resumeAgentTask = async (taskId, result, a, grantToken) => {
           workflowId: run.workflowId,
           workflowVersion: run.workflowVersion,
           stepId: task.stepId,
+          taskId: task.id,
+          agentId: reportingAgent?.agentId,
+          agentType: reportingAgent?.agentType,
+          executionTarget: task.executionTarget || "browser_extension",
+          actionType: task.operation,
           tool: "agent.report_result",
         },
         grantReplayStore("agent.report_result"),
@@ -1631,6 +1681,9 @@ const resumeAgentTask = async (taskId, result, a, grantToken) => {
   const evidence = {
     taskId: task.id,
     agentId: task.claimedBy || a.userId,
+    agentType: reportingAgent?.agentType || null,
+    executionTarget: task.executionTarget || "browser_extension",
+    destination: task.destination || null,
     grantId: grantPayload ? grantPayload.grantId : null,
     claimedAt: task.claimedAt || null,
     reportedAt: now(),
@@ -3530,6 +3583,7 @@ exports.handler = async (e) => {
             tenantId: agentCtx.tenantId,
           },
           grantToken,
+          { agentId: agentCtx.agentId, agentType: agentCtx.agent?.agentType || "CHROME_EXTENSION" },
         );
         return reply(200, run);
       } catch (err) {
@@ -3778,6 +3832,12 @@ exports.handler = async (e) => {
         typeof body.installationId === "string"
           ? body.installationId.slice(0, 200)
           : null,
+        {
+          agentType: body.agentType,
+          capabilities: body.capabilities,
+          platform: body.platform,
+          version: body.version,
+        },
       );
       await logActivity(targetTenantId, {
         actor: a.userId,

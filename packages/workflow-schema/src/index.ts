@@ -3,6 +3,50 @@ import { z } from "zod";
 export const dataClassSchema = z.enum(["PUBLIC", "INTERNAL", "CONFIDENTIAL", "PII", "PHI", "FINANCIAL", "RESTRICTED"]);
 export const roleSchema = z.enum(["FRONTLINE", "CLIENT_ADMIN", "SUPER_ADMIN"]);
 export const browserModeSchema = z.enum(["auto", "managed", "connected"]);
+
+// One canonical execution surface per agent-executed step. Providers that AmazFlow runs itself
+// (api, spreadsheet, email, file, mock) have no target -- nothing is dispatched to an agent.
+export const executionTargetSchema = z.enum(["browser_extension", "desktop_agent"]);
+export type ExecutionTarget = z.infer<typeof executionTargetSchema>;
+export const agentTypeSchema = z.enum(["CHROME_EXTENSION", "DESKTOP_AGENT"]);
+export type AgentType = z.infer<typeof agentTypeSchema>;
+
+export const AGENT_TYPE_FOR_TARGET: Record<ExecutionTarget, AgentType> = {
+  browser_extension: "CHROME_EXTENSION",
+  desktop_agent: "DESKTOP_AGENT"
+};
+
+// The action vocabulary each surface can carry out. An agent advertises the subset it implements
+// at registration, and the server refuses a claim for anything the agent did not advertise -- so
+// an older agent build simply does not receive work it would fail.
+export const BROWSER_ACTIONS = [
+  "NAVIGATE", "READ_TEXT", "CLICK", "TYPE", "SELECT", "CHECK",
+  "SCROLL_TO", "WAIT_FOR", "VERIFY_TEXT", "CAPTURE_EVIDENCE", "SET_EMPLOYEE_STATUS"
+] as const;
+export const DESKTOP_ACTIONS = [
+  "desktop.open_app", "desktop.focus_window", "desktop.click", "desktop.type_text",
+  "desktop.keypress", "desktop.wait_for", "desktop.verify_text", "desktop.capture_evidence"
+] as const;
+export type BrowserAction = (typeof BROWSER_ACTIONS)[number];
+export type DesktopAction = (typeof DESKTOP_ACTIONS)[number];
+
+export const ACTIONS_BY_TARGET: Record<ExecutionTarget, readonly string[]> = {
+  browser_extension: BROWSER_ACTIONS,
+  desktop_agent: DESKTOP_ACTIONS
+};
+
+// The provider a step uses fully determines its surface, so the builder never has to offer an
+// invalid pairing and older workflows get the right target without being rewritten.
+export function targetForProvider(provider: string): ExecutionTarget | undefined {
+  if (provider === "browser") return "browser_extension";
+  if (provider === "desktop") return "desktop_agent";
+  return undefined;
+}
+export function targetForAction(operation: string): ExecutionTarget | undefined {
+  if ((DESKTOP_ACTIONS as readonly string[]).includes(operation)) return "desktop_agent";
+  if ((BROWSER_ACTIONS as readonly string[]).includes(operation)) return "browser_extension";
+  return undefined;
+}
 export type AmazFlowRole = z.infer<typeof roleSchema>;
 
 export const permissionsByRole: Record<AmazFlowRole, readonly string[]> = {
@@ -22,8 +66,9 @@ export const workflowStepSchema = z.discriminatedUnion("type", [
   baseStep.extend({ type: z.literal("ai"), operation: z.enum(["classify", "extract", "transform", "summarize", "choose"]), prompt: z.string(), outputKey: z.string(), allowedValues: z.array(z.string()).optional(), confidenceThreshold: z.number().min(0).max(1).default(0.85) }),
   baseStep.extend({
     type: z.literal("action"),
-    provider: z.enum(["browser", "api", "spreadsheet", "email", "file", "mock"]),
+    provider: z.enum(["browser", "desktop", "api", "spreadsheet", "email", "file", "mock"]),
     operation: z.string(),
+    executionTarget: executionTargetSchema.optional(),
     input: z.record(z.unknown()).default({}),
     verify: z.object({ path: z.string(), equals: z.unknown() }).optional(),
     requiresConfirmation: z.boolean().optional(),
@@ -51,7 +96,7 @@ export const workflowDefinitionSchema = z.object({
   customerSummary: z.string().optional(),
   startAt: z.string().min(1),
   steps: z.array(workflowStepSchema).min(1),
-  allowedProviders: z.array(z.enum(["browser", "api", "spreadsheet", "email", "file", "mock"])).min(1)
+  allowedProviders: z.array(z.enum(["browser", "desktop", "api", "spreadsheet", "email", "file", "mock"])).min(1)
 }).superRefine((workflow, ctx) => {
   const ids = new Set(workflow.steps.map(s => s.id));
   if (!ids.has(workflow.startAt)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "startAt must reference a step" });
@@ -65,11 +110,53 @@ export const workflowDefinitionSchema = z.object({
     if (workflow.status === "active" && step.type === "action" && step.provider === "browser" && step.browserMode === "managed" && !step.connectionId) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Managed browser step ${step.id} must reference an active connection`, path: ["steps"] });
     }
+    // An agent-executed step must name exactly one surface, and that surface must be the one its
+    // provider and action actually belong to. This is what keeps a desktop action from being
+    // dispatched to a browser and vice versa.
+    if (step.type === "action") {
+      const expected = targetForProvider(step.provider);
+      if (expected && step.executionTarget && step.executionTarget !== expected) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Step ${step.id} runs on ${expected.replace("_", " ")}, so it cannot target ${step.executionTarget}`, path: ["steps"] });
+      }
+      if (!expected && step.executionTarget) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Step ${step.id} uses the ${step.provider} provider, which AmazFlow runs itself and cannot be assigned to an agent`, path: ["steps"] });
+      }
+      if (expected) {
+        const target = step.executionTarget ?? expected;
+        if (!ACTIONS_BY_TARGET[target].includes(step.operation)) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${step.operation} is not an action the ${target === "desktop_agent" ? "Desktop App" : "Chrome Extension"} can perform`, path: ["steps"] });
+        }
+      }
+    }
   }
 });
 
 export type WorkflowDefinition = z.infer<typeof workflowDefinitionSchema>;
 export type WorkflowStep = z.infer<typeof workflowStepSchema>;
+
+// What a workflow needs installed before it can run, derived from its own steps rather than
+// declared separately -- so it can never drift from what the workflow actually does.
+export function requiredTargets(workflow: Pick<WorkflowDefinition, "steps">): ExecutionTarget[] {
+  const targets = new Set<ExecutionTarget>();
+  for (const step of workflow.steps) {
+    if (step.type !== "action") continue;
+    const target = step.executionTarget ?? targetForProvider(step.provider);
+    if (target) targets.add(target);
+  }
+  return [...targets];
+}
+
+export type AgentRegistration = {
+  agentId: string;
+  installationId: string;
+  agentType: AgentType;
+  version: string;
+  capabilities: string[];
+  organizationId: string;
+  platform: string;
+  lastHeartbeatAt: string | null;
+  connectionStatus: "connected" | "offline" | "revoked";
+};
 
 export const browserConnectionSchema = z.object({
   id: z.string().min(1),

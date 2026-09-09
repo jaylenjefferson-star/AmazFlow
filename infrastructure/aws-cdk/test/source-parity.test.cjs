@@ -35,7 +35,12 @@ const invariants = [
   ["a failed verification is audited distinctly", /VERIFICATION_FAILED/, /VERIFICATION_FAILED/],
   ["agent registration is idempotent per browser installation", /a\.installationId === installationId|a\.installationId===installationId/, /a\.installationId === installationId/],
   ["a superseded credential stops authenticating", /status\s*===\s*['"]superseded['"]/, /status === "superseded"/],
-  ["evidence attributes the result to an agent and grant", /evidence:\s*\{[\s\S]{0,200}grantId/, /grantId: grantPayload \? grantPayload\.grantId : null/],
+  ["a task carries the surface it must run on", /executionTarget:\s*target|executionTarget: executionTargetFor\(step\)/, /executionTarget: executionTargetFor\(step\)/],
+  ["claims are restricted to the matching agent type", /AGENT_TYPE_FOR_TARGET\[target\]!==agentType/, /AGENT_TYPE_FOR_TARGET\[target\] !== agentType/],
+  ["claims are restricted to advertised capabilities", /capabilities.*!.*includes\(task\.operation\)/, /capabilities.*!.*includes\(task\.operation\)/],
+  ["the grant binds agent, surface, action and destination", /agentType:agentCtx\.agent/, /agentType: agentCtx\.agent\?\.agentType/],
+  ["the result is rechecked against the reporting agent's surface", /executionTarget:task\.executionTarget/, /executionTarget: task\.executionTarget/],
+  ["evidence attributes the result to an agent and grant", /evidence:\s*\{[\s\S]{0,400}grantId/, /grantId: grantPayload \? grantPayload\.grantId : null/],
 ];
 
 let pass = 0, fail = 0;

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AmazFlow Agent",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Signs in to AmazFlow and executes approved workflow steps in your browser. No per-site setup, no console tab to keep open.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtwDNGT1paoIIJe+9vtGW2mFfx1lxBAzivwd4yMpNG3ndExsBhrVPNPynrEc3gQQl+cU8QqBifcc1uiYYeLLzEbLNuZ4VwZkPocnvx5hN2Fd7kQQPGWPsCz255GvZQ5ayGtPZVKx9Y3iFSW6R08Fm2rnM8RmV1fHGMQDQGUJpOAXLdCe4F2yNky9H6q0XbgiqHJfmod0NwoSk/UaphUAENq5vgI4P56+gqLbPZN2UP9WbI7zqkaB5bs7/3ONUQESoVpdzIvejfmenavqBRpzDjvDSbJftThEjHNsZlictlyd4331AYOA6V5zBg5mDafFxrcgbQ1ThiFPx7tFeaAE4awIDAQAB",
   "permissions": [

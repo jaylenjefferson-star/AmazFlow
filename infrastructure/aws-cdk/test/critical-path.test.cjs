@@ -242,6 +242,179 @@ const check = (name, fn) => fn().then(() => { pass++; console.log("  PASS  " + n
     assert.equal(ids.size, 2, "two installations, two agents");
   });
 
+  // --- two surfaces, one orchestrator
+  console.log("\nEXECUTION SURFACES\n");
+  const mixed = {
+    id: "wf_mixed", tenantId: TENANT, name: "Mixed offboarding", version: 1, status: "active",
+    assignedRoles: ["CLIENT_ADMIN"], startAt: "s_web",
+    steps: [
+      { id: "s_web", type: "action", provider: "browser", operation: "SET_EMPLOYEE_STATUS", name: "Disable web access",
+        input: { selector: '[data-amazflow="employee-status"]', status: "Inactive", url: "https://hris.example.com/e/4471" },
+        verify: { path: "result.status", equals: "Inactive" }, next: "s_desk" },
+      { id: "s_desk", type: "action", provider: "desktop", operation: "desktop.open_app", name: "Open the records app",
+        input: { app: "TextEdit" }, verify: { path: "result.app", equals: "TextEdit" }, next: "s_done" },
+      { id: "s_done", type: "end", outcome: "success", name: "Done" },
+    ],
+  };
+  put(`TENANT#${TENANT}`, "WORKFLOW#wf_mixed", mixed);
+  put(`TENANT#${TENANT}`, "WORKFLOWVERSION#wf_mixed_v000001", { ...mixed, id: "wf_mixed_v000001" });
+  // A browser agent and a desktop agent, both signed in for the same organization.
+  put(`TENANT#${TENANT}`, "AGENT#agent_chrome", { id: "agent_chrome", tenantId: TENANT, name: "Chrome", status: "active", agentType: "CHROME_EXTENSION", capabilities: ["SET_EMPLOYEE_STATUS", "CLICK", "TYPE"], lastSeenAt: now(), version: "0.9.0" });
+  put(`TENANT#${TENANT}`, "AGENT#agent_desktop", { id: "agent_desktop", tenantId: TENANT, name: "Mac", status: "active", agentType: "DESKTOP_AGENT", capabilities: ["desktop.open_app", "desktop.type_text"], platform: "darwin", lastSeenAt: now(), version: "0.1.0" });
+  const TOK_CHROME = "tok_chrome", TOK_DESK = "tok_desk";
+  put("PLATFORM", `AGENTCRED#${hashToken(TOK_CHROME)}`, { agentId: "agent_chrome", tenantId: TENANT, userId: "user_admin", userRole: "CLIENT_ADMIN", status: "active" });
+  put("PLATFORM", `AGENTCRED#${hashToken(TOK_DESK)}`, { agentId: "agent_desktop", tenantId: TENANT, userId: "user_admin", userRole: "CLIENT_ADMIN", status: "active" });
+
+  const runMixed = {
+    id: "run_mixed", tenantId: TENANT, workflowId: "wf_mixed", workflowVersion: 1, status: "WAITING_AGENT",
+    currentStepId: "s_web", createdBy: "user_admin", confirmedStepIds: [], stepResults: {},
+    context: { input: {}, values: {}, lastAction: null },
+    audit: [{ id: "aud_1", at: now(), type: "RUN_STARTED", message: "started", details: {} }],
+    createdAt: now(), updatedAt: now(),
+  };
+  put(`TENANT#${TENANT}`, "RUN#run_mixed", runMixed);
+  put(`TENANT#${TENANT}`, "TASK#task_web", {
+    id: "task_web", runId: "run_mixed", tenantId: TENANT, stepId: "s_web", provider: "browser",
+    operation: "SET_EMPLOYEE_STATUS", executionTarget: "browser_extension", destination: "https://hris.example.com",
+    input: { selector: '[data-amazflow="employee-status"]', status: "Inactive" },
+    expiresAt: new Date(Date.now() + 5 * 60000).toISOString(), status: "PENDING",
+    workflowId: "wf_mixed", assignedRoles: ["CLIENT_ADMIN"], createdBy: "user_admin",
+  });
+  const loadMixed = () => JSON.parse(store.get(`TENANT#${TENANT}|RUN#run_mixed`).document.S);
+
+  await check("the desktop agent is not offered a browser task", async () => {
+    const desk = await call("GET /agent/tasks", { token: TOK_DESK });
+    assert.deepEqual(desk.body, [], "a desktop agent must not see browser work");
+    const chrome = await call("GET /agent/tasks", { token: TOK_CHROME });
+    assert.equal(chrome.body.length, 1);
+    assert.equal(chrome.body[0].id, "task_web");
+  });
+
+  await check("the desktop agent cannot claim a browser task even by id", async () => {
+    const res = await call("POST /agent/tasks/{id}/claim", { token: TOK_DESK, pathParameters: { id: "task_web" } });
+    assert.equal(res.status, 404);
+  });
+
+  let webGrant;
+  await check("the browser step runs and hands the run to the desktop surface", async () => {
+    const claim = await call("POST /agent/tasks/{id}/claim", { token: TOK_CHROME, pathParameters: { id: "task_web" } });
+    assert.equal(claim.status, 200, JSON.stringify(claim.body));
+    assert.equal(claim.body.executionTarget, "browser_extension");
+    webGrant = claim.body.grant;
+    const payload = JSON.parse(Buffer.from(webGrant.split(".")[1], "base64url").toString());
+    assert.equal(payload.agentType, "CHROME_EXTENSION");
+    assert.equal(payload.agentId, "agent_chrome");
+    assert.equal(payload.taskId, "task_web");
+    assert.equal(payload.actionType, "SET_EMPLOYEE_STATUS");
+
+    const res = await call("POST /agent/tasks/{id}/result", {
+      token: TOK_CHROME, grant: webGrant, pathParameters: { id: "task_web" },
+      body: { ok: true, status: "Inactive", evidence: { url: "https://hris.example.com/e/4471", observedAt: now() } },
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const r = loadMixed();
+    assert.equal(r.status, "WAITING_AGENT", "the run advances to the desktop step, not to completion");
+    assert.equal(r.currentStepId, "s_desk");
+    assert.equal(r.stepResults.s_web.executionTarget, "browser_extension");
+    assert.equal(r.stepResults.s_web.evidence.agentType, "CHROME_EXTENSION");
+  });
+
+  let deskTaskId;
+  await check("the server creates the desktop task itself, targeted at the desktop surface", async () => {
+    const tasks = [...store.values()].filter((i) => i.sk.S.startsWith("TASK#")).map((i) => JSON.parse(i.document.S));
+    const desk = tasks.find((t) => t.stepId === "s_desk");
+    assert.ok(desk, "a task exists for the desktop step");
+    assert.equal(desk.executionTarget, "desktop_agent");
+    assert.equal(desk.destination, "TextEdit", "the grant destination pins the application");
+    deskTaskId = desk.id;
+    // and only the desktop agent can see it
+    const chrome = await call("GET /agent/tasks", { token: TOK_CHROME });
+    assert.deepEqual(chrome.body, [], "the browser agent must not see desktop work");
+    const seen = await call("GET /agent/tasks", { token: TOK_DESK });
+    assert.equal(seen.body.length, 1);
+    assert.equal(seen.body[0].id, deskTaskId);
+  });
+
+  await check("the desktop step completes the run once, on its own surface", async () => {
+    const claim = await call("POST /agent/tasks/{id}/claim", { token: TOK_DESK, pathParameters: { id: deskTaskId } });
+    assert.equal(claim.status, 200, JSON.stringify(claim.body));
+    assert.equal(claim.body.executionTarget, "desktop_agent");
+    const payload = JSON.parse(Buffer.from(claim.body.grant.split(".")[1], "base64url").toString());
+    assert.equal(payload.agentType, "DESKTOP_AGENT");
+    assert.equal(payload.destination, "TextEdit");
+
+    const res = await call("POST /agent/tasks/{id}/result", {
+      token: TOK_DESK, grant: claim.body.grant, pathParameters: { id: deskTaskId },
+      body: { ok: true, app: "TextEdit", evidence: { app: "TextEdit", window: "Untitled", observedAt: now() } },
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const r = loadMixed();
+    assert.equal(r.status, "COMPLETED");
+    assert.equal(r.stepResults.s_desk.executionTarget, "desktop_agent");
+    assert.equal(r.stepResults.s_desk.evidence.agentType, "DESKTOP_AGENT");
+    assert.equal(r.stepResults.s_desk.evidence.destination, "TextEdit");
+    assert.ok(r.audit.some((a) => a.type === "AGENT_RESULT" && a.details?.executionTarget === "desktop_agent"));
+    // each step resolved exactly once
+    const completions = r.audit.filter((a) => a.type === "AGENT_RESULT");
+    assert.equal(completions.length, 2, "two steps, two results, no duplicate execution");
+  });
+
+  await check("an agent lacking the capability is passed over rather than failing the step", async () => {
+    const limited = JSON.parse(store.get(`TENANT#${TENANT}|AGENT#agent_desktop`).document.S);
+    limited.capabilities = ["desktop.type_text"]; // no desktop.open_app
+    put(`TENANT#${TENANT}`, "AGENT#agent_desktop", limited);
+    put(`TENANT#${TENANT}`, "TASK#task_cap", {
+      id: "task_cap", runId: "run_mixed", tenantId: TENANT, stepId: "s_desk", provider: "desktop",
+      operation: "desktop.open_app", executionTarget: "desktop_agent", input: { app: "TextEdit" },
+      expiresAt: new Date(Date.now() + 5 * 60000).toISOString(), status: "PENDING",
+      workflowId: "wf_mixed", assignedRoles: ["CLIENT_ADMIN"], createdBy: "user_admin",
+    });
+    const res = await call("GET /agent/tasks", { token: TOK_DESK });
+    assert.ok(!res.body.some((t) => t.id === "task_cap"), "an action the build cannot perform is not offered");
+  });
+
+  console.log("\nPREFLIGHT\n");
+  const preflight = async (id) =>
+    handler({
+      routeKey: "GET /workflows/{id}/preflight",
+      requestContext: { authorizer: { jwt: { claims: { sub: "user_admin", "custom:tenant_id": TENANT, "cognito:groups": "[CLIENT_ADMIN]" } } } },
+      headers: {}, pathParameters: { id },
+    }).then((r) => ({ status: r.statusCode, body: JSON.parse(r.body) }));
+
+  await check("a mixed workflow reports both surfaces as required", async () => {
+    const res = await preflight("wf_mixed");
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(res.body.requiredTargets.sort(), ["browser_extension", "desktop_agent"]);
+  });
+
+  await check("a browser-only workflow never asks for the desktop app", async () => {
+    const res = await preflight("wf_offboard");
+    assert.deepEqual(res.body.requiredTargets, ["browser_extension"]);
+    assert.equal(res.body.surfaces.length, 1);
+  });
+
+  await check("an offline agent is reported as offline with the right recovery action", async () => {
+    const stale = JSON.parse(store.get(`TENANT#${TENANT}|AGENT#agent_desktop`).document.S);
+    stale.lastSeenAt = new Date(Date.now() - 30 * 60000).toISOString();
+    put(`TENANT#${TENANT}`, "AGENT#agent_desktop", stale);
+    const res = await preflight("wf_mixed");
+    const desktop = res.body.surfaces.find((s) => s.target === "desktop_agent");
+    assert.equal(desktop.status, "offline");
+    assert.equal(desktop.action, "open_app");
+    assert.equal(res.body.ready, false);
+  });
+
+  await check("a run is refused up front rather than left to time out", async () => {
+    const res = await handler({
+      routeKey: "POST /workflows/{id}/runs",
+      requestContext: { authorizer: { jwt: { claims: { sub: "user_admin", "custom:tenant_id": TENANT, "cognito:groups": "[CLIENT_ADMIN]" } } } },
+      headers: {}, pathParameters: { id: "wf_mixed" }, body: JSON.stringify({}),
+    }).then((r) => ({ status: r.statusCode, body: JSON.parse(r.body) }));
+    assert.equal(res.status, 409);
+    assert.match(res.body.error, /agent that is not ready/i);
+    assert.equal(res.body.preflight.surfaces.find((s) => s.target === "desktop_agent").status, "offline");
+  });
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   process.exit(fail ? 1 : 0);
 })();

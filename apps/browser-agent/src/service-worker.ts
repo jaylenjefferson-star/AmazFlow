@@ -3,6 +3,7 @@ import { API, AuthError, refreshSession, revokeRefreshToken, signIn, type Sessio
 type AgentTask = {
   id: string; operation: string; input: Record<string, unknown>; expiresAt: string;
   tenantId?: string; workflowId?: string; assignedRoles?: string[]; createdBy?: string;
+  executionTarget?: "browser_extension" | "desktop_agent"; destination?: string | null;
 };
 type TaskClaim = { task: AgentTask; grant: string; grantId: string; runId: string; stepId: string; claimExpiresAt: string };
 type AgentRecord = { id: string; name: string; token: string; tenantId: string };
@@ -13,7 +14,13 @@ type Status = {
   lastResult?: { at: string; operation: string; ok: boolean; detail: string } | null;
 };
 
-const ALLOWED_OPS = new Set(["READ_TEXT", "CLICK", "TYPE", "SELECT", "CHECK", "SCROLL_TO", "WAIT_FOR", "VERIFY_TEXT", "SET_EMPLOYEE_STATUS"]);
+// What this build can actually carry out. It is sent at registration and on every heartbeat, and
+// the server will not offer this agent an action that is not on the list -- so an older extension
+// is passed over rather than claiming work it would fail.
+const CAPABILITIES = ["NAVIGATE", "READ_TEXT", "CLICK", "TYPE", "SELECT", "CHECK", "SCROLL_TO", "WAIT_FOR", "VERIFY_TEXT", "CAPTURE_EVIDENCE", "SET_EMPLOYEE_STATUS"];
+const ALLOWED_OPS = new Set(CAPABILITIES);
+// Actions this worker performs against the tab itself rather than inside the page.
+const TAB_ACTIONS = new Set(["NAVIGATE", "CAPTURE_EVIDENCE"]);
 const VERSION = () => chrome.runtime.getManifest().version;
 
 const get = <T,>(keys: string[]) => chrome.storage.local.get(keys) as unknown as Promise<T>;
@@ -75,6 +82,10 @@ async function registerAgent(session: Session, tenantId: string): Promise<AgentR
     body: JSON.stringify({
       name: `${session.email.split("@")[0]} · Chrome`,
       installationId: await installationId(),
+      agentType: "CHROME_EXTENSION",
+      capabilities: CAPABILITIES,
+      platform: navigator.userAgent.includes("Mac") ? "chrome macOS" : "chrome",
+      version: VERSION(),
       ...(session.role === "SUPER_ADMIN" ? { tenantId } : {}),
     }),
   });
@@ -108,7 +119,7 @@ async function heartbeat(agent: AgentRecord) {
   const response = await fetch(`${API}/agent/heartbeat`, {
     method: "POST",
     headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agent.token },
-    body: JSON.stringify({ version: VERSION() }),
+    body: JSON.stringify({ version: VERSION(), capabilities: CAPABILITIES }),
   });
   if (!response.ok) throw new Error(`Heartbeat failed (${response.status})`);
   await setStatus({ lastHeartbeatAt: new Date().toISOString() });
@@ -150,6 +161,34 @@ async function targetTabFor(task: AgentTask): Promise<chrome.tabs.Tab | null> {
   return tabs.find((t) => INJECTABLE.test(t.url ?? "")) ?? null;
 }
 
+async function runTabAction(tabId: number, task: AgentTask): Promise<{ ok: boolean; result?: Record<string, unknown>; error?: string }> {
+  if (task.operation === "NAVIGATE") {
+    const url = typeof task.input?.url === "string" ? (task.input.url as string) : "";
+    let parsed: URL;
+    try { parsed = new URL(url); } catch { return { ok: false, error: "NAVIGATE needs a valid url" }; }
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return { ok: false, error: "NAVIGATE only opens http(s) pages" };
+    await chrome.tabs.update(tabId, { url });
+    // Resolve once the tab has actually finished loading, so the next step doesn't act on the old page.
+    await new Promise<void>((resolve) => {
+      const done = (id: number, info: chrome.tabs.TabChangeInfo) => {
+        if (id === tabId && info.status === "complete") { chrome.tabs.onUpdated.removeListener(done); resolve(); }
+      };
+      chrome.tabs.onUpdated.addListener(done);
+      setTimeout(() => { chrome.tabs.onUpdated.removeListener(done); resolve(); }, 20000);
+    });
+    const tab = await chrome.tabs.get(tabId);
+    return { ok: true, result: { url: tab.url ?? url, title: tab.title ?? null } };
+  }
+  if (task.operation === "CAPTURE_EVIDENCE") {
+    const tab = await chrome.tabs.get(tabId);
+    // Captures only the tab the step is authorized to act on, never the whole screen or other tabs.
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }).catch(() => null);
+    if (!dataUrl) return { ok: false, error: "Could not capture this tab" };
+    return { ok: true, result: { captured: true, screenshot: dataUrl } };
+  }
+  return { ok: false, error: `${task.operation} is not a tab action` };
+}
+
 async function runOnce(agent: AgentRecord) {
   const tasks: AgentTask[] = await fetch(`${API}/agent/tasks`, { headers: { "X-AmazFlow-Agent-Token": agent.token } })
     .then((r) => (r.ok ? r.json() : []))
@@ -158,7 +197,13 @@ async function runOnce(agent: AgentRecord) {
   // The server already scopes this list to the agent's organization, role, and ownership. These
   // are cheap local checks so the agent never claims work this build could not carry out.
   const candidate = tasks.find(
-    (t) => ALLOWED_OPS.has(t.operation) && new Date(t.expiresAt).getTime() > Date.now() && (!t.tenantId || t.tenantId === agent.tenantId),
+    (t) =>
+      ALLOWED_OPS.has(t.operation) &&
+      // The server already scopes the list to this surface; this refuses anything that somehow
+      // reaches a browser agent but belongs on the desktop.
+      (t.executionTarget ?? "browser_extension") === "browser_extension" &&
+      new Date(t.expiresAt).getTime() > Date.now() &&
+      (!t.tenantId || t.tenantId === agent.tenantId),
   );
   if (!candidate) return;
 
@@ -192,8 +237,15 @@ async function runOnce(agent: AgentRecord) {
   await set({ currentTask: { operation: task.operation, stepId: claim.stepId, runId: claim.runId, selector, claimExpiresAt: claim.claimExpiresAt, url: tab.url ?? null } });
   await setStatus({ state: "working", detail: `${task.operation} · step ${claim.stepId}` });
 
-  await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] }).catch(() => undefined);
-  const response = await chrome.tabs.sendMessage(tab.id, { type: "AMAZFLOW_TASK", task }).catch((error) => ({ ok: false, error: String(error) }));
+  // NAVIGATE and CAPTURE_EVIDENCE are properties of the tab, not of the document, so they are
+  // performed here rather than injected into the page.
+  let response: { ok: boolean; result?: Record<string, unknown>; error?: string };
+  if (TAB_ACTIONS.has(task.operation)) {
+    response = await runTabAction(tab.id, task).catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) }));
+  } else {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] }).catch(() => undefined);
+    response = await chrome.tabs.sendMessage(tab.id, { type: "AMAZFLOW_TASK", task }).catch((error) => ({ ok: false, error: String(error) }));
+  }
 
   const evidence = { url: tab.url ?? null, title: tab.title ?? null, observedAt: new Date().toISOString() };
   const result = response?.ok ? { ok: true, ...response.result, evidence } : { ok: false, error: response?.error || "Unknown error", evidence };

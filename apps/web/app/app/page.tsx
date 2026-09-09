@@ -25,7 +25,15 @@ const json = (value: unknown) => JSON.stringify(value, null, 2);
 
 type Organization = { id: string; name: string; slug: string; status: string; plan: string; createdAt: string; branding?: { displayName?: string; logoUrl?: string; accent?: string; loginMessage?: string } };
 type AgentTask = { id: string; runId: string; stepId: string; provider: string; operation: string; expiresAt: string; status: string };
-type Agent = { id: string; name: string; tenantId: string; status: string; allowedDomains: string[]; lastSeenAt: string | null; version: string | null; createdAt: string };
+type Agent = {
+  id: string; name: string; tenantId: string; status: string; allowedDomains: string[];
+  lastSeenAt: string | null; version: string | null; createdAt: string;
+  agentType?: "CHROME_EXTENSION" | "DESKTOP_AGENT";
+  capabilities?: string[];
+  platform?: string | null;
+  connectionStatus?: "connected" | "offline" | "revoked";
+  permissions?: { accessibility?: boolean; screenRecording?: boolean } | null;
+};
 type ActivityEvent = { id: string; tenantId: string; at: string; actor: string; actorLabel?: string; action: string; summary: string };
 type Ticket = { id: string; tenantId: string; createdBy: string; subject: string; message: string; category: string; priority: string; status: string; runId?: string; workflowId?: string; notes: { id: string; at: string; by: string; text: string; internal: boolean }[]; createdAt: string; updatedAt: string };
 type RuntimeSettings = { aiRuntimeLabel: string; dataBoundary: string };
@@ -472,12 +480,23 @@ export default function ProductConsole() {
 
       {view.section === "agents" && (
         <div className="product-workspace product-clientsview"><section className="product-panel product-clients">
-          <div className="product-panelhead"><div><p className="product-eyebrow">BROWSER AUTOMATION</p><h2>AmazFlow Agent</h2></div><a className="product-download" href="/downloads/amazflow-agent.zip" download>Download for Chrome →</a></div>
+          <div className="product-panelhead"><div><p className="product-eyebrow">AGENTS &amp; DOWNLOADS</p><h2>AmazFlow Chrome Agent</h2></div><a className="product-download" href="/downloads/amazflow-agent.zip" download>Download for Chrome →</a></div>
           <div className="product-addhint">Workflow steps with the <b>browser</b> provider pause a run and wait for this agent to act. Setup: 1) unzip the download, 2) open <code>chrome://extensions</code>, enable Developer mode, click &quot;Load unpacked&quot;, and select the unzipped folder, 3) click the extension icon and sign in with your AmazFlow account. That is the whole setup — the agent stays connected across restarts, works on any site the workflow targets, and needs no AmazFlow tab left open.</div>
-          <div className="product-panelhead" style={{ marginTop: 18 }}><div><p className="product-eyebrow">CONNECTED AGENTS</p><h2>Authorized browsers</h2></div><button disabled={agentsLoading} onClick={() => { setAgentsLoading(true); refresh().finally(() => setAgentsLoading(false)); }}>{agentsLoading ? "Refreshing…" : "Refresh"}</button></div>
-          {agentsLoading ? <p className="product-empty">Loading agents…</p> : agents.length === 0 ? <p className="product-empty">No agents connected yet.</p> : agents.map((agentItem) => <div className="product-orgrow" key={agentItem.id}><span className="product-glyph">◈</span><div><b>{agentItem.name}</b><small>{agentItem.status === "revoked" ? "Revoked" : agentItem.lastSeenAt ? `Last seen ${new Date(agentItem.lastSeenAt).toLocaleString()}` : "Never connected"}{agentItem.version ? ` · v${agentItem.version}` : ""}</small></div>{agentItem.status === "revoked" ? <mark>revoked</mark> : <button disabled={revokingAgentId === agentItem.id} onClick={() => revokeAgentById(agentItem.id)}>{revokingAgentId === agentItem.id ? "Revoking…" : "Revoke"}</button>}</div>)}
-          <div className="product-panelhead" style={{ marginTop: 18 }}><div><p className="product-eyebrow">PENDING AGENT TASKS</p><h2>Waiting on a browser step</h2></div><button disabled={tasksLoading} onClick={loadAgentTasks}>Refresh</button></div>
-          {tasksLoading ? <p className="product-empty">Loading tasks…</p> : agentTasks.length === 0 ? <p className="product-empty">No runs are currently waiting on the browser agent.</p> : agentTasks.map((task) => { const taskRun = runs.find((r) => r.id === task.runId); const taskWorkflow = taskRun ? workflows.find((w) => w.id === taskRun.workflowId) : undefined; return <button className="product-runrow product-runrow-clickable" key={task.id} onClick={() => setView({ section: "runs", entityId: task.runId })}><span className="product-dot" /><div><b>{taskWorkflow?.name ?? task.operation}</b><small>{taskWorkflow ? `${task.operation} · step ${task.stepId}` : `run ${task.runId} · step ${task.stepId}`} · expires {new Date(task.expiresAt).toLocaleTimeString()}</small></div><mark>{task.status}</mark></button>; })}
+          <div className="product-panelhead" style={{ marginTop: 18 }}><div><p className="product-eyebrow">DESKTOP AUTOMATION</p><h2>AmazFlow Desktop Agent</h2></div><a className="product-download" href="/downloads/amazflow-desktop-agent-mac-arm64.dmg" download>Download for macOS →</a></div>
+          <div className="product-addhint">For workflow steps with the <b>desktop</b> provider — opening and driving installed Mac applications. Requires macOS 12 or later on Apple silicon. Setup: 1) open the download and drag <b>AmazFlow Agent</b> to Applications, 2) launch it and sign in with your AmazFlow account, 3) grant <b>Accessibility</b> when macOS asks — the app shows exactly which permissions are missing and links straight to the right Settings pane. Screen Recording is only needed for steps that capture visual evidence. The agent keeps running from the menu bar when its window is closed.</div>
+          <div className="product-panelhead" style={{ marginTop: 18 }}><div><p className="product-eyebrow">CONNECTED AGENTS</p><h2>Registered execution agents</h2></div><button disabled={agentsLoading} onClick={() => { setAgentsLoading(true); refresh().finally(() => setAgentsLoading(false)); }}>{agentsLoading ? "Refreshing…" : "Refresh"}</button></div>
+          {agentsLoading ? <p className="product-empty">Loading agents…</p> : agents.length === 0 ? <p className="product-empty">No agents connected yet. Install the Chrome extension or the macOS app above, then sign in inside it.</p> : agents.map((agentItem) => {
+            const desktop = agentItem.agentType === "DESKTOP_AGENT";
+            const connection = agentItem.connectionStatus ?? (agentItem.status === "revoked" ? "revoked" : agentItem.lastSeenAt ? "offline" : "offline");
+            const missingPermission = desktop && agentItem.permissions && agentItem.permissions.accessibility === false;
+            return <div className="product-orgrow" key={agentItem.id}><span className="product-glyph">{desktop ? "▤" : "◈"}</span><div><b>{agentItem.name} <span className={`wf-target-badge ${desktop ? "wf-target-desktop" : "wf-target-browser"}`}>{desktop ? "Desktop App" : "Chrome Extension"}</span></b><small>
+              {agentItem.status === "revoked" ? "Revoked" : missingPermission ? "Connected, but Accessibility is not granted on that Mac" : connection === "connected" ? `Connected · heartbeat ${new Date(agentItem.lastSeenAt as string).toLocaleTimeString()}` : agentItem.lastSeenAt ? `Offline · last seen ${new Date(agentItem.lastSeenAt as string).toLocaleString()}` : "Never connected"}
+              {agentItem.version ? ` · v${agentItem.version}` : ""}{agentItem.platform ? ` · ${agentItem.platform}` : ""}
+              {agentItem.capabilities?.length ? ` · ${agentItem.capabilities.length} actions` : ""}
+            </small></div>{agentItem.status === "revoked" ? <mark>revoked</mark> : <button disabled={revokingAgentId === agentItem.id} onClick={() => revokeAgentById(agentItem.id)}>{revokingAgentId === agentItem.id ? "Revoking…" : "Revoke"}</button>}</div>;
+          })}
+          <div className="product-panelhead" style={{ marginTop: 18 }}><div><p className="product-eyebrow">PENDING AGENT TASKS</p><h2>Waiting on an agent step</h2></div><button disabled={tasksLoading} onClick={loadAgentTasks}>Refresh</button></div>
+          {tasksLoading ? <p className="product-empty">Loading tasks…</p> : agentTasks.length === 0 ? <p className="product-empty">No runs are currently waiting on an execution agent.</p> : agentTasks.map((task) => { const taskRun = runs.find((r) => r.id === task.runId); const taskWorkflow = taskRun ? workflows.find((w) => w.id === taskRun.workflowId) : undefined; return <button className="product-runrow product-runrow-clickable" key={task.id} onClick={() => setView({ section: "runs", entityId: task.runId })}><span className="product-dot" /><div><b>{taskWorkflow?.name ?? task.operation}</b><small>{taskWorkflow ? `${task.operation} · step ${task.stepId}` : `run ${task.runId} · step ${task.stepId}`} · expires {new Date(task.expiresAt).toLocaleTimeString()}</small></div><mark>{task.status}</mark></button>; })}
         </section></div>
       )}
 

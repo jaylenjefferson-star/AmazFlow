@@ -4,6 +4,7 @@ packages:
   - packages/*
   - infrastructure/*
 allowBuilds:
+  electron: set this to true or false
   esbuild: true
 minimumReleaseAgeExclude:
   - '@aws-sdk/client-bedrock-agentcore@3.1128.0'

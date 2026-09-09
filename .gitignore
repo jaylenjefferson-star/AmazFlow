@@ -8,3 +8,4 @@ coverage
 *.log
 *.tsbuildinfo
 apps/web/out
+apps/desktop-agent/release

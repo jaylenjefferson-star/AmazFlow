@@ -27,8 +27,12 @@ const storageWrites = [...sw.matchAll(/(?:chrome\.storage\.local\.set|(?<![A-Za-
 const checks = [
   ["the extension is a self-contained app, not a page companion", !sw.includes("agent-authorize") && !popup.includes("agent-authorize")],
   // pendingConnectTabId may still be *named* -- migrateLegacyState deletes it -- but nothing may
-  // listen for a tab to hand a credential back.
-  ["no tab-watching handshake to finish connecting", !sw.includes("onHistoryStateUpdated") && !sw.includes("webNavigation") && !sw.includes("tabs.onUpdated") && !sw.replace(/const LEGACY_KEYS[\s\S]*?\];/, "").includes("pendingConnectTabId")],
+  // listen for a tab to hand a credential back. tabs.onUpdated on its own is not the smell: a
+  // NAVIGATE step legitimately waits on it for the page to finish loading. What made the old flow
+  // a handshake was watching a *specific remembered tab* for an authorization code.
+  ["no tab-watching handshake to finish connecting", !sw.includes("onHistoryStateUpdated") && !sw.includes("webNavigation") && !sw.replace(/const LEGACY_KEYS[\s\S]*?\];/, "").includes("pendingConnectTabId")],
+  ["the agent advertises its type and capabilities", sw.includes('agentType: "CHROME_EXTENSION"') && sw.includes("CAPABILITIES")],
+  ["the agent claims only browser-surface work", sw.includes('"browser_extension"')],
   ["no credential is ever read out of a URL", !sw.includes("searchParams.get")],
   ["host access comes from the manifest, once", JSON.stringify(manifest.host_permissions) === JSON.stringify(["<all_urls>"])],
   ["no optional host permissions to prompt per site", !manifest.optional_host_permissions],
