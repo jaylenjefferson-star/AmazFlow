@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AmazFlow Agent",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Executes narrowly scoped AmazFlow operations tasks in authorized browser tabs, connected via AmazFlow's own sign-in -- no manual token copying.",
   "permissions": ["activeTab", "storage", "alarms", "scripting", "permissions", "tabs"],
   "host_permissions": ["https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com/*", "https://amazflow.com/*"],
