@@ -2,7 +2,20 @@
   "name": "@amazflow/aws-cdk",
   "version": "0.1.0",
   "type": "module",
-  "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc -p tsconfig.json", "test": "node --test", "synth": "cdk synth" },
-  "dependencies": { "@amazflow/control-plane": "workspace:*", "aws-cdk-lib": "^2.268.0", "constructs": "^10.4.2" },
-  "devDependencies": { "aws-cdk": "^2.1019.0", "tsx": "^4.19.3", "typescript": "^5.7.3" }
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node test/critical-path.test.cjs",
+    "synth": "cdk synth"
+  },
+  "dependencies": {
+    "@amazflow/control-plane": "workspace:*",
+    "aws-cdk-lib": "^2.268.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.1019.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
 }

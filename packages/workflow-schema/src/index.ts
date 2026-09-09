@@ -97,6 +97,21 @@ export type StepResult = {
   resolvedAt: string;
   actionResult?: { ok: boolean; status?: number; body?: unknown; error?: string };
   verificationResult?: { passed: boolean; expected: unknown; actual: unknown };
+  // Who actually performed this step and under what authority. Written when a browser agent
+  // resolves a claimed task: the agent identity comes from the claim, the grant id from the
+  // single-use execution grant that authorized the write, and `verified` records whether
+  // AmazFlow re-tested the step's own verify contract rather than taking the browser's word.
+  evidence?: {
+    taskId?: string;
+    agentId?: string;
+    grantId?: string | null;
+    claimedAt?: string | null;
+    reportedAt?: string;
+    page?: { url?: string; title?: string | null; origin?: string; observedAt?: string } | null;
+    verified?: boolean;
+    expected?: unknown;
+    actual?: unknown;
+  };
 };
 export type WorkflowRun = {
   id: string;

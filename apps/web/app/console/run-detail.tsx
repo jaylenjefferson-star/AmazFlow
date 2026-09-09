@@ -155,6 +155,24 @@ export function RunDetailScreen({
                   {result.operation ? ` · ${result.operation}` : ""}
                 </p>
               )}
+              {result.evidence?.page?.url && (
+                <p className="console-evidence-meta">On {result.evidence.page.url}</p>
+              )}
+              {role === "SUPER_ADMIN" && result.evidence?.grantId && (
+                <p className="console-evidence-meta">
+                  Agent {result.evidence.agentId} · grant {result.evidence.grantId.slice(0, 8)}
+                </p>
+              )}
+              {result.evidence?.verified === false && (
+                <div className="console-evidence-facts">
+                  <span>
+                    Expected <b>{String(result.evidence.expected)}</b>
+                  </span>
+                  <span>
+                    Observed <b>{String(result.evidence.actual)}</b>
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         );

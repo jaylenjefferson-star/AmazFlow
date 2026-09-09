@@ -25,9 +25,15 @@ The deployed workspace persists workflow definitions and execution history in Dy
 
 Local engine-sandbox development uses synthetic data and in-memory persistence. AWS hosts the protected control plane in `us-east-1`; Amplify Hosting builds the web application from the private GitHub repository.
 
+`infrastructure/aws-cdk/test/critical-path.test.cjs` runs the template's own inline Lambda source against an in-memory DynamoDB and asserts the whole browser-agent chain — tenant isolation, claim contention, grant scope and replay, evidence, independent verification, and stalled-claim recovery. Run it with `pnpm --filter @amazflow/aws-cdk test`; it needs no AWS credentials and is the check to run before deploying the template.
+
 `infrastructure/aws-cdk/amazflow-dev.yaml` is the live production control plane today: a single, hand-maintained CloudFormation template packaging the control-plane Lambda, all API routes, DynamoDB access, the signed execution-grant implementation, and the AgentCore Harness/Gateway wiring described above. It is deployed manually through the AWS Console. `infrastructure/aws-cdk/src/app.ts` and `services/control-plane` describe a separate, more ambitious CDK stack — deny-by-default Gateways and policy engines, additional Harnesses, Memory, a managed Browser tool, encrypted recordings — that is not built or deployed anywhere. Treat it as the target architecture, not current production, until it is actually built, deployed, and staged.
 
-The Chrome agent source lives in `apps/browser-agent` and is the only mechanism today that performs real browser actions — clicking, typing, reading, and scrolling on a live page. It polls the control plane for short-lived tenant-scoped tasks, highlights its target, records recent activity locally, and executes only its explicit operation allowlist. A cloud-hosted managed Browser tool is part of the CDK stack above but is not deployed; until it ships, the Chrome extension is required for any workflow with a `browser` provider step.
+The Chrome agent source lives in `apps/browser-agent` and is the only mechanism today that performs real browser actions — clicking, typing, reading, and scrolling on a live page. It polls the control plane for short-lived tenant-scoped tasks, highlights its target, records recent activity locally, and executes only its explicit operation allowlist.
+
+Since v0.7.0 the agent does not act on a task it merely saw in the poll. It **claims** the task first (`POST /agent/tasks/{id}/claim`), which takes a single-winner lease — two browsers open on the same tenant can no longer both perform the same click — and returns a **signed, single-use execution grant** bound to that one run, workflow version, and step. The grant, not the agent's long-lived bearer token, is what authorizes the two calls that follow: one `record_step_result` evidence write into the run's audit trail, and one terminal result submission. Each of the grant's named tools is accepted exactly once, every scope field is re-checked against records loaded server-side rather than against anything the agent echoes back, and the grant expires in minutes. A lease whose holder goes away is returned to the pool by the sweep, so an abandoned step is retried by another agent instead of timing the run out.
+
+The server also independently re-tests a step's `verify` contract against what the agent reported: a browser that claims success it cannot substantiate fails the step and is audited as `VERIFICATION_FAILED` rather than advancing the run. The resulting `stepResults[stepId].evidence` records which agent acted, under which grant, on which page. A cloud-hosted managed Browser tool is part of the CDK stack above but is not deployed; until it ships, the Chrome extension is required for any workflow with a `browser` provider step.
 
 ## Load the Chrome agent
 
@@ -46,6 +52,8 @@ The Chrome agent source lives in `apps/browser-agent` and is the only mechanism 
 - `GET /runs/:id`
 - `GET /agent-tasks`
 - `POST /agent-tasks/:id/result`
+- `GET /agent/tasks` · `POST /agent/tasks/:id/claim` · `POST /agent/tasks/:id/result` (agent-token routes)
+- `POST /agent/tools/record-step-result` (execution-grant authorized)
 - `POST /runs/:id/approvals/:stepId`
 - `GET/POST /connections/browser`
 - `POST /connections/browser/:id/login-session`

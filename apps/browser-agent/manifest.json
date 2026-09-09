@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AmazFlow Agent",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Executes narrowly scoped AmazFlow operations tasks in authorized browser tabs, connected via AmazFlow's own sign-in -- no manual token copying.",
   "permissions": [
     "activeTab",

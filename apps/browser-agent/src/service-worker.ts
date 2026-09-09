@@ -1,5 +1,19 @@
 type AgentTask = { id: string; operation: string; input: Record<string, unknown>; expiresAt: string; tenantId?: string; workflowId?: string; assignedRoles?: string[]; createdBy?: string };
 
+// What POST /agent/tasks/{id}/claim returns. The grant -- not this agent's long-lived bearer
+// token -- is what actually authorizes the two calls that follow, and AmazFlow binds it to one
+// run, workflow version and step, accepts each of its tools exactly once, and expires it in
+// minutes. Nothing here is worth persisting: a grant that outlives the step it was minted for is
+// useless, so it stays in this one function's scope and is never written to chrome.storage.
+type TaskClaim = {
+  task: AgentTask;
+  grant: string;
+  grantId: string;
+  runId: string;
+  stepId: string;
+  claimExpiresAt: string;
+};
+
 const DEFAULT_API = "https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com";
 const allowed = new Set(["READ_TEXT", "CLICK", "TYPE", "SELECT", "CHECK", "SCROLL_TO", "WAIT_FOR", "VERIFY_TEXT", "SET_EMPLOYEE_STATUS"]);
 
@@ -149,13 +163,43 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     return true;
   });
   
-  const task = validTasks[0]; // Take first valid task
-  if (!task) return;
+  const candidate = validTasks[0]; // Take first valid task
+  if (!candidate) return;
 
+  // Resolve the target tab and its permission grant BEFORE claiming. Claiming takes a lease that
+  // blocks every other connected agent from the step for minutes, so it must not be taken for a
+  // task this browser was never going to be able to run.
   const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!activeTab?.id || !activeTab.url) return;
   const origin = new URL(activeTab.url).origin;
   if (!(await hasHostPermission(origin))) return;
+
+  // Claim it. Exactly one agent wins; anyone else gets a 409 and simply waits for the next tick.
+  // This is what replaced "every agent in the tenant sees the same pending task and all of them
+  // act on it" -- previously two open browsers performed the same click and the loser only found
+  // out when its result was rejected, after the side effect had already happened twice.
+  const selector = typeof candidate.input?.selector === "string" ? (candidate.input.selector as string) : undefined;
+  let claim: TaskClaim;
+  try {
+    const claimResponse = await fetch(`${apiBase}/agent/tasks/${candidate.id}/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agentToken },
+    });
+    const claimBody = await claimResponse.json();
+    if (!claimResponse.ok) throw new Error(claimBody.error || `Claim failed (${claimResponse.status})`);
+    claim = claimBody as TaskClaim;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // A lost race is the normal, uninteresting case and shouldn't fill the operator's activity
+    // list; anything else is worth showing, because it means this agent can't take work at all.
+    if (!/already/i.test(message)) {
+      await logActivity({ at: new Date().toISOString(), operation: candidate.operation, selector, ok: false, detail: `Couldn't claim the task -- ${message}` });
+    }
+    return;
+  }
+
+  const task = claim.task || candidate;
+  const grant = claim.grant;
 
   await chrome.scripting.executeScript({ target: { tabId: activeTab.id }, files: ["content.js"] }).catch(() => undefined);
   const response = await chrome.tabs.sendMessage(activeTab.id, { type: "AMAZFLOW_TASK", task }).catch((error) => ({ ok: false, error: String(error) }));
@@ -163,22 +207,39 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   // Always report back, success or failure -- the run needs to know either way (it either
   // advances or routes to the step's onFailure/FAILED), rather than silently expiring the task
   // with no evidence of what happened.
-  const result = response?.ok ? { ok: true, ...response.result } : { ok: false, error: response?.error || "Unknown error" };
-  const selector = typeof task.input?.selector === "string" ? (task.input.selector as string) : undefined;
+  const evidence = { url: activeTab.url, title: activeTab.title || null, origin, observedAt: new Date().toISOString() };
+  const result = response?.ok
+    ? { ok: true, ...response.result, evidence }
+    : { ok: false, error: response?.error || "Unknown error", evidence };
+
+  // Write the evidence note into the run's own audit trail before submitting the terminal
+  // result. It is the same Gateway-mediated record_step_result tool the managed executor uses,
+  // authorized by the same grant, and it is deliberately separate from the result submission:
+  // if reporting the result then fails, the run still carries a durable record of what this
+  // browser did and on which page, instead of the step looking like it never ran.
+  await fetch(`${apiBase}/agent/tools/record-step-result`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      grant,
+      stepId: claim.stepId,
+      status: result.ok ? "SUCCEEDED" : "FAILED",
+      note: `${task.operation}${selector ? ` on ${selector}` : ""} at ${evidence.url}${result.ok ? "" : ` -- ${String(result.error)}`}`,
+    }),
+  }).catch(() => undefined);
 
   // Report back to the control plane before logging anything locally as "Completed" -- the
   // browser action can succeed while this call still fails (network blip, the task already
-  // expired server-side, or another connected agent already resolved it), and the operator's
-  // activity log should reflect whether the run actually resumed, not just whether the DOM
-  // action worked. A rejected/expired result won't succeed on retry, so only network failures
-  // get retried.
+  // expired server-side, or the claim lease ran out), and the operator's activity log should
+  // reflect whether the run actually resumed, not just whether the DOM action worked. A
+  // rejected/expired result won't succeed on retry, so only network failures get retried.
   let reported = false;
   let reportError: string | undefined;
   for (let attempt = 0; attempt < 3 && !reported; attempt++) {
     try {
       const res = await fetch(`${apiBase}/agent/tasks/${task.id}/result`, {
         method: "POST",
-        headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agentToken },
+        headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agentToken, "X-AmazFlow-Execution-Grant": grant },
         body: JSON.stringify(result),
       });
       if (res.ok) { reported = true; break; }
