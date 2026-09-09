@@ -596,6 +596,185 @@ const agentMayRunTask = (task, ctx) => {
     return false;
   return true;
 };
+// A task lease. Without one, every connected agent in a tenant polls the same PENDING list and
+// acts on the first entry, so two open browsers both perform the same action and the loser only
+// finds out when its result is rejected -- after the side effect has happened twice. Claiming is
+// a conditional single-winner write on its own lock item, and the lock self-heals: a lease past
+// its expiry can be taken over, so an agent that dies mid-step does not strand the run.
+const GRANT_TTL_SECONDS = 300;
+const acquireTaskLease = async (taskId, agentId, leaseExpiresAtMs) => {
+  try {
+    await db.send(
+      new PutItemCommand({
+        TableName: table,
+        Item: {
+          pk: { S: "TASKCLAIM" },
+          sk: { S: `TASKCLAIM#${taskId}` },
+          document: { S: JSON.stringify({ taskId, agentId, claimedAt: now() }) },
+          leaseExpiresAtMs: { N: String(leaseExpiresAtMs) },
+          updatedAt: { S: now() },
+          ttl: { N: String(Math.floor(leaseExpiresAtMs / 1000) + 86400) },
+        },
+        ConditionExpression:
+          "attribute_not_exists(pk) OR leaseExpiresAtMs < :nowMs",
+        ExpressionAttributeValues: { ":nowMs": { N: String(Date.now()) } },
+      }),
+    );
+  } catch (err) {
+    if (err?.name === "ConditionalCheckFailedException")
+      throw { status: 409, message: "Another agent is already running this task" };
+    throw err;
+  }
+};
+// The only place a browser-path execution grant is minted. The agent's bearer token proves which
+// agent is calling; it is deliberately NOT what authorizes the action, because that token lives
+// in a browser profile and is long-lived. The grant is: bound to this exact run, workflow
+// version and step, naming the two tools the agent may call, single-use per tool, minutes-lived.
+// Everything it asserts is re-checked on the way back in against records loaded from the
+// database, never against anything the agent echoes back.
+const claimAgentTask = async (taskId, agentCtx) => {
+  if (!executionGrants)
+    throw { status: 503, message: "Execution grants are not configured" };
+  const allTasks = await scanType("TASK#", { role: "SUPER_ADMIN" });
+  const task = allTasks.find((t) => t.id === taskId);
+  if (!task || !agentMayRunTask(task, agentCtx))
+    throw { status: 404, message: "Task not found" };
+  if (!ALLOWED_AGENT_OPS.has(task.operation))
+    throw {
+      status: 400,
+      message: "Operation is not in the allowed agent operation set",
+    };
+  if (new Date(task.expiresAt).getTime() < Date.now())
+    throw { status: 409, message: "This task has expired" };
+  if (
+    task.status === "CLAIMED" &&
+    task.claimExpiresAt &&
+    new Date(task.claimExpiresAt).getTime() >= Date.now()
+  )
+    throw { status: 409, message: "Another agent is already running this task" };
+  if (task.status !== "PENDING" && task.status !== "CLAIMED")
+    throw { status: 409, message: "Task already resolved" };
+  const allRuns = await scanType("RUN#", { role: "SUPER_ADMIN" });
+  const run = allRuns.find((r) => r.id === task.runId);
+  if (
+    !run ||
+    run.status !== "WAITING_AGENT" ||
+    run.currentStepId !== task.stepId
+  )
+    throw { status: 409, message: "Run is not waiting for this task" };
+  const workflow = await getWorkflowVersion(
+    run.tenantId,
+    run.workflowId,
+    run.workflowVersion,
+  );
+  if (!workflow) throw { status: 400, message: "Workflow not found for run" };
+  const step = (workflow.steps || []).find((s) => s.id === task.stepId);
+  if (!step)
+    throw {
+      status: 409,
+      message:
+        "Step is no longer part of the workflow version this run started on",
+    };
+  const leaseExpiresAtMs = Date.now() + GRANT_TTL_SECONDS * 1000;
+  await acquireTaskLease(task.id, agentCtx.agentId, leaseExpiresAtMs);
+  const grant = executionGrants.issue({
+    runId: run.id,
+    tenantId: run.tenantId,
+    workflowId: run.workflowId,
+    workflowVersion: run.workflowVersion,
+    stepId: task.stepId,
+    allowedTools: ["record_step_result", "agent.report_result"],
+    confirmationGranted:
+      step.requiresConfirmation !== true ||
+      (run.confirmedStepIds || []).includes(task.stepId),
+  });
+  const grantId = JSON.parse(
+    Buffer.from(grant.split(".")[1], "base64url").toString("utf8"),
+  ).grantId;
+  task.status = "CLAIMED";
+  task.claimedBy = agentCtx.agentId;
+  task.claimedAt = now();
+  task.claimExpiresAt = new Date(leaseExpiresAtMs).toISOString();
+  task.grantId = grantId;
+  await save("TASK", task);
+  const auditStartIdx = run.audit.length;
+  run.audit.push({
+    id: `aud_${run.audit.length + 1}`,
+    at: now(),
+    type: "AGENT_TASK_CLAIMED",
+    stepId: task.stepId,
+    message: `Browser agent claimed ${task.operation} for ${task.stepId}`,
+    details: {
+      taskId: task.id,
+      agentId: agentCtx.agentId,
+      grantId,
+      expiresAt: task.claimExpiresAt,
+    },
+  });
+  run.updatedAt = now();
+  await saveRunWithAudit(run, auditStartIdx);
+  return {
+    task,
+    grant,
+    grantId,
+    runId: run.id,
+    stepId: task.stepId,
+    workflowId: run.workflowId,
+    claimExpiresAt: task.claimExpiresAt,
+    verify: step.verify || null,
+  };
+};
+// Identity and scope come entirely from the verified grant, never from anything the caller
+// claims in the body. Deliberately non-destructive: it appends progress to the run's own audit
+// trail rather than advancing run state, which stays owned by the engine.
+const recordStepResult = async (grantToken, body) => {
+  if (!executionGrants)
+    throw { status: 503, message: "Execution grants are not configured" };
+  const stepId = String(body.stepId || "");
+  const status = ["IN_PROGRESS", "SUCCEEDED", "FAILED"].includes(body.status)
+    ? body.status
+    : null;
+  if (!stepId || !status)
+    throw {
+      status: 400,
+      message:
+        "stepId and a valid status (IN_PROGRESS, SUCCEEDED, or FAILED) are required",
+    };
+  let payload;
+  try {
+    payload = await executionGrants.verify(
+      String(grantToken || ""),
+      { stepId, tool: "record_step_result" },
+      grantReplayStore("record_step_result"),
+    );
+  } catch (err) {
+    throw { status: 403, message: err?.message || "Invalid execution grant" };
+  }
+  const allRuns = await scanType("RUN#", { role: "SUPER_ADMIN" });
+  const run = allRuns.find((r) => r.id === payload.runId);
+  if (!run)
+    throw { status: 404, message: "Run not found for this execution grant" };
+  if (
+    run.tenantId !== payload.tenantId ||
+    run.workflowId !== payload.workflowId ||
+    run.workflowVersion !== payload.workflowVersion
+  )
+    throw { status: 409, message: "Run no longer matches the execution grant" };
+  const note =
+    typeof body.note === "string" ? body.note.slice(0, 2000) : undefined;
+  const auditStartIdx = run.audit.length;
+  run.audit.push({
+    id: `aud_${run.audit.length + 1}`,
+    at: now(),
+    type: "EXECUTOR_PROGRESS",
+    stepId,
+    message: `AmazFlow Executor reported ${status} for ${stepId}`,
+    details: { status, note, grantId: payload.grantId },
+  });
+  run.updatedAt = now();
+  await saveRunWithAudit(run, auditStartIdx);
+  return { ok: true, runId: run.id, stepId, status, recordedAt: now() };
+};
 const touchAgentHeartbeat = async (agentId, tenantId, version) => {
   const out = await db.send(
     new GetItemCommand({
@@ -1339,13 +1518,16 @@ const runWorkflow = async (workflow, input, a) => {
   };
   return advance(workflow, run, 0);
 };
-const resumeAgentTask = async (taskId, result, a) => {
+// grantToken is required on the agent route and omitted for the operator's own
+// /agent-tasks/{id}/result console route, which is already Cognito-authenticated and
+// role-checked at the gateway.
+const resumeAgentTask = async (taskId, result, a, grantToken) => {
   const allTasks = await scanType("TASK#", { role: "SUPER_ADMIN" });
   const task = allTasks.find((t) => t.id === taskId);
   if (!task) throw { status: 404, message: "Task not found" };
   if (a.role !== "SUPER_ADMIN" && task.tenantId !== a.tenantId)
     throw { status: 403, message: "Task belongs to another tenant" };
-  if (task.status !== "PENDING")
+  if (task.status !== "PENDING" && task.status !== "CLAIMED")
     throw { status: 409, message: "Task already resolved" };
   if (new Date(task.expiresAt).getTime() < Date.now())
     throw {
@@ -1373,7 +1555,40 @@ const resumeAgentTask = async (taskId, result, a) => {
     run.workflowVersion,
   );
   if (!workflow) throw { status: 400, message: "Workflow not found for run" };
+  // Every scope field is compared against the run and task just loaded from the database, and
+  // the grant is consumed here -- so a result can be submitted exactly once, by the agent that
+  // actually claimed this step, inside the lease window.
+  let grantPayload;
+  if (grantToken !== undefined) {
+    if (!executionGrants)
+      throw { status: 503, message: "Execution grants are not configured" };
+    try {
+      grantPayload = await executionGrants.verify(
+        String(grantToken || ""),
+        {
+          runId: run.id,
+          tenantId: run.tenantId,
+          workflowId: run.workflowId,
+          workflowVersion: run.workflowVersion,
+          stepId: task.stepId,
+          tool: "agent.report_result",
+        },
+        grantReplayStore("agent.report_result"),
+      );
+    } catch (err) {
+      throw { status: 403, message: err?.message || "Invalid execution grant" };
+    }
+  }
+  const evidence = {
+    taskId: task.id,
+    agentId: task.claimedBy || a.userId,
+    grantId: grantPayload ? grantPayload.grantId : null,
+    claimedAt: task.claimedAt || null,
+    reportedAt: now(),
+    page: result.evidence || null,
+  };
   task.status = "COMPLETED";
+  task.resolvedAt = now();
   await save("TASK", task);
   if (useAgentCore())
     return (await createProductionEngine(run)).resumeFromAgent(
@@ -1381,30 +1596,63 @@ const resumeAgentTask = async (taskId, result, a) => {
       run,
       task.stepId,
       result,
+      evidence,
     );
   assertLegacyEnabled();
   const auditStartIdx = run.audit.length;
   run.context.lastAction = { result };
   run.stepResults = run.stepResults || {};
+  const step = workflow.steps.find((s) => s.id === task.stepId);
+  if (!step)
+    throw {
+      status: 409,
+      message:
+        "Step is no longer part of the workflow version this run started on",
+    };
+  let ok = result.ok === true;
+  const independentlyVerified =
+    !ok ||
+    !step.verify ||
+    test(valueAt({ result }, step.verify.path), "equals", step.verify.equals);
+  if (ok && !independentlyVerified) {
+    ok = false;
+    result.ok = false;
+    result.error = "Independent action verification failed";
+  }
   run.stepResults[task.stepId] = {
     stepId: task.stepId,
     type: "action",
     provider: task.provider,
     operation: task.operation,
-    status: result.ok ? "SUCCEEDED" : "FAILED",
+    status: ok ? "SUCCEEDED" : "FAILED",
     resolvedAt: now(),
     actionResult: result,
+    evidence: {
+      ...evidence,
+      verified: independentlyVerified,
+      expected: step.verify ? step.verify.equals : undefined,
+      actual: step.verify
+        ? valueAt({ result }, step.verify.path)
+        : undefined,
+    },
   };
   run.audit.push({
     id: `aud_${run.audit.length + 1}`,
     at: now(),
-    type: result.ok ? "AGENT_RESULT" : "AGENT_RESULT_FAILED",
+    type: ok
+      ? "AGENT_RESULT"
+      : !independentlyVerified
+        ? "VERIFICATION_FAILED"
+        : "AGENT_RESULT_FAILED",
     stepId: task.stepId,
-    message: `Agent ${result.ok ? "completed" : "reported failure for"} ${task.stepId}`,
-    details: result,
+    message: ok
+      ? `Agent completed ${task.stepId}`
+      : !independentlyVerified
+        ? `Agent reported success for ${task.stepId} but AmazFlow could not verify it`
+        : `Agent reported failure for ${task.stepId}`,
+    details: { ...result, grantId: evidence.grantId, agentId: evidence.agentId },
   });
-  const step = workflow.steps.find((s) => s.id === task.stepId);
-  if (result.ok) {
+  if (ok) {
     run.status = "RUNNING";
     run.currentStepId = step.next;
   } else if (step.onFailure) {
@@ -1588,9 +1836,28 @@ const sweepExpired = async () => {
     scanType("CONFIRMATION#", { role: "SUPER_ADMIN" }),
   ]);
   const nowMs = Date.now();
+  // A CLAIMED task whose lease ran out but whose own deadline has not is returned to PENDING
+  // rather than timed out -- the agent holding it went away (tab closed, browser quit, machine
+  // slept) and another connected agent can still finish the step in the time that remains.
+  const stalledClaims = tasks.filter(
+    (t) =>
+      t.status === "CLAIMED" &&
+      t.claimExpiresAt &&
+      new Date(t.claimExpiresAt).getTime() < nowMs &&
+      t.expiresAt &&
+      new Date(t.expiresAt).getTime() >= nowMs,
+  );
+  for (const task of stalledClaims) {
+    task.status = "PENDING";
+    task.claimedBy = null;
+    task.claimedAt = null;
+    task.claimExpiresAt = null;
+    task.grantId = null;
+    await save("TASK", task);
+  }
   const expiredTasks = tasks.filter(
     (t) =>
-      t.status === "PENDING" &&
+      (t.status === "PENDING" || t.status === "CLAIMED") &&
       t.expiresAt &&
       new Date(t.expiresAt).getTime() < nowMs,
   );
@@ -1648,6 +1915,7 @@ const sweepExpired = async () => {
   }
   return {
     expiredTasks: expiredTasks.length,
+    releasedClaims: stalledClaims.length,
     expiredConfirmations: expiredConfirmations.length,
     timedOutRuns,
   };
@@ -2341,6 +2609,14 @@ const gatewayInput = (event) => {
   }
   return event?.arguments || event?.input || event || {};
 };
+// Single-use is keyed by (grantId, tool) rather than grantId alone: one grant names a set of
+// tools and authorizes each of them exactly once. That is what lets a single claim's grant carry
+// both the agent's record_step_result evidence write and its one terminal result submission
+// while leaving either call unreplayable. A grant naming one tool behaves exactly as before.
+const grantReplayStore = (tool) => ({
+  consume: (grantId, expiresAt) =>
+    consumeExecutionGrant(`${grantId}#${tool || "*"}`, expiresAt),
+});
 const consumeExecutionGrant = async (grantId, expiresAt) => {
   try {
     await db.send(
@@ -2366,7 +2642,7 @@ const executeGatewayApiTool = async (input) => {
   const claims = await executionGrants.verify(
     String(input.executionGrant || ""),
     { tool: "api.execute" },
-    { consume: consumeExecutionGrant },
+    grantReplayStore("api.execute"),
   );
   if (!claims.confirmationGranted)
     throw new Error("Action confirmation is required");
@@ -3153,19 +3429,59 @@ exports.handler = async (e) => {
         throw err;
       }
     }
+    if (route === "POST /agent/tasks/{id}/claim") {
+      try {
+        const agentCtx = await agentAuth(e);
+        const claim = await claimAgentTask(e.pathParameters?.id, agentCtx);
+        return reply(200, claim);
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+    }
+    if (route === "POST /agent/tools/record-step-result") {
+      try {
+        const body = JSON.parse(e.body || "{}");
+        const grantToken =
+          e.headers?.["x-amazflow-execution-grant"] ||
+          e.headers?.["X-AmazFlow-Execution-Grant"] ||
+          body.grant;
+        return reply(200, await recordStepResult(grantToken, body));
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+    }
     if (route === "POST /agent/tasks/{id}/result") {
       try {
         const agentCtx = await agentAuth(e);
         const body = JSON.parse(e.body || "{}");
+        const grantToken =
+          e.headers?.["x-amazflow-execution-grant"] ||
+          e.headers?.["X-AmazFlow-Execution-Grant"];
+        if (!grantToken)
+          return reply(409, {
+            error:
+              "Results now require the execution grant issued when the task was claimed. Update the AmazFlow browser agent to the current build and reconnect it.",
+          });
         const allTasks = await scanType("TASK#", { role: "SUPER_ADMIN" });
         const task = allTasks.find((t) => t.id === e.pathParameters?.id);
         if (!task || !agentMayRunTask(task, agentCtx))
           return reply(404, { error: "Task not found" });
-        const run = await resumeAgentTask(task.id, body, {
-          role: "SUPER_ADMIN",
-          userId: agentCtx.agentId,
-          tenantId: agentCtx.tenantId,
-        });
+        if (task.claimedBy && task.claimedBy !== agentCtx.agentId)
+          return reply(409, {
+            error: "This task is claimed by a different agent",
+          });
+        const run = await resumeAgentTask(
+          task.id,
+          body,
+          {
+            role: "SUPER_ADMIN",
+            userId: agentCtx.agentId,
+            tenantId: agentCtx.tenantId,
+          },
+          grantToken,
+        );
         return reply(200, run);
       } catch (err) {
         if (err && err.status) return reply(err.status, { error: err.message });

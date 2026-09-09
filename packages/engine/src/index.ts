@@ -1,6 +1,6 @@
 // This package is the shared workflow state machine used by production and local tests.
 // Infrastructure and provider adapters remain outside it so state transitions stay deterministic.
-import type { WorkflowDefinition, WorkflowRun, WorkflowStep } from "@amazflow/workflow-schema";
+import type { StepResult, WorkflowDefinition, WorkflowRun, WorkflowStep } from "@amazflow/workflow-schema";
 
 export * from "./execution-grant.js";
 
@@ -72,15 +72,27 @@ export class WorkflowEngine {
     return this.advance(workflow, run);
   }
 
-  async resumeFromAgent(workflow: WorkflowDefinition, run: WorkflowRun, stepId: string, result: Record<string, unknown>) {
+  // evidence attributes the result to the agent that actually claimed the step and to the
+  // single-use execution grant that authorized the write; the engine stamps the verification
+  // outcome onto it so the run's own record says whether AmazFlow re-checked the claim.
+  async resumeFromAgent(workflow: WorkflowDefinition, run: WorkflowRun, stepId: string, result: Record<string, unknown>, evidence?: NonNullable<StepResult["evidence"]>) {
     if (run.status !== "WAITING_AGENT" || run.currentStepId !== stepId) throw new Error("Run is not waiting for this agent result");
     const step = this.step(workflow, stepId);
     if (step.type !== "action") throw new Error("Agent task does not reference an action step");
+    // The browser is the thing being checked, so its own "ok" is a claim, not a verdict. This
+    // is the same independent re-test advance() already applies to managed actions: when the
+    // step declares a verify contract, a self-declared success that does not hold up fails the
+    // step instead of advancing the run.
+    let ok = result.ok !== false;
+    const verified = !ok || !step.verify || compare(getPath({ result }, step.verify.path), "equals", step.verify.equals);
+    if (ok && !verified) { ok = false; (result as Record<string, unknown>).ok = false; (result as Record<string, unknown>).error = "Independent action verification failed"; }
+    const expected = step.verify?.equals;
+    const actual = step.verify ? getPath({ result }, step.verify.path) : undefined;
     run.context.lastAction = { result };
     run.stepResults = run.stepResults ?? {};
-    run.stepResults[stepId] = { stepId, type: "action", provider: step.provider, operation: step.operation, status: result.ok === false ? "FAILED" : "SUCCEEDED", resolvedAt: now(), actionResult: result as any };
-    this.event(run, result.ok === false ? "AGENT_RESULT_FAILED" : "AGENT_RESULT", `Agent ${result.ok === false ? "reported failure for" : "completed"} ${stepId}`, stepId, result);
-    if (result.ok !== false) { run.status = "RUNNING"; run.currentStepId = step.next; }
+    run.stepResults[stepId] = { stepId, type: "action", provider: step.provider, operation: step.operation, status: ok ? "SUCCEEDED" : "FAILED", resolvedAt: now(), actionResult: result as any, evidence: evidence ? { ...evidence, verified, expected, actual } : undefined };
+    this.event(run, ok ? "AGENT_RESULT" : !verified ? "VERIFICATION_FAILED" : "AGENT_RESULT_FAILED", ok ? `Agent completed ${stepId}` : !verified ? `Agent reported success for ${stepId} but AmazFlow could not verify it` : `Agent reported failure for ${stepId}`, stepId, { ...result, expected, actual });
+    if (ok) { run.status = "RUNNING"; run.currentStepId = step.next; }
     else if (step.onFailure) { run.status = "RUNNING"; run.currentStepId = step.onFailure; }
     else { run.status = "FAILED"; run.currentStepId = undefined; await this.store.saveRun(run); return run; }
     return this.advance(workflow, run);
