@@ -35,3 +35,19 @@ Rollback on any cross-tenant access, unconfirmed side effect, policy bypass, or 
 ## Day 14 cleanup
 
 If no rollback criterion was met, remove the direct-model permission and legacy `ConverseCommand` code, delete `infrastructure/aws-cdk/amazflow-dev.yaml`, and record the cleanup in the immutable operator activity log. No DynamoDB migration is required.
+
+## Vertical-slice proof (2026-09-09) -- actual path taken so far
+
+The plan above assumes a full `@amazflow/control-plane` + `@amazflow/aws-cdk` deploy. That stack has not been built or deployed (this environment has no Node toolchain to run esbuild/cdk). Instead, the first real grant -> Harness -> Gateway -> backend chain was proven by extending the existing, live, inline-Lambda production stack (`infrastructure/aws-cdk/amazflow-dev.yaml`) directly -- **the production control plane was never replaced**, only given two new narrow routes. `infrastructure/aws-cdk/amazflow-dev.yaml` should NOT be deleted until the full stack above is actually built, deployed, and staging-gated; that has not happened yet.
+
+**What's real and deployed:**
+- `POST /runs/{id}/executor/invoke` (JWT, SUPER_ADMIN) and `POST /agent/tools/record-step-result` (grant-authed) added to the live Lambda. Grant format is an inline port of `packages/engine/src/execution-grant.ts` (same v1 wire format, same fields), not a second format.
+- CFN parameters `ExecutionGrantSecret` (NoEcho, dev/staging secret baked into the template -- move to Secrets Manager before this carries real customer actions) and `ExecutorHarnessArn`.
+- AgentCore Harness `harness_pwphl` (ARN `arn:aws:bedrock-agentcore:us-east-1:398681517793:harness/harness_pwphl-y67Z8PxUwD`), reconfigured this session: model `us.anthropic.claude-sonnet-4-6`, system prompt establishes the bounded-execution-grant contract, one Gateway tool attached.
+- AgentCore Gateway `amazflow-executor-gateway` (target `amazflow-tools`), REST API target, inline OpenAPI schema exposing exactly one operation (`record_step_result`) against `POST /agent/tools/record-step-result` on the existing API (`https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com`). Inbound auth: IAM. Outbound auth to the target: none (the target route has no API-Gateway-level auth; authorization is the execution grant, verified inside the Lambda).
+- No Policy Engine attached yet -- deliberately deferred; the backend already enforces tenant/workflow/run/step/tool/expiry/single-use deterministically without it.
+
+**Verified live, this session:**
+- All 7 negative cases against `/agent/tools/record-step-result` with offline-minted grants (same HMAC secret/algorithm): malformed -> 400, tampered signature -> 401, expired -> 401, tool not in `allowedTools` -> 403, well-formed grant for a nonexistent run -> 404 (and consumes the grant), replay of that same grant -> 409, missing fields -> 400.
+- Full chain in the Harness playground: a manually-minted grant in the prompt -> Harness correctly extracted it -> called `record_step_result` via the Gateway with the exact grant/stepId/status/note -> Gateway reached the real Lambda -> Lambda verified the grant and correctly 404'd (run intentionally didn't exist) -> Harness reported the failure honestly rather than claiming success.
+- Not yet verified: a real run created through the product, `/runs/{id}/executor/invoke` end to end, and a `record_step_result` call that actually succeeds and is visible in a run's audit trail. Needs a live SUPER_ADMIN session (not available in this environment after credential hygiene cleanup).
