@@ -631,7 +631,12 @@ Resources:
                 harnessArn:process.env.EXECUTOR_HARNESS_ARN,
                 runtimeSessionId:sessionId,
                 messages:[{role:'user',content:[{text:prompt}]}],
-                allowedTools:['record_step_result'],
+                // Not restricting allowedTools here: the tool's model-visible name is namespaced
+                // by the Gateway/target (confirmed via the playground -- it isn't the bare
+                // operationId 'record_step_result'), and the Harness's own persistent Tools
+                // config already limits it to exactly this one Gateway/operation. An invocation-
+                // level allowedTools naming the wrong string silently excludes the only real
+                // tool rather than erroring, which is what happened on the first live attempt.
                 maxIterations:6,maxTokens:2000,timeoutSeconds:60
               }));
               let text='';
