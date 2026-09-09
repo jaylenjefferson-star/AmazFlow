@@ -63,6 +63,23 @@ async function refreshStatus() {
   siteButton.disabled = granted;
   siteButton.textContent = granted ? "Enabled" : `Enable on ${origin}`;
 
+  // What this agent is holding a lease on right now. Until the agent claimed its work there
+  // was nothing to show here -- a task was either invisible or already in the history -- so a
+  // step that hung looked identical to no work existing at all.
+  const runningEl = el<HTMLElement>("runningTask");
+  const { currentTask } = await chrome.storage.local.get(["currentTask"]);
+  const active = currentTask as { operation: string; stepId: string; runId: string; selector?: string; claimExpiresAt: string } | undefined;
+  if (active && new Date(active.claimExpiresAt).getTime() > Date.now()) {
+    const secondsLeft = Math.max(0, Math.round((new Date(active.claimExpiresAt).getTime() - Date.now()) / 1000));
+    runningEl.style.display = "block";
+    runningEl.innerHTML = `<div class="op"><span class="dot"></span>Running ${escapeHtml(active.operation)}</div>
+      <div class="meta">Step ${escapeHtml(active.stepId)} of run ${escapeHtml(active.runId)}</div>
+      ${active.selector ? `<div class="meta">${escapeHtml(active.selector)}</div>` : ""}
+      <div class="meta">Claimed by this browser · ${secondsLeft}s left on the lease</div>`;
+  } else {
+    runningEl.style.display = "none";
+  }
+
   const { activityLog } = await chrome.storage.local.get(["activityLog"]);
   renderActivity(Array.isArray(activityLog) ? (activityLog as PopupActivityEntry[]) : []);
 }
@@ -70,7 +87,7 @@ async function refreshStatus() {
 // Live-updates the log while the popup is open and a poll happens to land mid-view, instead of
 // only reflecting whatever the log looked like at the moment the popup was opened.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.activityLog) refreshStatus();
+  if (area === "local" && (changes.activityLog || changes.currentTask)) refreshStatus();
 });
 
 el<HTMLButtonElement>("connect").addEventListener("click", async () => {
@@ -82,7 +99,7 @@ el<HTMLButtonElement>("connect").addEventListener("click", async () => {
 });
 
 el<HTMLButtonElement>("disconnect").addEventListener("click", async () => {
-  await chrome.storage.local.remove(["agentToken", "agentId", "agentName", "tenantId", "lastConnectionError", "userId", "userRole"]);
+  await chrome.storage.local.remove(["agentToken", "agentId", "agentName", "tenantId", "lastConnectionError", "userId", "userRole", "currentTask"]);
   await refreshStatus();
 });
 

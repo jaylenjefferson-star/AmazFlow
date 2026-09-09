@@ -200,6 +200,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 
   const task = claim.task || candidate;
   const grant = claim.grant;
+  await chrome.storage.local.set({
+    currentTask: { operation: task.operation, stepId: claim.stepId, runId: claim.runId, selector, claimExpiresAt: claim.claimExpiresAt },
+  });
 
   await chrome.scripting.executeScript({ target: { tabId: activeTab.id }, files: ["content.js"] }).catch(() => undefined);
   const response = await chrome.tabs.sendMessage(activeTab.id, { type: "AMAZFLOW_TASK", task }).catch((error) => ({ ok: false, error: String(error) }));
@@ -251,6 +254,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     }
   }
 
+  await chrome.storage.local.remove(["currentTask"]);
   await logActivity({
     at: new Date().toISOString(),
     operation: task.operation,
