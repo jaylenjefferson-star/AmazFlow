@@ -4,11 +4,11 @@ Description: AmazFlow control plane with tenant-scoped RBAC and bounded AI execu
 Parameters:
   BedrockModelId:
     Type: String
-    Default: amazon.nova-pro-v1:0
+    Default: us.anthropic.claude-haiku-4-5-20251001-v1:0
     Description: Amazon Bedrock model used for bounded workflow AI steps and AmazFlow Copilot
   BedrockFoundationModelId:
     Type: String
-    Default: amazon.nova-pro-v1:0
+    Default: anthropic.claude-haiku-4-5-20251001-v1:0
     Description: Foundation model granted to the Lambda role. Matches BedrockModelId for a
       directly-invokable model; differs only when BedrockModelId is a cross-region inference
       profile (e.g. us.anthropic.*), which is not entitled on this account today.
