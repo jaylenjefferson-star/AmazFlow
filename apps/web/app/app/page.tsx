@@ -17,7 +17,7 @@ import { ConnectionsPanel } from "./connections-panel";
 import { AuditPanel } from "./audit-panel";
 import { SettingsPanel } from "./settings-panel";
 import { SupportPanel } from "./support-panel";
-import { API, type Session, clearSession, guardBFCacheRestore, resolveSession, revokeRefreshToken } from "../lib/cognito-auth";
+import { API, type Session, signOut as authSignOut, guardBFCacheRestore, resolveSession } from "../lib/cognito-auth";
 import "./product.css";
 
 const json = (value: unknown) => JSON.stringify(value, null, 2);
@@ -328,11 +328,8 @@ export default function ProductConsole() {
     }
   };
 
-  const signOut = () => {
-    revokeRefreshToken(session?.refreshToken);
-    clearSession();
-    setSession(null);
-    window.location.replace("/signed-out");
+  const signOut = async () => {
+    await authSignOut(session);
   };
 
   if (!session) return <main className="product-login"><div className="login-card"><div className="product-brand"><span><LogoMark /></span>AmazFlow</div><div className="login-loader" /><h1>Opening your workspace…</h1><p>Connecting securely to AmazFlow.</p></div></main>;

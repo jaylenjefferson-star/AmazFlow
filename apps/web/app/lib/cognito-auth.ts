@@ -145,20 +145,35 @@ function sessionFromAuthResult(result: CognitoAuthResult): Session {
 const STORAGE_KEY = "amazflow_session";
 
 export function saveSession(session: Session) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+  } catch (error) {
+    console.error("Failed to save session:", error);
+  }
 }
 
 export function loadSession(): Session | null {
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) return null;
   try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return null;
+    
     const parsed = JSON.parse(stored) as Session;
+    
+    // Check if session is expired
     if (!parsed.expiresAt || parsed.expiresAt < Date.now()) {
       localStorage.removeItem(STORAGE_KEY);
       return null;
     }
+    
+    // Validate session has required fields
+    if (!parsed.idToken || !parsed.email || !parsed.role || !parsed.sub) {
+      localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    
     return parsed;
-  } catch {
+  } catch (error) {
+    console.error("Failed to load session:", error);
     localStorage.removeItem(STORAGE_KEY);
     return null;
   }
@@ -194,7 +209,13 @@ export async function resolveSession(): Promise<Session | null> {
 }
 
 export function clearSession() {
-  localStorage.removeItem(STORAGE_KEY);
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+    // Also clear any cached data that might cause loops
+    sessionStorage.clear();
+  } catch (error) {
+    console.error("Failed to clear session:", error);
+  }
 }
 
 // True sign-out: revoking the refresh token stops it from minting new access/id tokens even
@@ -203,9 +224,27 @@ export async function revokeRefreshToken(refreshToken: string | undefined) {
   if (!refreshToken) return;
   try {
     await cognito("RevokeToken", { ClientId: COGNITO_CLIENT_ID, Token: refreshToken });
-  } catch {
+  } catch (error) {
     // Best-effort -- local session is cleared regardless.
+    console.warn("Failed to revoke refresh token:", error);
   }
+}
+
+// Complete sign out - clears everything and prevents loops
+export async function signOut(session: Session | null | undefined) {
+  // Revoke the token first if we have it
+  if (session?.refreshToken) {
+    await revokeRefreshToken(session.refreshToken);
+  }
+  
+  // Clear all storage
+  clearSession();
+  
+  // Small delay to ensure storage is cleared before redirect
+  await new Promise(resolve => setTimeout(resolve, 100));
+  
+  // Redirect to signed out page (will never loop back)
+  window.location.replace("/signed-out");
 }
 
 export function loginPathFor(role: AmazFlowRole | null): string {

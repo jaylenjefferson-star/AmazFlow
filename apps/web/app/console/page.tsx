@@ -8,7 +8,7 @@ import { HomeScreen } from "./home";
 import { RunDetailScreen } from "./run-detail";
 import { TeamScreen, type TeamMember } from "./team";
 import { visibleWorkflows } from "./copy";
-import { API, type Session, clearSession, guardBFCacheRestore, resolveSession, revokeRefreshToken } from "../lib/cognito-auth";
+import { API, type Session, signOut as authSignOut, guardBFCacheRestore, resolveSession } from "../lib/cognito-auth";
 
 type ConsoleWorkflow = WorkflowDefinition & { manualMinutesEstimate?: number; customerSummary?: string };
 type View = { kind: "home" } | { kind: "run"; runId: string } | { kind: "team" };
@@ -194,11 +194,8 @@ export default function CustomerConsole() {
     setMembers((current) => current.map((item) => (item.username === member.username ? { ...item, enabled } : item)));
   };
 
-  const signOut = () => {
-    revokeRefreshToken(session?.refreshToken);
-    clearSession();
-    setSession(null);
-    window.location.replace("/signed-out");
+  const signOut = async () => {
+    await authSignOut(session);
   };
 
   if (!session) {
@@ -239,6 +236,36 @@ export default function CustomerConsole() {
               </button>
             )}
           </nav>
+          <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+            {session.role === "CLIENT_ADMIN" && (
+              <a
+                href="/console/settings/"
+                style={{
+                  display: "block",
+                  padding: "10px 16px",
+                  fontSize: 13,
+                  fontWeight: 700,
+                  color: "var(--muted)",
+                  textDecoration: "none",
+                }}
+              >
+                Organization settings
+              </a>
+            )}
+            <a
+              href="/console/support/"
+              style={{
+                display: "block",
+                padding: "10px 16px",
+                fontSize: 13,
+                fontWeight: 700,
+                color: "var(--muted)",
+                textDecoration: "none",
+              }}
+            >
+              Get help
+            </a>
+          </div>
           <div className="console-identity">
             <div className="console-identity-text">
               <b>{session.email}</b>
