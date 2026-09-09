@@ -100,6 +100,25 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   }
 
   if (alarm.name !== "amazflow-poll") return;
+
+  // Fallback for the one-time "Connect to AmazFlow" handshake. chrome.tabs.onUpdated and
+  // webNavigation.onHistoryStateUpdated are supposed to catch the ?code=... the authorize page
+  // pushes via history.replaceState once a human approves, but this is a pure client-side URL
+  // change (no navigation, no network request) and this MV3 service worker can be asleep at
+  // that exact moment -- Chrome does not reliably wake it for that specific event. This alarm is
+  // already running every 15s regardless, so it also just directly checks the pending connect
+  // tab's current URL, which needs no event to have fired at all.
+  const { pendingConnectTabId } = await chrome.storage.local.get(["pendingConnectTabId"]);
+  if (pendingConnectTabId) {
+    try {
+      const tab = await chrome.tabs.get(pendingConnectTabId);
+      if (tab.url) await exchangeAuthorizationCode(pendingConnectTabId, tab.url);
+    } catch {
+      // The tab was closed before authorizing -- stop polling for it.
+      await chrome.storage.local.remove(["pendingConnectTabId"]);
+    }
+  }
+
   const { apiBase, agentToken } = await getConfig();
   if (!agentToken) return;
 
