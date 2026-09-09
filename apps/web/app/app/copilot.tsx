@@ -13,6 +13,8 @@ type CopilotAction = {
   payload: { op: string; workflow?: any; org?: any; before?: any };
 };
 
+const stripThinking = (value: string) => value.replace(/<thinking>[\s\S]*?<\/thinking>\s*/gi, "").trim();
+
 export function CopilotPanel({
   request,
   context,
@@ -45,7 +47,7 @@ export function CopilotPanel({
       const conv = await request("/copilot/conversation");
       const msgs: ChatMessage[] = (conv.messages || []).map((m: any) => ({
         role: m.role,
-        text: m.content?.[0]?.text || "",
+        text: stripThinking(m.content?.[0]?.text || ""),
       }));
       setMessages(msgs);
     } catch (err) {
@@ -75,7 +77,7 @@ export function CopilotPanel({
     setError(null);
     try {
       const result = await request("/copilot/messages", { method: "POST", body: JSON.stringify({ message: text, context }) });
-      setMessages((current) => [...current, { role: "assistant", text: result.reply || "" }]);
+      setMessages((current) => [...current, { role: "assistant", text: stripThinking(result.reply || "") }]);
       if ((result.pendingActions as CopilotActionSummary[] | undefined)?.length) await loadPending();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

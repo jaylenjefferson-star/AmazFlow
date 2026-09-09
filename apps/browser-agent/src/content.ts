@@ -13,8 +13,14 @@ function assertTarget(input: Record<string, unknown>) {
   const identifierSelector = input.identifierSelector != null ? String(input.identifierSelector) : null;
   const expectedIdentifier = input.expectedIdentifier != null ? String(input.expectedIdentifier).trim() : "";
   if (!identifierSelector || !expectedIdentifier) return; // no identifier configured for this step -- nothing to check
-  const el = one(identifierSelector) as HTMLInputElement;
-  const actual = ("value" in el ? el.value : el.innerText).toString().trim();
+  const el = one(identifierSelector);
+  const actual = (
+    el instanceof HTMLInputElement ||
+    el instanceof HTMLTextAreaElement ||
+    el instanceof HTMLSelectElement
+      ? el.value
+      : el.innerText
+  ).toString().trim();
   if (actual !== expectedIdentifier) {
     throw new Error(`Target mismatch: expected record "${expectedIdentifier}" but the page shows "${actual}" -- refusing to act on the wrong record.`);
   }

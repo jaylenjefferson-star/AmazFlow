@@ -27,6 +27,7 @@ type AgentTask = { id: string; runId: string; stepId: string; provider: string; 
 type Agent = { id: string; name: string; tenantId: string; status: string; allowedDomains: string[]; lastSeenAt: string | null; version: string | null; createdAt: string };
 type ActivityEvent = { id: string; tenantId: string; at: string; actor: string; actorLabel?: string; action: string; summary: string };
 type Ticket = { id: string; tenantId: string; createdBy: string; subject: string; message: string; category: string; priority: string; status: string; runId?: string; workflowId?: string; notes: { id: string; at: string; by: string; text: string; internal: boolean }[]; createdAt: string; updatedAt: string };
+type RuntimeSettings = { bedrockModel: string; dataBoundary: string };
 
 type SectionKey = "overview" | "workflows" | "clients" | "agents" | "runs" | "approvals" | "exceptions" | "connections" | "audit" | "settings" | "support";
 type View = { section: SectionKey; entityId?: string; filter?: string };
@@ -76,6 +77,7 @@ export default function ProductConsole() {
   const [sopOpen, setSopOpen] = useState(false);
   const [sopText, setSopText] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [runtimeSettings, setRuntimeSettings] = useState<RuntimeSettings>({ bedrockModel: "", dataBoundary: "synthetic-only" });
 
   const [view, setViewState] = useState<View>({ section: "overview" });
   const setView = (next: View) => {
@@ -126,17 +128,19 @@ export default function ProductConsole() {
       if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
       return body;
     };
-    const [workflowResponse, runResponse, agentResponse, orgResponse] = await Promise.all([
+    const [workflowResponse, runResponse, agentResponse, orgResponse, settingsResponse] = await Promise.all([
       authRequest("/workflows"),
       authRequest("/runs"),
       authRequest("/agents").catch(() => []),
       authRequest("/organizations").catch(() => []),
+      authRequest("/settings").catch(() => ({ bedrockModel: "", dataBoundary: "synthetic-only" })),
     ]);
     const loadedWorkflows = workflowResponse.length ? workflowResponse : [sampleWorkflow];
     setWorkflows(loadedWorkflows);
     setRuns(runResponse);
     setAgents(agentResponse);
     setOrganizations(orgResponse);
+    setRuntimeSettings(settingsResponse);
     const current = loadedWorkflows.find((item: WorkflowDefinition) => item.id === selected?.id) ?? loadedWorkflows[0];
     setSelected(current);
     setDraft(json(current));
@@ -216,11 +220,13 @@ export default function ProductConsole() {
     setGenerating(true);
     try {
       const generated = (await request("/workflows/generate", { method: "POST", body: JSON.stringify({ sop: sopText }) })) as WorkflowDefinition;
+      await request("/workflows", { method: "POST", body: JSON.stringify(generated) });
+      setWorkflows((current) => [generated, ...current.filter((workflow) => workflow.id !== generated.id)]);
       setSelected(generated);
       setDraft(json(generated));
       setSopOpen(false);
       setSopText("");
-      setNotice("Draft generated — review it below, then save it when it's ready");
+      setNotice("Draft generated and saved — edit it anytime, then publish it when it's ready");
     } catch (error) {
       setNotice(`Generation failed: ${error instanceof Error ? error.message : error}`);
     } finally {
@@ -391,7 +397,7 @@ export default function ProductConsole() {
             </button>
           ))}
       </nav>
-      <div className="product-boundary"><b>Development boundary</b><span>Synthetic data only</span><small>Persistent workspace</small></div>
+      <div className="product-boundary"><b>{runtimeSettings.dataBoundary.startsWith("production") ? "Production boundary" : "Development boundary"}</b><span>{runtimeSettings.dataBoundary.startsWith("production") ? "Live operational data" : "Synthetic data only"}</span><small>{runtimeSettings.dataBoundary.startsWith("production") ? "Non-regulated data only" : "Persistent workspace"}</small></div>
     </aside>
     <section className="product-shell">
       <header className="product-header">
@@ -486,7 +492,7 @@ export default function ProductConsole() {
           {sopOpen && <div className="product-sopgen"><small>Describe the SOP in plain English. AmazFlow drafts a workflow you can review and edit below before saving.</small><textarea value={sopText} onChange={(event) => setSopText(event.target.value)} placeholder="e.g. When a new vendor invoice arrives by email, read the vendor, amount, and due date, flag anything over $5,000 for manager approval, then record it in the AP spreadsheet and confirm it was recorded." rows={4} /><div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><button onClick={() => setSopOpen(false)} disabled={generating}>Cancel</button><button disabled={generating || !sopText.trim()} onClick={generateFromSop}>{generating ? "Designing…" : "Generate draft →"}</button></div></div>}
           {workflows.map((workflow) => <button key={workflow.id} className={`product-workflow ${selected?.id === workflow.id ? "chosen" : ""}`} onClick={() => { setSelected(workflow); setDraft(json(workflow)); }}><span className="product-glyph">↝</span><span><b>{workflow.name}</b><small>{workflow.steps.length} configured steps · v{workflow.version}</small></span><mark>{workflow.status}</mark></button>)}<div className="product-addhint">Any department. Any repeatable SOP.<br />AI is bounded by the workflow definition.</div></section>
         <section className="product-panel product-builder"><div className="product-panelhead"><div><p className="product-eyebrow">{canConfigure ? "SUPER ADMIN BUILDER" : "PUBLISHED WORKFLOW"}</p><h2>{selected?.name ?? "New workflow"}</h2></div>{canConfigure && <button disabled={busy} onClick={save}>{busy ? "Working…" : "Save workflow"}</button>}</div><div className="product-flow">{selected?.steps.map((step, index) => <div className="product-step" key={step.id}><span>{icon(step.type)}</span><div><small>{step.type.toUpperCase()}</small><b>{step.name}</b>{step.type === "action" && <em>{step.provider} · {step.operation}</em>}</div>{index < selected.steps.length - 1 && <i>→</i>}</div>)}</div>{canConfigure ? <WorkflowBuilder workflow={selected} canEdit={canConfigure} onChange={(next) => { setSelected(next); setDraft(json(next)); }} /> : <div className="product-rolecopy"><b>{roleLabel(role)}</b><p>{role === "FRONTLINE" ? "Run workflows assigned to you and see your execution history." : "Run published workflows, review tenant activity, manage assignments, and decide approvals. Global configuration stays locked."}</p></div>}</section></div>
-      <div className="product-workspace product-lower"><section className="product-panel product-runbox"><div className="product-panelhead"><div><p className="product-eyebrow">LIVE EXECUTION</p><h2>Run with synthetic input</h2></div><button className="product-run" disabled={busy} onClick={run}>{busy ? "Running…" : "Run workflow →"}</button></div><textarea value={input} onChange={(event) => setInput(event.target.value)} spellCheck={false} /><small className="aws-note">✦ AI steps run through AmazFlow&apos;s managed AI.</small></section><section className="product-panel product-activity"><div className="product-panelhead"><div><p className="product-eyebrow">PERSISTED RUNS</p><h2>Execution & audit</h2></div><button disabled={busy} onClick={() => refresh().catch((error) => setNotice(error.message))}>Refresh</button></div>{runs.length === 0 ? <p className="product-empty">No runs yet. Save the starter workflow, then execute it.</p> : runs.slice(0, 5).map((runItem) => <button className="product-runrow product-runrow-clickable" key={runItem.id} onClick={() => setView({ section: "runs", entityId: runItem.id })}><span className={`product-dot ${runItem.status}`} /><div><b>{runItem.id}</b><small>{runItem.audit.at(-1)?.message} · {runItem.audit.length} audit events</small></div><mark>{runItem.status.replaceAll("_", " ")}</mark></button>)}</section></div>
+      <div className="product-workspace product-lower"><section className="product-panel product-runbox"><div className="product-panelhead"><div><p className="product-eyebrow">LIVE EXECUTION</p><h2>{runtimeSettings.dataBoundary.startsWith("production") ? "Run with live input" : "Run with synthetic input"}</h2></div><button className="product-run" disabled={busy} onClick={run}>{busy ? "Running…" : "Run workflow →"}</button></div><textarea value={input} onChange={(event) => setInput(event.target.value)} spellCheck={false} /><small className="aws-note">✦ AI steps run through {runtimeSettings.bedrockModel || "AmazFlow managed AI"}.</small></section><section className="product-panel product-activity"><div className="product-panelhead"><div><p className="product-eyebrow">PERSISTED RUNS</p><h2>Execution & audit</h2></div><button disabled={busy} onClick={() => refresh().catch((error) => setNotice(error.message))}>Refresh</button></div>{runs.length === 0 ? <p className="product-empty">No runs yet. Save the starter workflow, then execute it.</p> : runs.slice(0, 5).map((runItem) => <button className="product-runrow product-runrow-clickable" key={runItem.id} onClick={() => setView({ section: "runs", entityId: runItem.id })}><span className={`product-dot ${runItem.status}`} /><div><b>{runItem.id}</b><small>{runItem.audit.at(-1)?.message} · {runItem.audit.length} audit events</small></div><mark>{runItem.status.replaceAll("_", " ")}</mark></button>)}</section></div>
       </>}
     </section>
     {canConfigure && <CopilotPanel request={request} context={{ section: view.section, entityId: view.entityId }} />}

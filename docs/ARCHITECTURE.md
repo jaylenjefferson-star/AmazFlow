@@ -22,8 +22,9 @@ Configured trigger
 - External actions pause behind durable tasks.
 - Completion requires explicit verification where configured.
 - Human approvals are first-class wait states.
-- Development is synthetic-data only.
+- Local engine-sandbox development is synthetic-data only.
+- Production is limited to non-regulated operational data until additional compliance controls are enabled.
 
 ## AWS path
 
-The included CDK stack is intentionally small and is not deployed automatically. It creates a retained, encrypted, pay-per-request DynamoDB control-plane table and retained CloudWatch audit log group. API Gateway, Lambda, Cognito, Bedrock, and the agent transport are added only after the local engine and data contracts are accepted.
+The included CloudFormation template defines the deployed control plane: a retained, encrypted, pay-per-request DynamoDB table, CloudWatch audit logs, API Gateway, Lambda, Cognito, Amazon Bedrock, and the browser-agent transport. Amplify deploys the frontend from GitHub; control-plane template updates are deployed separately through CloudFormation.

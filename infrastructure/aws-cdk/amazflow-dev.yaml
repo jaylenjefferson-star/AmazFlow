@@ -1,11 +1,24 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: AmazFlow development control plane with tenant-scoped RBAC (synthetic data only)
+Description: AmazFlow control plane with tenant-scoped RBAC and bounded AI execution
 
 Parameters:
   BedrockModelId:
     Type: String
-    Default: amazon.nova-lite-v1:0
+    Default: us.anthropic.claude-sonnet-5
     Description: Amazon Bedrock model used for bounded workflow AI steps
+  BedrockFoundationModelId:
+    Type: String
+    Default: anthropic.claude-sonnet-5
+    Description: Foundation model behind the configured Bedrock inference profile
+  EnvironmentName:
+    Type: String
+    Default: production
+    AllowedValues: [development, production]
+  DataBoundary:
+    Type: String
+    Default: production-non-regulated
+    AllowedValues: [synthetic-only, production-non-regulated]
+    Description: Production allows live operational data but not PHI, payment data, or other regulated data
 
 Resources:
   ControlPlaneTable:
@@ -24,8 +37,8 @@ Resources:
         - { AttributeName: sk, KeyType: RANGE }
       Tags:
         - { Key: Product, Value: AmazFlow }
-        - { Key: Environment, Value: dev }
-        - { Key: DataBoundary, Value: synthetic-only }
+        - { Key: Environment, Value: !Ref EnvironmentName }
+        - { Key: DataBoundary, Value: !Ref DataBoundary }
 
   UserPool:
     Type: AWS::Cognito::UserPool
@@ -117,7 +130,9 @@ Resources:
                 Resource: '*'
               - Effect: Allow
                 Action: [bedrock:InvokeModel]
-                Resource: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}
+                Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFoundationModelId}
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockModelId}
               - Effect: Allow
                 # ListUsersInGroup isn't in the master prompt's Phase 5 list but is required to resolve
                 # each Cognito user's AmazFlow role (group membership isn't returned by ListUsers itself).
@@ -139,7 +154,7 @@ Resources:
         Variables:
           TABLE_NAME: !Ref ControlPlaneTable
           USER_POOL_ID: !Ref UserPool
-          DATA_BOUNDARY: synthetic-only
+          DATA_BOUNDARY: !Ref DataBoundary
           LEAD_TO: sales@amazflow.com
           LEAD_FROM: sales@amazflow.com
           BEDROCK_MODEL_ID: !Ref BedrockModelId
@@ -281,7 +296,9 @@ Resources:
             const token=crypto.randomBytes(32).toString('hex');
             const cred={agentId:codeDoc.agentId,tenantId:codeDoc.tenantId,createdAt:now(),status:'active'};
             await db.send(new PutItemCommand({TableName:table,Item:{pk:{S:'PLATFORM'},sk:{S:`AGENTCRED#${hashToken(token)}`},document:{S:JSON.stringify(cred)},updatedAt:{S:now()}}}));
-            return {token,agentId:codeDoc.agentId,tenantId:codeDoc.tenantId};
+            const agentOut=await db.send(new GetItemCommand({TableName:table,Key:{pk:{S:`TENANT#${codeDoc.tenantId}`},sk:{S:`AGENT#${codeDoc.agentId}`}}}));
+            const agentName=agentOut.Item&&agentOut.Item.document?.S?JSON.parse(agentOut.Item.document.S).name:null;
+            return {token,agentId:codeDoc.agentId,agentName,tenantId:codeDoc.tenantId};
           };
           // Validates the extension's own bearer token (never a Cognito JWT) for the /agent/*
           // routes, which run with AuthorizationType NONE at the gateway for exactly this reason.
@@ -789,8 +806,10 @@ Resources:
             const label=SECTION_LABEL[context.section]||context.section;
             return context.entityId?`The operator is currently viewing ${label}, looking at record "${context.entityId}". If that's what they mean by "this" or "here", use it -- otherwise call a tool to confirm.`:`The operator is currently viewing ${label}.`;
           };
+          const stripThinking=(value)=>String(value||'').replace(/<thinking>[\s\S]*?<\/thinking>\s*/gi,'').trim();
           const runCopilotTurn=async(userId,userMessage,context)=>{
             const conv=await loadCopilotConversation(userId);
+            conv.messages=(conv.messages||[]).map(message=>({...message,content:(message.content||[]).map(block=>block.text?{...block,text:stripThinking(block.text)}:block)}));
             const working=[...conv.messages,{role:'user',content:[{text:userMessage}]}];
             const pendingActions=[];
             const contextNote=describeContext(context);
@@ -801,7 +820,7 @@ Resources:
               if(!message) break;
               working.push(message);
               if(out.stopReason!=='tool_use'){
-                const text=message.content?.find(c=>c.text)?.text||'';
+                const text=stripThinking(message.content?.find(c=>c.text)?.text||'');
                 conv.messages=[...conv.messages,{role:'user',content:[{text:userMessage}]},{role:'assistant',content:[{text}]}];
                 await saveCopilotConversation(conv);
                 return {reply:text,pendingActions};
@@ -814,7 +833,7 @@ Resources:
                   if(result&&result.proposed) pendingActions.push(result);
                   toolResults.push({toolResult:{toolUseId:block.toolUse.toolUseId,content:[{json:result}]}});
                 }catch(toolErr){
-                  toolResults.push({toolResult:{toolUseId:block.toolUse.toolUseId,content:[{json:{error:toolErr.message}}]},status:'error'});
+                  toolResults.push({toolResult:{toolUseId:block.toolUse.toolUseId,content:[{json:{error:toolErr.message}}],status:'error'}});
                 }
               }
               working.push({role:'user',content:toolResults});

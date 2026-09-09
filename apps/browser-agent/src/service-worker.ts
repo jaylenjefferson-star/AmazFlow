@@ -12,10 +12,58 @@ async function hasHostPermission(origin: string) {
   return chrome.permissions.contains({ origins: [`${origin}/*`] });
 }
 
-chrome.runtime.onInstalled.addListener(() => {
+function scheduleAlarms() {
   chrome.alarms.create("amazflow-poll", { periodInMinutes: 0.25 });
   chrome.alarms.create("amazflow-heartbeat", { periodInMinutes: 2 });
-});
+}
+
+async function sendHeartbeat(apiBase: string, agentToken: string) {
+  const response = await fetch(`${apiBase}/agent/heartbeat`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agentToken },
+    body: JSON.stringify({ version: chrome.runtime.getManifest().version }),
+  });
+  if (!response.ok) throw new Error(`Heartbeat failed (${response.status})`);
+}
+
+chrome.runtime.onInstalled.addListener(scheduleAlarms);
+chrome.runtime.onStartup.addListener(scheduleAlarms);
+
+const exchangingCodes = new Set<string>();
+
+async function exchangeAuthorizationCode(tabId: number, url: string) {
+  const { pendingConnectTabId } = await chrome.storage.local.get(["pendingConnectTabId"]);
+  if (!pendingConnectTabId || tabId !== pendingConnectTabId) return;
+  let code: string | null = null;
+  try {
+    code = new URL(url).searchParams.get("code");
+  } catch {
+    return;
+  }
+  if (!code || exchangingCodes.has(code)) return;
+
+  exchangingCodes.add(code);
+  const { apiBase } = await getConfig();
+  try {
+    const response = await fetch(`${apiBase}/agent-authorizations/${encodeURIComponent(code)}/exchange`, { method: "POST" });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || "Exchange failed");
+    await chrome.storage.local.set({
+      agentToken: body.token,
+      agentId: body.agentId,
+      agentName: body.agentName || "AmazFlow Browser Agent",
+      tenantId: body.tenantId,
+    });
+    await chrome.storage.local.remove(["pendingConnectTabId", "lastConnectionError"]);
+    await sendHeartbeat(apiBase, body.token);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await chrome.storage.local.set({ lastConnectionError: `Connection failed: ${message}` });
+    console.error("AmazFlow agent connect failed", error);
+  } finally {
+    exchangingCodes.delete(code);
+  }
+}
 
 // Completes the "Connect to AmazFlow" flow started from the popup: watches the specific tab it
 // opened (not every tab, to avoid ever matching on an unrelated page) for the ?code=... the
@@ -23,37 +71,18 @@ chrome.runtime.onInstalled.addListener(() => {
 // then exchanges that one-time code server-side for an agent-scoped credential. The popup never
 // handles the human's Cognito session at all.
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
-  const { pendingConnectTabId } = await chrome.storage.local.get(["pendingConnectTabId"]);
-  if (!pendingConnectTabId || tabId !== pendingConnectTabId || !changeInfo.url) return;
-  let code: string | null = null;
-  try {
-    code = new URL(changeInfo.url).searchParams.get("code");
-  } catch {
-    return;
-  }
-  if (!code) return;
-
-  await chrome.storage.local.remove(["pendingConnectTabId"]);
-  const { apiBase } = await getConfig();
-  try {
-    const response = await fetch(`${apiBase}/agent-authorizations/${encodeURIComponent(code)}/exchange`, { method: "POST" });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error || "Exchange failed");
-    await chrome.storage.local.set({ agentToken: body.token, agentId: body.agentId, tenantId: body.tenantId });
-  } catch (error) {
-    console.error("AmazFlow agent connect failed", error);
-  }
+  if (changeInfo.url) await exchangeAuthorizationCode(tabId, changeInfo.url);
 });
+
+chrome.webNavigation.onHistoryStateUpdated.addListener((details) => {
+  void exchangeAuthorizationCode(details.tabId, details.url);
+}, { url: [{ hostEquals: "amazflow.com", pathPrefix: "/agent-authorize" }] });
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === "amazflow-heartbeat") {
     const { apiBase, agentToken } = await getConfig();
     if (!agentToken) return;
-    await fetch(`${apiBase}/agent/heartbeat`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agentToken },
-      body: JSON.stringify({ version: chrome.runtime.getManifest().version }),
-    }).catch(() => undefined);
+    await sendHeartbeat(apiBase, agentToken).catch(() => undefined);
     return;
   }
 
