@@ -394,7 +394,6 @@ export default function ProductConsole() {
             </button>
           ))}
       </nav>
-      <div className="product-boundary"><b>{runtimeSettings.dataBoundary.startsWith("production") ? "Production boundary" : "Development boundary"}</b><span>{runtimeSettings.dataBoundary.startsWith("production") ? "Live operational data" : "Synthetic data only"}</span><small>{runtimeSettings.dataBoundary.startsWith("production") ? "Non-regulated data only" : "Persistent workspace"}</small></div>
     </aside>
     <section className="product-shell">
       <header className="product-header">
