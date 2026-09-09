@@ -8,6 +8,6 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "tsx --test src/**/*.test.ts"
   },
-  "dependencies": { "@amazflow/workflow-schema": "workspace:*" },
+  "dependencies": { "@amazflow/workflow-schema": "workspace:*", "zod": "^3.24.2" },
   "devDependencies": { "tsx": "^4.19.3", "typescript": "^5.7.3" }
 }

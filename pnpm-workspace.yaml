@@ -5,4 +5,12 @@ packages:
   - infrastructure/*
 allowBuilds:
   esbuild: true
+minimumReleaseAgeExclude:
+  - '@aws-sdk/client-bedrock-agentcore@3.1128.0'
+  - '@aws-sdk/client-cognito-identity-provider@3.1128.0'
+  - '@aws-sdk/client-dynamodb@3.1128.0'
+  - '@aws-sdk/client-sesv2@3.1128.0'
+  - '@aws-sdk/client-bedrock-agentcore-control@3.1128.0'
+  - '@aws-sdk/client-bedrock-runtime@3.1128.0'
+  - '@aws-sdk/token-providers@3.1128.0'
 verifyDepsBeforeRun: false

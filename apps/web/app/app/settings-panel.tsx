@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-type Settings = { taskExpiryMs: number; confirmationExpiryMs: number; agentCodeExpiryMs: number; bedrockModel: string; dataBoundary: string };
+type Settings = { taskExpiryMs: number; confirmationExpiryMs: number; agentCodeExpiryMs: number; aiRuntimeLabel: string; dataBoundary: string };
 
 function msToMinutesLabel(ms: number) {
   return (ms / 60000).toFixed(ms % 60000 === 0 ? 0 : 1);
@@ -66,8 +66,8 @@ export function SettingsPanel({ request }: { request: (path: string, options?: R
         <p className="product-eyebrow">RUNTIME (READ-ONLY)</p>
         <div className="st-readonly">
           <div>
-            <b>AI model</b>
-            <span>{settings?.bedrockModel}</span>
+            <b>AI runtime</b>
+            <span>{settings?.aiRuntimeLabel ?? "AmazFlow managed AI"}</span>
           </div>
           <div>
             <b>Data boundary</b>

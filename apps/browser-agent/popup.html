@@ -12,6 +12,15 @@ button:disabled{opacity:.55;cursor:default;background:#e2f2e6}
 .connected small{color:#476351}
 small{display:block;margin-top:12px;color:#74766e;line-height:1.5}
 hr{border:0;border-top:1px solid #ece7d8;margin:14px 0}
+.activity-label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#74766e;font-weight:700;margin-top:12px;display:block}
+.activity-log{margin-top:6px;max-height:170px;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+.activity-empty{font-size:11px;color:#a3a59c;margin-top:6px}
+.activity-row{border:1px solid #ece7d8;border-radius:7px;padding:6px 8px;font-size:11px}
+.activity-row .op{font-weight:700;display:flex;justify-content:space-between;gap:6px}
+.activity-row .sel{font:10px ui-monospace,monospace;color:#74766e;margin-top:2px;word-break:break-all}
+.activity-row .detail{margin-top:2px;color:#74766e}
+.activity-ok .op b{color:#2f7a45}
+.activity-fail .op b{color:#9f2d20}
 </style></head><body>
 <b>AmazFlow Agent</b>
 <div id="disconnectedView">
@@ -29,6 +38,8 @@ hr{border:0;border-top:1px solid #ece7d8;margin:14px 0}
   <hr />
   <div id="siteStatus" class="status"></div>
   <button id="enableSite">Enable on this site</button>
+  <span class="activity-label">Recent activity</span>
+  <div id="activityLog" class="activity-log"></div>
 </div>
 <script src="popup.js"></script>
 </body></html>

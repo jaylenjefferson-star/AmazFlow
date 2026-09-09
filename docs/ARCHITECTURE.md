@@ -25,6 +25,12 @@ Configured trigger
 - Local engine-sandbox development is synthetic-data only.
 - Production is limited to non-regulated operational data until additional compliance controls are enabled.
 
-## AWS path
+## AgentCore-first path
 
-The included CloudFormation template defines the deployed control plane: a retained, encrypted, pay-per-request DynamoDB table, CloudWatch audit logs, API Gateway, Lambda, Cognito, Amazon Bedrock, and the browser-agent transport. Amplify deploys the frontend from GitHub; control-plane template updates are deployed separately through CloudFormation.
+The packaged TypeScript control plane is deployed from CDK. DynamoDB remains authoritative for tenants, pinned workflow versions, runs, approvals, confirmations, verification results, billing-facing records, and audit evidence.
+
+The Operator Harness owns Copilot and workflow/SOP authoring and can access only proposal-oriented Gateway tools. The Execution Harness owns bounded AI and one approved action at a time. Its Gateway tools require an expiring, signed, single-use grant bound to the tenant, run, pinned workflow version, step, tool, and confirmation state. AgentCore session state and Memory are never workflow truth.
+
+Managed Browser is the primary browser executor. Connections bind a tenant to a public HTTPS base URL, explicit origin allowlist, and encrypted browser profile. Sessions run in private subnets with controlled egress and encrypted recordings that expire after 30 days. Connected Chrome execution remains the explicit or pre-action fallback; an uncertain side effect always stops for reconciliation.
+
+`infrastructure/aws-cdk/amazflow-dev.yaml` is the temporary rollback artifact. It is not the forward infrastructure source of truth and must be deleted with its direct-model IAM permission after the 14-day recovery window.

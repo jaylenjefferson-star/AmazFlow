@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const dataClassSchema = z.enum(["PUBLIC", "INTERNAL", "CONFIDENTIAL", "PII", "PHI", "FINANCIAL", "RESTRICTED"]);
 export const roleSchema = z.enum(["FRONTLINE", "CLIENT_ADMIN", "SUPER_ADMIN"]);
+export const browserModeSchema = z.enum(["auto", "managed", "connected"]);
 export type AmazFlowRole = z.infer<typeof roleSchema>;
 
 export const permissionsByRole: Record<AmazFlowRole, readonly string[]> = {
@@ -19,7 +20,18 @@ const baseStep = z.object({
 
 export const workflowStepSchema = z.discriminatedUnion("type", [
   baseStep.extend({ type: z.literal("ai"), operation: z.enum(["classify", "extract", "transform", "summarize", "choose"]), prompt: z.string(), outputKey: z.string(), allowedValues: z.array(z.string()).optional(), confidenceThreshold: z.number().min(0).max(1).default(0.85) }),
-  baseStep.extend({ type: z.literal("action"), provider: z.enum(["browser", "api", "spreadsheet", "email", "file", "mock"]), operation: z.string(), input: z.record(z.unknown()).default({}), verify: z.object({ path: z.string(), equals: z.unknown() }).optional(), requiresConfirmation: z.boolean().optional(), onFailure: z.string().optional() }),
+  baseStep.extend({
+    type: z.literal("action"),
+    provider: z.enum(["browser", "api", "spreadsheet", "email", "file", "mock"]),
+    operation: z.string(),
+    input: z.record(z.unknown()).default({}),
+    verify: z.object({ path: z.string(), equals: z.unknown() }).optional(),
+    requiresConfirmation: z.boolean().optional(),
+    onFailure: z.string().optional(),
+    connectionId: z.string().min(1).optional(),
+    browserMode: browserModeSchema.default("auto").optional(),
+    path: z.string().startsWith("/").optional()
+  }),
   baseStep.extend({ type: z.literal("condition"), path: z.string(), operator: z.enum(["equals", "notEquals", "exists", "gt", "lt"]), value: z.unknown().optional(), whenTrue: z.string(), whenFalse: z.string() }),
   baseStep.extend({ type: z.literal("approval"), message: z.string(), roles: z.array(roleSchema).default(["CLIENT_ADMIN"]), onReject: z.string().optional() }),
   baseStep.extend({ type: z.literal("verify"), path: z.string(), operator: z.enum(["equals", "notEquals", "exists", "gt", "lt"]), value: z.unknown().optional(), onFailure: z.string().optional() }),
@@ -47,11 +59,32 @@ export const workflowDefinitionSchema = z.object({
     const refs = [step.next, step.type === "condition" ? step.whenTrue : undefined, step.type === "condition" ? step.whenFalse : undefined, step.type === "approval" ? step.onReject : undefined, step.type === "verify" ? step.onFailure : undefined, step.type === "action" ? step.onFailure : undefined].filter(Boolean) as string[];
     for (const ref of refs) if (!ids.has(ref)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Step ${step.id} references missing step ${ref}` });
     if (step.type === "action" && !workflow.allowedProviders.includes(step.provider)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Provider ${step.provider} is not allowed`, path: ["steps"] });
+    if (step.type === "action" && step.provider !== "browser" && (step.connectionId || step.browserMode || step.path)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Step ${step.id} can only use browser connection fields with the browser provider`, path: ["steps"] });
+    }
+    if (workflow.status === "active" && step.type === "action" && step.provider === "browser" && step.browserMode === "managed" && !step.connectionId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Managed browser step ${step.id} must reference an active connection`, path: ["steps"] });
+    }
   }
 });
 
 export type WorkflowDefinition = z.infer<typeof workflowDefinitionSchema>;
 export type WorkflowStep = z.infer<typeof workflowStepSchema>;
+
+export const browserConnectionSchema = z.object({
+  id: z.string().min(1),
+  tenantId: z.string().min(1),
+  name: z.string().min(1).max(120),
+  baseUrl: z.string().url().refine(value => new URL(value).protocol === "https:", "baseUrl must use https"),
+  allowedOrigins: z.array(z.string().url().refine(value => new URL(value).origin === value, "allowedOrigins must contain origins only")).min(1).max(20),
+  preferredMode: browserModeSchema.default("auto"),
+  status: z.enum(["pending", "active", "revoked", "error"]).default("pending"),
+  managedProfileId: z.string().optional(),
+  createdBy: z.string().min(1),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime()
+});
+export type BrowserConnection = z.infer<typeof browserConnectionSchema>;
 
 export type RunStatus = "RUNNING" | "AWAITING_CONFIRMATION" | "WAITING_AGENT" | "WAITING_APPROVAL" | "CANCELLED" | "TIMED_OUT" | "COMPLETED" | "FAILED";
 export type AuditEvent = { id: string; at: string; type: string; stepId?: string; message: string; details?: Record<string, unknown> };
@@ -80,6 +113,10 @@ export type WorkflowRun = {
   audit: AuditEvent[];
   createdAt: string;
   updatedAt: string;
+  executionBackend?: "agentcore" | "legacy";
+  agentSessionId?: string;
+  browserSessionId?: string;
+  traceId?: string;
 };
 
 export const sampleWorkflow: WorkflowDefinition = {

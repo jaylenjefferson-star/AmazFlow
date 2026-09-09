@@ -1,7 +1,33 @@
 const POPUP_DEFAULT_API = "https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com";
 const CONNECT_URL = "https://amazflow.com/agent-authorize/";
 
+type PopupActivityEntry = { at: string; operation: string; selector?: string; ok: boolean; detail: string };
+
 function el<T extends HTMLElement>(id: string) { return document.getElementById(id) as T; }
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] as string);
+}
+
+function renderActivity(log: PopupActivityEntry[]) {
+  const container = el<HTMLElement>("activityLog");
+  if (!log.length) {
+    container.innerHTML = `<p class="activity-empty">Nothing yet -- this fills in as soon as a workflow step runs on a tab you've enabled.</p>`;
+    return;
+  }
+  container.innerHTML = log
+    .slice(0, 8)
+    .map((entry) => {
+      const time = new Date(entry.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      const selectorLine = entry.selector ? `<div class="sel">${escapeHtml(entry.selector)}</div>` : "";
+      return `<div class="activity-row ${entry.ok ? "activity-ok" : "activity-fail"}">
+        <div class="op"><b>${entry.ok ? "✓" : "✕"} ${escapeHtml(entry.operation)}</b><span>${time}</span></div>
+        ${selectorLine}
+        <div class="detail">${escapeHtml(entry.detail)}</div>
+      </div>`;
+    })
+    .join("");
+}
 
 async function currentTabOrigin(): Promise<string | null> {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -36,7 +62,16 @@ async function refreshStatus() {
   siteStatus.textContent = granted ? `Enabled on ${origin}` : `Not enabled on ${origin}`;
   siteButton.disabled = granted;
   siteButton.textContent = granted ? "Enabled" : `Enable on ${origin}`;
+
+  const { activityLog } = await chrome.storage.local.get(["activityLog"]);
+  renderActivity(Array.isArray(activityLog) ? (activityLog as PopupActivityEntry[]) : []);
 }
+
+// Live-updates the log while the popup is open and a poll happens to land mid-view, instead of
+// only reflecting whatever the log looked like at the moment the popup was opened.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.activityLog) refreshStatus();
+});
 
 el<HTMLButtonElement>("connect").addEventListener("click", async () => {
   const { apiBase } = await chrome.storage.local.get(["apiBase"]);

@@ -12,6 +12,17 @@ async function hasHostPermission(origin: string) {
   return chrome.permissions.contains({ origins: [`${origin}/*`] });
 }
 
+type ActivityEntry = { at: string; operation: string; selector?: string; ok: boolean; detail: string };
+
+// Feeds the popup's "Recent activity" list -- the only place a person watching the extension
+// (rather than the tab it's acting on, which they may not be looking at the instant it runs) can
+// see what the agent actually did. Capped so this never grows into a real log store.
+async function logActivity(entry: ActivityEntry) {
+  const { activityLog } = await chrome.storage.local.get(["activityLog"]);
+  const next = [entry, ...(Array.isArray(activityLog) ? activityLog : [])].slice(0, 20);
+  await chrome.storage.local.set({ activityLog: next });
+}
+
 function scheduleAlarms() {
   chrome.alarms.create("amazflow-poll", { periodInMinutes: 0.25 });
   chrome.alarms.create("amazflow-heartbeat", { periodInMinutes: 2 });
@@ -134,6 +145,14 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   // advances or routes to the step's onFailure/FAILED), rather than silently expiring the task
   // with no evidence of what happened.
   const result = response?.ok ? { ok: true, ...response.result } : { ok: false, error: response?.error || "Unknown error" };
+  const selector = typeof task.input?.selector === "string" ? (task.input.selector as string) : undefined;
+  await logActivity({
+    at: new Date().toISOString(),
+    operation: task.operation,
+    selector,
+    ok: Boolean(result.ok),
+    detail: result.ok ? "Completed" : String(result.error || "Failed"),
+  });
   await fetch(`${apiBase}/agent/tasks/${task.id}/result`, {
     method: "POST",
     headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agentToken },

@@ -9,7 +9,6 @@
     "test": "node --test"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.758.0",
     "@amazflow/engine": "workspace:*",
     "@amazflow/workflow-schema": "workspace:*",
     "@hono/node-server": "^1.13.8",

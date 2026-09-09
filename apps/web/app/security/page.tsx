@@ -10,7 +10,7 @@ const deploymentFacts = [
   ["Audit log", "A retained CloudWatch log group captures execution and access events separately from the application data store."],
   ["Identity & roles", "AWS Cognito enforces three access tiers — Frontline user, Client operations admin, and AmazFlow super admin — each with a fixed permission set."],
   ["Tenant isolation", "Every account carries a tenant claim enforced server-side on every request; the API rejects cross-tenant access even when a client knows another object's identifier."],
-  ["AI inference", "Workflow AI steps run through Amazon Bedrock with structured output, confidence thresholds, and an explicit allowlist of outcomes — never open-ended tool access."],
+  ["AI and agent runtime", "Model-driven interactions run through Amazon Bedrock AgentCore Harness, Gateway, Policy, Memory, Browser, Evaluations, and Observability services. Workflow state, approvals, confirmations, verification, and audit truth remain in AmazFlow's deterministic control plane."],
   ["Execution surface", "API Gateway and Lambda front the control plane; browser-based execution runs through short-lived, tenant-scoped agent tasks with an explicit operation allowlist, not standing credentials."],
 ];
 

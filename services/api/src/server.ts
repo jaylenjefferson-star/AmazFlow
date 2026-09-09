@@ -1,13 +1,11 @@
-// NOT DEPLOYED. This local implementation is not connected to any AWS resource and is not
-// what customers use. It exists only for local engine-logic testing. The production workflow
-// engine lives entirely inside the ZipFile in infrastructure/aws-cdk/amazflow-dev.yaml.
+// NOT DEPLOYED. This in-memory implementation exists only for local engine/UI development.
+// Production uses the packaged control plane and the same @amazflow/engine state machine.
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import { DemoAiProvider, WorkflowEngine, type AgentTask, type Approval, type Store } from "@amazflow/engine";
 import { sampleWorkflow, workflowDefinitionSchema, roleSchema, type AmazFlowRole, type WorkflowDefinition, type WorkflowRun } from "@amazflow/workflow-schema";
-import { BedrockAiProvider } from "./bedrock-ai.js";
 
 const workflows = new Map<string, WorkflowDefinition>([[sampleWorkflow.id, sampleWorkflow]]);
 const runs = new Map<string, WorkflowRun>();
@@ -17,7 +15,8 @@ const store: Store = {
   getWorkflow: async id => workflows.get(id), saveRun: async run => { runs.set(run.id, structuredClone(run)); }, getRun: async id => runs.get(id),
   saveTask: async task => { tasks.set(task.id, task); }, saveApproval: async approval => { approvals.set(`${approval.runId}:${approval.stepId}`, approval); }
 };
-const ai = process.env.BEDROCK_MODEL_ID ? new BedrockAiProvider(process.env.BEDROCK_MODEL_ID) : new DemoAiProvider();
+// Local development stays deterministic and never calls a model directly.
+const ai = new DemoAiProvider();
 const engine = new WorkflowEngine(store, ai);
 const app = new Hono();
 app.use("*", cors());

@@ -21,13 +21,13 @@ The frontend talks directly to the deployed Lambda control plane (see below), no
 
 The public experience includes the homepage plus Product, Solutions, Security, Pricing, Company, Contact, an ungated interactive demo at `/demo`, and Privacy, Terms, and Subprocessors pages. `/console` is customer sign-in (Frontline User and Client Operations Admin). The authenticated operator/builder workspace is intentionally separated at `/app` (AmazFlow Super Admin) and is never linked from the marketing site or sold as a demo. Cognito enforces three product access levels: Frontline User, Client Operations Admin, and AmazFlow Super Admin.
 
-The deployed workspace persists workflow definitions and execution history in DynamoDB. Workflow AI steps and the admin Copilot run through Amazon Bedrock using the configured model (Claude Sonnet 5 by default). The production boundary permits live, non-regulated operational data. Do not enter PHI, payment-card data, secrets, or other regulated data until the corresponding compliance and security controls are enabled.
+The deployed workspace persists workflow definitions and execution history in DynamoDB. Every model-driven interaction runs through two isolated Amazon Bedrock AgentCore Harnesses: an Operator Harness for Copilot and authoring, and a memoryless Execution Harness for one approved workflow step at a time. Claude Sonnet 4.6 is the default. The product calls this “AmazFlow managed AI”; vendor details remain disclosed on Security and Subprocessors pages. The production boundary permits live, non-regulated operational data. Do not enter PHI, payment-card data, secrets, or other regulated data until the corresponding compliance and security controls are enabled.
 
 Local engine-sandbox development uses synthetic data and in-memory persistence. AWS hosts the protected control plane in `us-east-1`; Amplify Hosting builds the web application from the private GitHub repository.
 
-The CloudFormation parameters `BedrockModelId`, `BedrockFoundationModelId`, and `DataBoundary` control the deployed AI model and operating boundary. The provider enforces structured output, confidence bounds, configured allowed values, action gates, and audit events.
+`infrastructure/aws-cdk` is the infrastructure source of truth for the packaged control-plane Lambda, two deny-by-default Gateways and policy engines, Harnesses, Memory, managed Browser, encrypted 30-day recordings, API routes, and alarms. It imports the existing DynamoDB table and Cognito pool so workflow and run records are not migrated. The legacy inline template is retained only as the 14-day rollback artifact.
 
-The Chrome agent source lives in `apps/browser-agent`. It polls the AWS control plane for short-lived, tenant-scoped agent tasks and only executes an explicit operation allowlist. It has no standing access to arbitrary sites: it holds fixed permissions for the AmazFlow site and API, while each operational origin is an optional permission the operator explicitly grants from the extension popup. The extension uses a separate agent credential created through AmazFlow's signed-in authorization page; it never reads or stores the operator's Cognito session token.
+The Chrome agent source lives in `apps/browser-agent` and remains the supported fallback for private/local targets and incompatible authentication. Managed Browser is primary for active, origin-scoped browser connections. The extension polls the control plane for short-lived tenant-scoped tasks, highlights its target, records recent activity locally, and executes only its explicit operation allowlist.
 
 ## Load the Chrome agent
 
@@ -47,7 +47,11 @@ The Chrome agent source lives in `apps/browser-agent`. It polls the AWS control 
 - `GET /agent-tasks`
 - `POST /agent-tasks/:id/result`
 - `POST /runs/:id/approvals/:stepId`
+- `GET/POST /connections/browser`
+- `POST /connections/browser/:id/login-session`
+- `POST /connections/browser/:id/login-session/complete`
+- `DELETE /connections/browser/:id`
 
-Production AI is routed through Amazon Bedrock from the AWS control plane. Direct browser-to-model calls are prohibited: workflow AI steps are bounded by configured operations, structured output, allowlists, confidence thresholds, policy checks, and audit events.
+Production AI is routed through AgentCore from the control plane. Direct browser-to-model calls are prohibited: workflow AI steps are bounded by configured operations, structured output, allowlists, confidence thresholds, signed execution grants, policy checks, independent verification, and audit events.
 
 In the authenticated Workflow Studio, **Generate from SOP** turns a plain-English procedure into an editable draft and immediately saves it to the workflow library. Drafts survive refreshes and later sessions; publishing remains an explicit admin action.
