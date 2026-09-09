@@ -612,7 +612,11 @@ Resources:
           // Lazily required so a runtime that doesn't bundle this client degrades to a clear
           // error on this one route instead of breaking Lambda cold start for every route.
           const invokeExecutor=async(run,workflow)=>{
-            if(run.status!=='RUNNING'||!run.currentStepId) throw {status:409,message:'Run is not at an actionable step'};
+            // WAITING_AGENT is the real state a run sits in at a browser-provider action step --
+            // advance() sets that (and creates the TASK the extension normally polls for) the
+            // moment it reaches one; a run essentially never rests at plain 'RUNNING'. Invoking
+            // the Executor is an alternative to the extension picking up that same wait state.
+            if(run.status!=='WAITING_AGENT'||!run.currentStepId) throw {status:409,message:'Run is not waiting on an agent step'};
             const stepId=run.currentStepId;
             const confirmationGranted=Array.isArray(run.confirmedStepIds)&&run.confirmedStepIds.includes(stepId);
             const grant=mintExecutionGrant({runId:run.id,tenantId:run.tenantId,workflowId:run.workflowId,workflowVersion:run.workflowVersion,stepId,allowedTools:['record_step_result'],confirmationGranted});
