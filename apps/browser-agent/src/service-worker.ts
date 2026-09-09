@@ -146,16 +146,36 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   // with no evidence of what happened.
   const result = response?.ok ? { ok: true, ...response.result } : { ok: false, error: response?.error || "Unknown error" };
   const selector = typeof task.input?.selector === "string" ? (task.input.selector as string) : undefined;
+
+  // Report back to the control plane before logging anything locally as "Completed" -- the
+  // browser action can succeed while this call still fails (network blip, the task already
+  // expired server-side, or another connected agent already resolved it), and the operator's
+  // activity log should reflect whether the run actually resumed, not just whether the DOM
+  // action worked. A rejected/expired result won't succeed on retry, so only network failures
+  // get retried.
+  let reported = false;
+  let reportError: string | undefined;
+  for (let attempt = 0; attempt < 3 && !reported; attempt++) {
+    try {
+      const res = await fetch(`${apiBase}/agent/tasks/${task.id}/result`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agentToken },
+        body: JSON.stringify(result),
+      });
+      if (res.ok) { reported = true; break; }
+      reportError = `AmazFlow rejected the result (${res.status})`;
+      break;
+    } catch (error) {
+      reportError = error instanceof Error ? error.message : String(error);
+      if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)));
+    }
+  }
+
   await logActivity({
     at: new Date().toISOString(),
     operation: task.operation,
     selector,
-    ok: Boolean(result.ok),
-    detail: result.ok ? "Completed" : String(result.error || "Failed"),
+    ok: Boolean(result.ok) && reported,
+    detail: !result.ok ? String(result.error || "Failed") : reported ? "Completed" : `Ran, but AmazFlow didn't record it -- ${reportError}`,
   });
-  await fetch(`${apiBase}/agent/tasks/${task.id}/result`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "X-AmazFlow-Agent-Token": agentToken },
-    body: JSON.stringify(result),
-  }).catch(() => undefined);
 });
