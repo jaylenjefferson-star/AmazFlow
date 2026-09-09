@@ -1,4 +1,4 @@
-type AgentTask = { id: string; operation: string; input: Record<string, unknown>; expiresAt: string; tenantId?: string };
+type AgentTask = { id: string; operation: string; input: Record<string, unknown>; expiresAt: string; tenantId?: string; workflowId?: string; assignedRoles?: string[]; createdBy?: string };
 
 const DEFAULT_API = "https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com";
 const allowed = new Set(["READ_TEXT", "CLICK", "TYPE", "SELECT", "CHECK", "SCROLL_TO", "WAIT_FOR", "VERIFY_TEXT", "SET_EMPLOYEE_STATUS"]);
@@ -39,7 +39,13 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
     const response = await fetch(`${apiBase}/agent-authorizations/${encodeURIComponent(code)}/exchange`, { method: "POST" });
     const body = await response.json();
     if (!response.ok) throw new Error(body.error || "Exchange failed");
-    await chrome.storage.local.set({ agentToken: body.token, agentId: body.agentId, tenantId: body.tenantId });
+    await chrome.storage.local.set({ 
+      agentToken: body.token, 
+      agentId: body.agentId, 
+      tenantId: body.tenantId,
+      userId: body.userId,
+      userRole: body.userRole
+    });
   } catch (error) {
     console.error("AmazFlow agent connect failed", error);
   }
@@ -65,10 +71,10 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     .then((r) => (r.ok ? (r.json() as Promise<AgentTask[]>) : []))
     .catch(() => [] as AgentTask[]);
   
-  // Security: Get agent's tenant to ensure we only execute tasks for our organization
-  const { tenantId: myTenantId } = await chrome.storage.local.get(["tenantId"]);
+  // Security: Get agent's tenant and user role to ensure proper filtering
+  const { tenantId: myTenantId, userRole } = await chrome.storage.local.get(["tenantId", "userRole"]);
   
-  // Filter tasks to only those from our tenant and that are allowed operations
+  // Filter tasks to only those the user is authorized to execute
   const validTasks = tasks.filter((t) => {
     // Must be from our tenant (prevent cross-tenant leakage)
     if (myTenantId && t.tenantId && t.tenantId !== myTenantId) return false;
@@ -78,6 +84,12 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     
     // Must not be expired
     if (new Date(t.expiresAt).getTime() <= Date.now()) return false;
+    
+    // Permission check: workflow must be assigned to user's role
+    // SUPER_ADMIN can execute anything, others must have their role in assignedRoles
+    if (userRole !== "SUPER_ADMIN" && t.assignedRoles && t.assignedRoles.length > 0) {
+      if (!t.assignedRoles.includes(userRole)) return false;
+    }
     
     return true;
   });
