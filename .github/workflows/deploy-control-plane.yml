@@ -1,0 +1,103 @@
+name: Deploy control plane
+
+# Deploys infrastructure/aws-cdk/amazflow-dev.yaml -- the live control plane -- to the
+# amazflow-dev stack, using GitHub's OIDC provider so no long-lived AWS keys exist anywhere.
+#
+# This workflow is INERT until the AWS_DEPLOY_ROLE_ARN secret is set. Setup is a one-time
+# console task, documented in docs/DEPLOYING.md.
+#
+# The safety property: the tests and the changeset run automatically, then it WAITS for a human
+# to approve the `production` environment before applying anything. You still decide every
+# production change -- you just stop hand-carrying a template into a console to make it happen.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infrastructure/aws-cdk/amazflow-dev.yaml"
+      - ".github/workflows/deploy-control-plane.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-control-plane
+  cancel-in-progress: false
+
+permissions:
+  id-token: write # required for OIDC
+  contents: read
+
+jobs:
+  preflight:
+    name: Test the template being deployed
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: check
+        name: Is a deploy role configured?
+        run: |
+          if [ -n "${{ secrets.AWS_DEPLOY_ROLE_ARN }}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No AWS_DEPLOY_ROLE_ARN secret set — skipping deploy. See docs/DEPLOYING.md."
+          fi
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.26.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # critical-path runs the template's own inline Lambda source, so this is a behavioural
+      # check on the exact artifact about to be deployed.
+      - name: Control plane suite
+        run: pnpm --filter @amazflow/aws-cdk test
+
+  deploy:
+    name: Deploy (requires approval)
+    needs: preflight
+    if: needs.preflight.outputs.configured == 'true'
+    runs-on: ubuntu-latest
+    # Add yourself as a required reviewer on this environment. That approval gate is what makes
+    # automating this safe.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Validate the template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://infrastructure/aws-cdk/amazflow-dev.yaml \
+            --region us-east-1 > /dev/null
+
+      # No --parameter-overrides: existing parameter values are preserved. Rotating
+      # ExecutionGrantSecret would invalidate every execution grant in flight and strand any run
+      # currently waiting on an agent.
+      - name: Deploy
+        run: |
+          aws cloudformation deploy \
+            --template-file infrastructure/aws-cdk/amazflow-dev.yaml \
+            --stack-name amazflow-dev \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region us-east-1 \
+            --no-fail-on-empty-changeset
+
+      - name: Confirm what is actually live
+        run: |
+          sleep 5
+          echo "GET /health:"
+          curl -fsS -m 20 https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com/health
+          echo

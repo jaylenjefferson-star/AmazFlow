@@ -4,7 +4,11 @@ packages:
   - packages/*
   - infrastructure/*
 allowBuilds:
-  electron: set this to true or false
+  # Electron's postinstall downloads the platform binary the desktop agent is built and run
+  # against, so it has to be permitted. This was left as an unfilled placeholder string,
+  # which pnpm cannot read as a boolean -- it skipped the build and then failed any
+  # `--frozen-lockfile` install with ERR_PNPM_IGNORED_BUILDS.
+  electron: true
   esbuild: true
 minimumReleaseAgeExclude:
   - '@aws-sdk/client-bedrock-agentcore@3.1128.0'
