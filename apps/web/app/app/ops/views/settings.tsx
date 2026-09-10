@@ -286,8 +286,10 @@ export function SettingsView() {
                   it yet.
                 </li>
                 <li>
-                  <b>User creation and role changes</b> — identity-pool operations with no
-                  control-plane route.
+                  <b>Role changes and password resets</b> — still identity-pool operations with no
+                  control-plane route. Inviting someone (which does have a route, on an
+                  organization&apos;s Users tab) creates the account; the email that delivers their
+                  temporary password isn&apos;t confirmed by this console.
                 </li>
               </ul>
             </Panel>

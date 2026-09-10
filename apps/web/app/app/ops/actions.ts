@@ -286,7 +286,7 @@ export function useOpsActions() {
           await ops.loadUsers(tenantId);
           return created;
         },
-        `Invitation sent to ${email}`,
+        `Account created for ${email} — delivery of the invite email isn't confirmed`,
       ),
     [ops, run],
   );

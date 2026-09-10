@@ -931,7 +931,7 @@ function InviteMemberModal({
       <div className="ops-col">
         <Field
           label="Email address"
-          hint="They receive a temporary password and set their own on first sign-in."
+          hint="AmazFlow emails a temporary password to set on first sign-in — delivery isn't confirmed by this console, so check with them if it doesn't arrive."
           error={error}
         >
           <input

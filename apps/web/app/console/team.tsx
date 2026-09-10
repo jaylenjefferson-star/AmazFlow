@@ -54,8 +54,9 @@ function InviteRow({ onInvite }: { onInvite: (email: string, role: AmazFlowRole)
       <div className="console-invite-bar">
         {sentTo ? (
           <p className="console-invite-sent">
-            Invitation sent to <strong>{sentTo}</strong>. They&apos;ll get an email with a temporary
-            password.
+            Account created for <strong>{sentTo}</strong>. AmazFlow emailed them a temporary
+            password — if nothing arrives in a few minutes, have them check spam or use{" "}
+            <a href="/forgot-password/">Forgot password</a> once they know it&apos;s on the account.
           </p>
         ) : (
           <span />
