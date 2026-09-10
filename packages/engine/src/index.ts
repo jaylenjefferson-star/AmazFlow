@@ -156,12 +156,28 @@ export class WorkflowEngine {
       }
       this.event(run, "STEP_STARTED", step.name, step.id);
       if (step.type === "ai") {
-        const output = await this.ai.run(step, { input: run.context.input, ...((run.context.values as Record<string, unknown> | undefined) ?? {}) }, run);
-        const values = (run.context.values ??= {}) as Record<string, unknown>;
-        values[step.outputKey] = { value: output.value, confidence: output.confidence };
-        this.applyMetadata(run, output.metadata);
-        this.event(run, "AI_COMPLETED", `${step.operation} completed`, step.id, { confidence: output.confidence, traceId: output.metadata?.traceId });
-        run.currentStepId = step.next;
+        try {
+          const output = await this.ai.run(step, { input: run.context.input, ...((run.context.values as Record<string, unknown> | undefined) ?? {}) }, run);
+          const values = (run.context.values ??= {}) as Record<string, unknown>;
+          values[step.outputKey] = { value: output.value, confidence: output.confidence };
+          this.applyMetadata(run, output.metadata);
+          this.event(run, "AI_COMPLETED", `${step.operation} completed`, step.id, { confidence: output.confidence, traceId: output.metadata?.traceId });
+          run.currentStepId = step.next;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const allowlistRejected = /outside.*allowlist/i.test(message);
+          run.status = "FAILED";
+          run.currentStepId = undefined;
+          this.event(
+            run,
+            allowlistRejected ? "AI_ALLOWLIST_REJECTED" : "AI_FAILED",
+            allowlistRejected
+              ? `AmazFlow's AI returned a value outside what "${step.name}" allows -- no action was taken`
+              : `"${step.name}" could not complete: ${message}`,
+            step.id,
+            { operation: step.operation },
+          );
+        }
       } else if (step.type === "condition") {
         const outcome = compare(getPath(run.context, step.path), step.operator, step.value);
         this.event(run, "CONDITION_EVALUATED", `${step.path} was ${outcome}`, step.id, { outcome });

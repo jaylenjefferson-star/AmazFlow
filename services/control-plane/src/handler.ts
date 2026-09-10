@@ -1028,24 +1028,42 @@ const advance = async (workflow, run, auditStartIdx) => {
     }
     audit("STEP_STARTED", step.name, step.id);
     if (step.type === "ai") {
-      const out = await ai(
-        step,
-        { input: run.context.input, ...run.context.values },
-        run,
-      );
-      run.context.values[step.outputKey] = out.result;
-      if (out.metadata) {
-        run.executionBackend = out.metadata.executionBackend;
-        run.agentSessionId = out.metadata.agentSessionId || run.agentSessionId;
-        run.traceId = out.metadata.traceId || run.traceId;
+      // Model output is untrusted workflow input. Reject invalid structured output,
+      // allowlist violations, and provider failures without losing the run record.
+      try {
+        const out = await ai(
+          step,
+          { input: run.context.input, ...run.context.values },
+          run,
+        );
+        run.context.values[step.outputKey] = out.result;
+        if (out.metadata) {
+          run.executionBackend = out.metadata.executionBackend;
+          run.agentSessionId =
+            out.metadata.agentSessionId || run.agentSessionId;
+          run.traceId = out.metadata.traceId || run.traceId;
+        }
+        audit(
+          "AI_COMPLETED",
+          "AmazFlow managed AI returned a bounded result",
+          step.id,
+          { usage: out.usage, traceId: out.metadata?.traceId },
+        );
+        next = step.next;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        const allowlistRejected = /outside.*allowlist/i.test(message);
+        run.status = "FAILED";
+        audit(
+          allowlistRejected ? "AI_ALLOWLIST_REJECTED" : "AI_FAILED",
+          allowlistRejected
+            ? `AmazFlow's AI returned a value outside what "${step.name}" allows -- no action was taken`
+            : `"${step.name}" could not complete: ${message}`,
+          step.id,
+          { operation: step.operation },
+        );
+        next = undefined;
       }
-      audit(
-        "AI_COMPLETED",
-        "AmazFlow managed AI returned a bounded result",
-        step.id,
-        { usage: out.usage, traceId: out.metadata?.traceId },
-      );
-      next = step.next;
     } else if (step.type === "condition") {
       next = test(valueAt(run.context, step.path), step.operator, step.value)
         ? step.whenTrue

@@ -89,3 +89,28 @@ test("waiting work times out through the shared state machine", async () => {
   assert.equal(timedOut.status, "TIMED_OUT");
   assert.equal(timedOut.audit.at(-1)?.type, "RUN_TIMED_OUT");
 });
+
+test("an AI allowlist rejection persists a failed run and never reaches an action", async () => {
+  let saved: WorkflowRun | undefined;
+  let task: AgentTask | undefined;
+  const store: Store = {
+    getWorkflow: async () => sampleWorkflow,
+    saveRun: async (value) => { saved = structuredClone(value); },
+    getRun: async () => saved,
+    saveTask: async (value) => { task = value; },
+    saveApproval: async () => {},
+    saveConfirmation: async () => {},
+  };
+  const engine = new WorkflowEngine(store, {
+    run: async () => { throw new Error("Managed AI returned a value outside the workflow allowlist"); },
+  });
+
+  const run = await engine.start(sampleWorkflow, { request: "Do something unsupported" });
+
+  assert.equal(run.status, "FAILED");
+  assert.equal(run.currentStepId, undefined);
+  assert.equal(saved?.status, "FAILED");
+  assert.equal(task, undefined, "no browser action may be queued");
+  assert.equal(run.audit.at(-1)?.type, "AI_ALLOWLIST_REJECTED");
+  assert.match(run.audit.at(-1)?.message ?? "", /no action was taken/i);
+});

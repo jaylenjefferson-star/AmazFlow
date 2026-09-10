@@ -652,10 +652,20 @@ Resources:
               }
               audit('STEP_STARTED',step.name,step.id);
               if(step.type==='ai'){
-                const out=await ai(step,{input:run.context.input,...run.context.values});
-                run.context.values[step.outputKey]=out.result;
-                audit('AI_COMPLETED','Amazon Bedrock returned a bounded result',step.id,{model:process.env.BEDROCK_MODEL_ID,usage:out.usage});
-                next=step.next;
+                // Model output is untrusted workflow input. Invalid output and provider failures
+                // fail closed but still persist a useful run and audit trail for the customer.
+                try{
+                  const out=await ai(step,{input:run.context.input,...run.context.values});
+                  run.context.values[step.outputKey]=out.result;
+                  audit('AI_COMPLETED','Amazon Bedrock returned a bounded result',step.id,{model:process.env.BEDROCK_MODEL_ID,usage:out.usage});
+                  next=step.next;
+                }catch(err){
+                  const message=err&&err.message?err.message:String(err);
+                  const allowlistRejected=/outside.*allowlist/i.test(message);
+                  run.status='FAILED';
+                  audit(allowlistRejected?'AI_ALLOWLIST_REJECTED':'AI_FAILED',allowlistRejected?`AmazFlow's AI returned a value outside what "${step.name}" allows -- no action was taken`:`"${step.name}" could not complete: ${message}`,step.id,{operation:step.operation});
+                  next=undefined;
+                }
               } else if(step.type==='condition'){
                 next=test(valueAt(run.context,step.path),step.operator,step.value)?step.whenTrue:step.whenFalse;
                 audit('CONDITION_EVALUATED',`Condition routed to ${next}`,step.id);
