@@ -8,7 +8,7 @@ import {
   type WorkflowRun,
 } from "@amazflow/workflow-schema";
 import { LogoMark } from "../site-components";
-import { WorkflowBuilder } from "./workflow-builder";
+import { WorkflowBuilder, workflowBlockingProblems } from "./workflow-builder";
 import { CopilotPanel } from "./copilot";
 import { Overview } from "./overview";
 import { RunsPanel } from "./runs-panel";
@@ -517,7 +517,26 @@ export default function ProductConsole() {
       <div className="product-workspace"><section className="product-panel product-library"><div className="product-panelhead"><div><p className="product-eyebrow">WORKFLOW LIBRARY</p><h2>Business processes</h2></div><div style={{ display: "flex", gap: 6 }}><button className="product-plus" title="Generate from SOP" onClick={() => setSopOpen((v) => !v)}>✎</button><button className="product-plus" onClick={() => { const fresh = { ...sampleWorkflow, id: `workflow-${Date.now()}`, name: "Untitled operations workflow", version: 1, status: "draft" as const }; setSelected(fresh); setDraft(json(fresh)); }}>＋</button></div></div>
           {sopOpen && <div className="product-sopgen"><small>Describe the SOP in plain English. AmazFlow drafts a workflow you can review and edit below before saving.</small><textarea value={sopText} onChange={(event) => setSopText(event.target.value)} placeholder="e.g. When a new vendor invoice arrives by email, read the vendor, amount, and due date, flag anything over $5,000 for manager approval, then record it in the AP spreadsheet and confirm it was recorded." rows={4} /><div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}><button onClick={() => setSopOpen(false)} disabled={generating}>Cancel</button><button disabled={generating || !sopText.trim()} onClick={generateFromSop}>{generating ? "Designing…" : "Generate draft →"}</button></div></div>}
           {workflows.map((workflow) => <button key={workflow.id} className={`product-workflow ${selected?.id === workflow.id ? "chosen" : ""}`} onClick={() => { setSelected(workflow); setDraft(json(workflow)); }}><span className="product-glyph">↝</span><span><b>{workflow.name}</b><small>{workflow.steps.length} configured steps · v{workflow.version}</small></span><mark>{workflow.status}</mark></button>)}<div className="product-addhint">Any department. Any repeatable SOP.<br />AI is bounded by the workflow definition.</div></section>
-        <section className="product-panel product-builder"><div className="product-panelhead"><div><p className="product-eyebrow">{canConfigure ? "SUPER ADMIN BUILDER" : "PUBLISHED WORKFLOW"}</p><h2>{selected?.name ?? "New workflow"}</h2></div>{canConfigure && <button disabled={busy} onClick={save}>{busy ? "Working…" : "Save workflow"}</button>}</div><div className="product-flow">{selected?.steps.map((step, index) => <div className="product-step" key={step.id}><span>{icon(step.type)}</span><div><small>{step.type.toUpperCase()}</small><b>{step.name}</b>{step.type === "action" && <em>{step.provider} · {step.operation}</em>}</div>{index < selected.steps.length - 1 && <i>→</i>}</div>)}</div>{canConfigure ? <WorkflowBuilder workflow={selected} canEdit={canConfigure} onChange={(next) => { setSelected(next); setDraft(json(next)); }} /> : <div className="product-rolecopy"><b>{roleLabel(role)}</b><p>{role === "FRONTLINE" ? "Run workflows assigned to you and see your execution history." : "Run published workflows, review tenant activity, manage assignments, and decide approvals. Global configuration stays locked."}</p></div>}</section></div>
+        <section className="product-panel product-builder"><div className="product-panelhead"><div><p className="product-eyebrow">{canConfigure ? "SUPER ADMIN BUILDER" : "PUBLISHED WORKFLOW"}</p><h2>{selected?.name ?? "New workflow"}</h2></div>{canConfigure && (() => {
+          // The control plane rejects a malformed workflow with one flat error string, which
+          // gave no clue which step was at fault. The builder already knows, so refuse to
+          // submit and say how many things need fixing -- the builder lists them, each linking
+          // to the step that caused it.
+          const blockers = selected ? workflowBlockingProblems(selected) : [];
+          return (
+            <button
+              disabled={busy || blockers.length > 0}
+              onClick={save}
+              title={blockers.length > 0 ? blockers.map((problem) => problem.message).join("\n") : undefined}
+            >
+              {busy
+                ? "Working…"
+                : blockers.length > 0
+                  ? `Fix ${blockers.length} ${blockers.length === 1 ? "thing" : "things"} to save`
+                  : "Save workflow"}
+            </button>
+          );
+        })()}</div><div className="product-flow">{selected?.steps.map((step, index) => <div className="product-step" key={step.id}><span>{icon(step.type)}</span><div><small>{step.type.toUpperCase()}</small><b>{step.name}</b>{step.type === "action" && <em>{step.provider} · {step.operation}</em>}</div>{index < selected.steps.length - 1 && <i>→</i>}</div>)}</div>{canConfigure ? <WorkflowBuilder workflow={selected} canEdit={canConfigure} onChange={(next) => { setSelected(next); setDraft(json(next)); }} /> : <div className="product-rolecopy"><b>{roleLabel(role)}</b><p>{role === "FRONTLINE" ? "Run workflows assigned to you and see your execution history." : "Run published workflows, review tenant activity, manage assignments, and decide approvals. Global configuration stays locked."}</p></div>}</section></div>
       <div className="product-workspace product-lower"><section className="product-panel product-runbox"><div className="product-panelhead"><div><p className="product-eyebrow">LIVE EXECUTION</p><h2>{runtimeSettings.dataBoundary.startsWith("production") ? "Run with live input" : "Run with synthetic input"}</h2></div><button className="product-run" disabled={busy} onClick={run}>{busy ? "Running…" : "Run workflow →"}</button></div><textarea value={input} onChange={(event) => setInput(event.target.value)} spellCheck={false} /><small className="aws-note">✦ AI steps run through {runtimeSettings.aiRuntimeLabel || "AmazFlow managed AI"}.</small></section><section className="product-panel product-activity"><div className="product-panelhead"><div><p className="product-eyebrow">PERSISTED RUNS</p><h2>Execution & audit</h2></div><button disabled={busy} onClick={() => refresh().catch((error) => setNotice(error.message))}>Refresh</button></div>{runs.length === 0 ? <p className="product-empty">No runs yet. Save the starter workflow, then execute it.</p> : runs.slice(0, 5).map((runItem) => <button className="product-runrow product-runrow-clickable" key={runItem.id} onClick={() => setView({ section: "runs", entityId: runItem.id })}><span className={`product-dot ${runItem.status}`} /><div><b>{runItem.id}</b><small>{runItem.audit.at(-1)?.message} · {runItem.audit.length} audit events</small></div><mark>{runItem.status.replaceAll("_", " ")}</mark></button>)}</section></div>
       </>}
     </section>
