@@ -8,12 +8,13 @@
  * an input. The surrounding experience is now operational rather than a wall of textareas.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { sampleWorkflow, type WorkflowDefinition } from "@amazflow/workflow-schema";
 import { useOps } from "../data";
 import { useNav } from "../nav";
 import { PageHead } from "../shell";
 import { useOpsActions } from "../actions";
+import { DocumentExtractError, extractTextFromFile } from "../../../lib/document-extract";
 import {
   Alert,
   Btn,
@@ -64,6 +65,11 @@ export function StudioView({ workflowId }: { workflowId?: string }) {
   const [sopOpen, setSopOpen] = useState(nav.view.view === "sop");
   const [sopText, setSopText] = useState("");
   const [sopTenant, setSopTenant] = useState("");
+  const [sopFileBusy, setSopFileBusy] = useState(false);
+  const [sopFileNote, setSopFileNote] = useState<{ tone: "good" | "bad"; message: string } | null>(
+    null,
+  );
+  const sopFileInputRef = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState(
     stringify({ employee: { id: "E-10042", name: "Sarah Chen" }, request: "DISABLE" }),
   );
@@ -118,7 +124,13 @@ export function StudioView({ workflowId }: { workflowId?: string }) {
         sub="Author and publish workflow definitions. Saving pins a new immutable version; publishing is a separate, explicit choice."
         actions={
           <>
-            <Btn glyph="sparkle" onClick={() => setSopOpen(true)}>
+            <Btn
+              glyph="sparkle"
+              onClick={() => {
+                setSopFileNote(null);
+                setSopOpen(true);
+              }}
+            >
               Draft from an SOP
             </Btn>
             <Btn
@@ -388,6 +400,7 @@ export function StudioView({ workflowId }: { workflowId?: string }) {
                     setDraft(generated);
                     setSopOpen(false);
                     setSopText("");
+                    setSopFileNote(null);
                     nav.go({ section: "studio", entityId: generated.id });
                   }
                 }}
@@ -398,6 +411,53 @@ export function StudioView({ workflowId }: { workflowId?: string }) {
           }
         >
           <Field
+            label="Or upload a document"
+            hint="PDF, Word (.docx), or plain text. Extracted entirely in your browser — the file itself is never sent anywhere, only the text below."
+          >
+            <input
+              ref={sopFileInputRef}
+              type="file"
+              className="ops-input"
+              accept=".pdf,.docx,.txt,.md"
+              disabled={sopFileBusy}
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                setSopFileBusy(true);
+                setSopFileNote(null);
+                try {
+                  const result = await extractTextFromFile(file);
+                  setSopText(result.text);
+                  setSopFileNote({
+                    tone: "good",
+                    message: result.truncated
+                      ? `Pulled the text from "${file.name}" — it was long, so this is the first part. Trim or edit below before generating.`
+                      : `Pulled the text from "${file.name}" into the field below. Review it before generating.`,
+                  });
+                } catch (error) {
+                  setSopFileNote({
+                    tone: "bad",
+                    message:
+                      error instanceof DocumentExtractError
+                        ? error.message
+                        : "Couldn't read that file. Try pasting the text instead.",
+                  });
+                } finally {
+                  setSopFileBusy(false);
+                  if (sopFileInputRef.current) sopFileInputRef.current.value = "";
+                }
+              }}
+            />
+          </Field>
+          {sopFileBusy && (
+            <Alert tone="neutral" title="Reading the document…">
+              Larger PDFs take a few seconds.
+            </Alert>
+          )}
+          {sopFileNote && (
+            <Alert tone={sopFileNote.tone}>{sopFileNote.message}</Alert>
+          )}
+          <Field
             label="Describe the procedure in plain English"
             hint="AmazFlow drafts an editable workflow and saves it immediately as a draft. Nothing runs until you publish it."
           >
@@ -405,7 +465,6 @@ export function StudioView({ workflowId }: { workflowId?: string }) {
               className="ops-textarea"
               style={{ minHeight: 140 }}
               value={sopText}
-              autoFocus
               placeholder="When a new vendor invoice arrives by email, read the vendor, amount, and due date, flag anything over $5,000 for manager approval, then record it in the AP spreadsheet and confirm it was recorded."
               onChange={(event) => setSopText(event.target.value)}
             />
