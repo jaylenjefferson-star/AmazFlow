@@ -141,7 +141,13 @@ const check = (name, fn) =>
       tenantId: TENANT,
       pathParameters: { slug: OTHER },
     });
-    assert.equal(theirs.status, 403, "cross-tenant org read must be refused");
+    // 404, not 403 (Phase 2, baseline defect D-2). A 403 here confirmed that the slug exists in
+    // some other organization, which is exactly what the tenancy boundary is supposed to hide.
+    assert.equal(theirs.status, 404, "cross-tenant org read must be indistinguishable from absent");
+    assert.ok(
+      !JSON.stringify(theirs.body).includes(OTHER),
+      "and the refusal must not echo the other organization's slug back",
+    );
   });
 
   // ---------------------------------------------------------------- profile ----------------

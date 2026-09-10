@@ -178,7 +178,9 @@ const check = (name, fn) =>
       pathParameters: { tenantId: OTHER },
       body: { email: "mole@contoso.com" },
     });
-    assert.equal(res.status, 403);
+    // 404, not 403 (Phase 2, baseline defect D-2): "you may not invite into that organization"
+    // confirms the organization exists.
+    assert.equal(res.status, 404);
     assert.equal(users.size, 0);
   });
 

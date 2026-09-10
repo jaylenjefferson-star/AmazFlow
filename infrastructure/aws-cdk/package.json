@@ -5,11 +5,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "pnpm run test:inventory && pnpm run test:guardrails && pnpm run test:behaviour && pnpm run test:parity",
+    "test": "pnpm run test:inventory && pnpm run test:guardrails && pnpm run test:behaviour && pnpm run test:properties && pnpm run test:parity",
     "test:inventory": "node test/route-inventory.test.cjs",
     "test:guardrails": "node test/guardrail-state-machine.test.cjs && node test/guardrail-grants.test.cjs && node test/guardrail-leases.test.cjs && node test/guardrail-verification.test.cjs && node test/guardrail-capabilities.test.cjs && node test/guardrail-heartbeat-audit.test.cjs && node test/guardrail-concurrency-retry.test.cjs",
     "test:behaviour": "node test/critical-path.test.cjs && node test/org-settings.test.cjs && node test/onboarding.test.cjs && node test/browser-connections.test.cjs && node test/auth-session.test.cjs && node test/isolation-baseline.test.cjs",
     "record:route-inventory": "node test/record-route-inventory.cjs",
+    "test:properties": "node test/property-tenant-isolation.test.cjs && node test/property-rbac.test.cjs",
     "test:parity": "node test/source-parity.test.cjs && node --test test/provider-parity.test.cjs",
     "synth": "cdk synth"
   },
@@ -20,6 +21,7 @@
   },
   "devDependencies": {
     "aws-cdk": "^2.1019.0",
+    "fast-check": "^3.23.2",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3"
   }

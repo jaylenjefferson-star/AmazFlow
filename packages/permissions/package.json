@@ -1,0 +1,17 @@
+{
+  "name": "@amazflow/permissions",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "tsx --test src/**/*.test.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "fast-check": "^3.23.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}

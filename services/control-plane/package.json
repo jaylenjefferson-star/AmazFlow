@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@amazflow/engine": "workspace:*",
+    "@amazflow/permissions": "workspace:*",
     "@amazflow/workflow-schema": "workspace:*",
     "@aws-sdk/client-bedrock-agentcore": "^3.1128.0",
     "@aws-sdk/client-bedrock-agentcore-control": "^3.1128.0",

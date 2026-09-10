@@ -47,6 +47,15 @@
       "orgScope": "session-scoped"
     },
     {
+      "route": "GET /audit",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
       "route": "GET /connections/browser",
       "copies": [
         "deployed",
@@ -126,6 +135,15 @@
       ],
       "authMode": "unauthenticated",
       "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "GET /permissions/matrix",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
     },
     {
       "route": "GET /runs",

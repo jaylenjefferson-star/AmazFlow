@@ -23,6 +23,27 @@ const {
   AgentCoreBrowserManager,
 } = require("./agentcore");
 const { validateBrowserConnectionInput } = require("./browser-connections");
+// The permissions policy. This is the ONLY source of an authorization decision in this file: after
+// Phase 2 no route compares a role string, and the staff/tenant boundary is a single named predicate
+// rather than eleven copies of `role !== "SUPER_ADMIN" && x !== a.tenantId`.
+const {
+  can,
+  coarseOf,
+  defaultRoleForGroup,
+  roleIsReachableFromGroup,
+  isInternalPermission,
+  isStaffGroup,
+  maySetConcurrencyLimit,
+  isInvitableGroup,
+  permissionMatrix,
+  visibleSections,
+  statusForDecision,
+  messageForDecision,
+  ROLE_GRANTS,
+  STAFF_GRANTS,
+  PLATFORM_ROLES,
+  PERMISSIONS,
+} = require("@amazflow/permissions");
 const { ExecutionGrantService, WorkflowEngine } = require("@amazflow/engine");
 const { SESv2Client, SendEmailCommand } = require("@aws-sdk/client-sesv2");
 const {
@@ -393,57 +414,301 @@ const interpolate = (value, context) => {
 // PAGE_GUARD bounds a pathological table so a single invocation cannot spin forever; hitting
 // it is a real operational signal, not something to swallow.
 const PAGE_GUARD = 200;
-const scanType = async (type, a) => {
+// The two paged primitives, split out of scanType so that "which partition am I reading?" is a
+// property of the CALLER's named function rather than a branch inside a shared helper. The branch was
+// correct; the problem was that every reader of a call site had to know what scanType would decide on
+// their behalf.
+//
+// Cross-tenant reads still Scan: there is no cross-tenant GSI yet. Accepted tradeoff at current
+// scale -- add a GSI if the operator's own views get slow.
+const pagedScan = async (type) => {
   const items = [];
   let cursor;
   let pages = 0;
-  if (a.role === "SUPER_ADMIN") {
-    // Cross-tenant SUPER_ADMIN reads still Scan: there's no cross-tenant GSI yet.
-    // Accepted tradeoff at current scale -- add a GSI if the operator's own views get slow.
-    do {
-      const out = await db.send(
-        new ScanCommand({ TableName: table, ExclusiveStartKey: cursor }),
-      );
-      for (const i of out.Items || []) {
-        if (i.sk?.S?.startsWith(type) && i.document?.S) items.push(parse(i));
-      }
-      cursor = out.LastEvaluatedKey;
-    } while (cursor && ++pages < PAGE_GUARD);
-  } else {
-    do {
-      const out = await db.send(
-        new QueryCommand({
-          TableName: table,
-          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-          ExpressionAttributeValues: {
-            ":pk": { S: `TENANT#${a.tenantId}` },
-            ":prefix": { S: type },
-          },
-          ExclusiveStartKey: cursor,
-        }),
-      );
-      for (const i of out.Items || []) {
-        if (i.document?.S) items.push(parse(i));
-      }
-      cursor = out.LastEvaluatedKey;
-    } while (cursor && ++pages < PAGE_GUARD);
-  }
-  if (cursor) {
-    // Truncation here means results are incomplete. Say so loudly rather than returning a
-    // plausible-looking partial list.
-    console.error(
-      JSON.stringify({
-        level: "error",
-        event: "SCAN_TRUNCATED",
-        type,
-        pages,
-        message: "Paged read hit PAGE_GUARD; results are incomplete",
-      }),
-    );
-    emitApplicationMetric("ScanTruncated");
-  }
+  do {
+    const out = await db.send(new ScanCommand({ TableName: table, ExclusiveStartKey: cursor }));
+    for (const i of out.Items || []) {
+      if (i.sk?.S?.startsWith(type) && i.document?.S) items.push(parse(i));
+    }
+    cursor = out.LastEvaluatedKey;
+  } while (cursor && ++pages < PAGE_GUARD);
+  if (cursor) reportTruncation(type, pages);
   return items;
 };
+const pagedQuery = async (pk, type) => {
+  const items = [];
+  let cursor;
+  let pages = 0;
+  do {
+    const out = await db.send(
+      new QueryCommand({
+        TableName: table,
+        KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+        ExpressionAttributeValues: { ":pk": { S: pk }, ":prefix": { S: type } },
+        ExclusiveStartKey: cursor,
+      }),
+    );
+    for (const i of out.Items || []) {
+      if (i.document?.S) items.push(parse(i));
+    }
+    cursor = out.LastEvaluatedKey;
+  } while (cursor && ++pages < PAGE_GUARD);
+  if (cursor) reportTruncation(type, pages);
+  return items;
+};
+// Truncation means results are incomplete. Say so loudly rather than returning a plausible-looking
+// partial list.
+const reportTruncation = (type, pages) => {
+  console.error(
+    JSON.stringify({
+      level: "error",
+      event: "SCAN_TRUNCATED",
+      type,
+      pages,
+      message: "Paged read hit PAGE_GUARD; results are incomplete",
+    }),
+  );
+  emitApplicationMetric("ScanTruncated");
+};
+// Retained as the compatibility shim for the engine-internal call sites that pass a bare
+// { role: "SUPER_ADMIN" } rather than a principal. New code MUST use tenantRead, crossTenantRead or
+// platformRead: those name their scope, take the organization from a principal rather than an
+// argument, and audit a staff cross-organization read.
+const scanType = async (type, a) =>
+  isStaffGroup(a.role) ? pagedScan(type) : pagedQuery(`TENANT#${a.tenantId}`, type);
+/* ==================================== principal, tenant scope, membership (Phase 2) ========== */
+
+// The fine-grained role lives on a MEMBERSHIP# record (design decision D-3). Cognito stays
+// authoritative for credentials, enabled state, and the coarse group, and wins on disagreement: a
+// membership naming a role its group cannot reach is stale, and falling back to the group's default
+// is the reading that cannot over-grant.
+const membershipKey = (username) => `MEMBERSHIP#${username}`;
+const readMembership = async (orgId, username) => {
+  if (!orgId || !username) return null;
+  const out = await db.send(
+    new GetItemCommand({
+      TableName: table,
+      Key: { pk: { S: `TENANT#${orgId}` }, sk: { S: membershipKey(username) } },
+    }),
+  );
+  return out.Item && out.Item.document?.S ? JSON.parse(out.Item.document.S) : null;
+};
+const saveMembership = async (membership) =>
+  db.send(
+    new PutItemCommand({
+      TableName: table,
+      Item: {
+        pk: { S: `TENANT#${membership.orgId}` },
+        sk: { S: membershipKey(membership.username) },
+        tenantId: { S: membership.orgId },
+        document: { S: JSON.stringify(membership) },
+        updatedAt: { S: now() },
+      },
+    }),
+  );
+// Lazy, read-triggered backfill. Nothing is migrated: the record is created the first time it is
+// needed, carrying the role the account's group already implied, so day-one behaviour is identical by
+// construction rather than by careful data entry.
+const resolveMembership = async (orgId, username, group) => {
+  const stored = await readMembership(orgId, username).catch(() => null);
+  if (stored && stored.role && roleIsReachableFromGroup(stored.role, group)) return stored;
+  const membership = {
+    orgId,
+    username,
+    role: defaultRoleForGroup(group),
+    teamIds: stored && Array.isArray(stored.teamIds) ? stored.teamIds : [],
+    status: "active",
+    createdAt: (stored && stored.createdAt) || now(),
+    updatedAt: now(),
+    backfilled: !stored,
+  };
+  // Best effort: a write failure must not refuse the request. The resolved role is correct either
+  // way -- persisting it only saves the next read from recomputing it.
+  await saveMembership(membership).catch(() => {});
+  return membership;
+};
+const principalFor = async (a) => {
+  const group = a.role;
+  const membership = await resolveMembership(a.tenantId, a.email || a.userId, group).catch(() => null);
+  return {
+    kind: "user",
+    userId: a.userId,
+    email: a.email,
+    orgId: a.tenantId,
+    tenantId: a.tenantId,
+    group,
+    role: (membership && membership.role) || defaultRoleForGroup(group),
+    teamIds: (membership && membership.teamIds) || [],
+    isStaff: isStaffGroup(group),
+    membershipStatus: (membership && membership.status) || "active",
+  };
+};
+// The agent execution path's principal. This elevation already existed and was HIDDEN: the agent
+// routes synthesized `{ role: "SUPER_ADMIN" }` to read across organizations, so a real privilege
+// elevation looked like a staff request in every log and every check. As its own kind it is
+// greppable, cannot be handed to a human-facing route, and has to declare that its isolating control
+// is the capability-aware claiming predicate rather than a partition key.
+const agentPrincipalFor = (agentCtx) => ({
+  kind: "agent",
+  agentId: agentCtx.agentId,
+  orgId: agentCtx.tenantId,
+  tenantId: agentCtx.tenantId,
+  agentType: agentCtx.agent?.agentType || "CHROME_EXTENSION",
+  capabilities: agentCtx.agent?.capabilities || [],
+  isStaff: false,
+});
+// Normalizes the legacy auth object ({ userId, email, tenantId, role: <coarse group> }) into a
+// principal, so the tenancy fix could land at every call site without first rewriting the signature
+// of every function that takes `a`. The scoping is what leaked, not the parameter shape.
+const asPrincipal = (p) =>
+  p && p.kind
+    ? p
+    : {
+        kind: "user",
+        userId: p.userId,
+        email: p.email,
+        orgId: p.tenantId,
+        tenantId: p.tenantId,
+        group: p.role,
+        role: p.platformRole || defaultRoleForGroup(p.role),
+        teamIds: [],
+        isStaff: isStaffGroup(p.role),
+      };
+
+/**
+ * The single sanctioned tenant-scoped read.
+ *
+ * The organization comes from the PRINCIPAL, never from an argument, so a caller cannot pass someone
+ * else's. That is the whole difference from the old `scanType(type, a)`, which was correct only
+ * because of where the scoping happened to sit.
+ */
+const tenantScope = (p) => ({ pk: `TENANT#${p.orgId}` });
+const tenantRead = async (type, p) => {
+  if (!p || !p.orgId)
+    throw { status: 403, message: "No organization context", code: "NO_ORGANIZATION" };
+  return pagedQuery(tenantScope(p).pk, type);
+};
+/**
+ * The separately named cross-organization read: requires a stated reason and audits every staff call
+ * (requirements 6.4 and 6.10; baseline defect D-3). Named so every call site is greppable.
+ */
+const crossTenantRead = async (type, p, reason) => {
+  if (!reason) throw new Error("crossTenantRead requires a stated reason");
+  if (!p || (!p.isStaff && p.kind !== "agent"))
+    throw {
+      status: 403,
+      message: "Cross-organization reads are not available to this principal",
+      code: "FORBIDDEN",
+    };
+  const items = await pagedScan(type);
+  if (p.isStaff) await recordCrossTenantRead(p, type, reason);
+  return items;
+};
+/**
+ * The platform's own machinery -- the expiry sweep, engine internals resolving a run by id on a path
+ * with no requesting principal at all. Named separately rather than reusing crossTenantRead so that
+ * "a staff member looked at another organization's data" stays a distinct, countable event instead of
+ * being drowned in scheduler noise.
+ */
+const platformRead = async (type, reason) => {
+  if (!reason) throw new Error("platformRead requires a stated reason");
+  return pagedScan(type);
+};
+// Reads stay a distinct, countable event from writes: "a staff member looked at another
+// organization's data" is the question an audit reviewer actually asks.
+const isReadPermission = (permission) => /:(read|read_all)$/.test(String(permission));
+const recordCrossTenantAccess = async (p, permission, targetOrgId) => {
+  try {
+    await logActivity(targetOrgId, {
+      actor: p.userId,
+      actorLabel: "AmazFlow super admin",
+      action: isReadPermission(permission) ? "CROSS_TENANT_READ" : "CROSS_TENANT_WRITE",
+      summary: `Staff ${isReadPermission(permission) ? "read" : "change"} in another organization (${permission})`,
+      details: { permission, targetOrgId, principalOrgId: p.orgId, principalRole: p.role },
+    });
+  } catch (err) {
+    console.error("cross-tenant access audit failed", err && err.message);
+  }
+};
+const recordCrossTenantRead = async (p, type, reason) => {
+  try {
+    await logActivity(p.orgId, {
+      actor: p.userId,
+      actorLabel: "AmazFlow super admin",
+      action: "CROSS_TENANT_READ",
+      summary: `Read ${type.replace("#", "").toLowerCase()} records across organizations`,
+      details: { recordType: type, reason, principalRole: p.role },
+    });
+  } catch (err) {
+    console.error("cross-tenant read audit failed", err && err.message);
+  }
+};
+/**
+ * Resolve one entity by bare id under the correct scope for the caller.
+ *
+ * For a non-staff principal the read itself is partitioned, so another organization's id is simply
+ * NOT FOUND -- no comparison, nothing to leak, and no way for a later edit to reintroduce the 403
+ * existence oracle. This is the pattern `GET /workflows/{id}/versions` always used.
+ */
+const resolveEntity = async (type, id, principal, reason) => {
+  if (!id) return null;
+  const p = asPrincipal(principal);
+  const items = p.isStaff
+    ? await crossTenantRead(type, p, reason)
+    : await tenantRead(type, p);
+  return items.find((x) => x.id === id) || null;
+};
+/**
+ * The throwing authorization wrapper, with the denial audit and metric attached.
+ *
+ * Requirements 7.16 and 28.6: every denial records the permission, the resource, and the decision
+ * code, which is what makes every 403 -- and every cross-organization 404 -- attributable.
+ */
+const authorizeIn = async (p, permission, resource) => {
+  const decision = can(p, permission, resource);
+  // A staff principal reaching into another organization is the event requirement 6.10 asks for, and
+  // this is the one place that can see it for EVERY route -- including the parameter-scoped ones,
+  // which resolve their record from the PLATFORM partition and so never pass through
+  // crossTenantRead. Auditing at the authorization point rather than at the read means a route
+  // cannot acquire cross-organization reach without also acquiring the audit event.
+  if (decision.allow && p.isStaff && resource.orgId && resource.orgId !== p.orgId)
+    await recordCrossTenantAccess(p, permission, resource.orgId);
+  if (decision.allow) return;
+  emitApplicationMetric("AuthorizationDenied");
+  try {
+    await logActivity(p.orgId, {
+      actor: p.userId,
+      actorLabel: p.isStaff ? "AmazFlow super admin" : "Team member",
+      action: "AUTHORIZATION_DENIED",
+      summary: `Refused ${permission} (${decision.code})`,
+      details: {
+        permission,
+        decisionCode: decision.code,
+        resourceOrgId: resource.orgId || null,
+        resourceOwnerUserId: resource.ownerUserId || null,
+        principalRole: p.role,
+      },
+    });
+  } catch (err) {
+    console.error("authorization denial audit failed", err && err.message);
+  }
+  throw {
+    status: statusForDecision(decision.code),
+    message: messageForDecision(decision),
+    code: decision.code === "WRONG_ORG" ? "NOT_FOUND" : decision.code,
+  };
+};
+/** Reply-returning form, for the route chain (which returns replies rather than throwing). */
+const guardIn = async (p, permission, resource) => {
+  try {
+    await authorizeIn(p, permission, resource);
+    return null;
+  } catch (err) {
+    if (err && err.status) return reply(err.status, { error: err.message, code: err.code });
+    throw err;
+  }
+};
+
 const save = async (type, doc) =>
   db.send(
     new PutItemCommand({
@@ -1211,11 +1476,10 @@ const accountStatusFor = async (a) => {
   }
 };
 const revokeAgent = async (agentId, a) => {
-  const allAgents = await scanType("AGENT#", { role: "SUPER_ADMIN" });
-  const agent = allAgents.find((x) => x.id === agentId);
+  // Scoped read, not a staff scan followed by a comparison: another organization's id is simply
+  // not found, so there is no status to leak and nothing for a later edit to undo.
+  const agent = await resolveEntity("AGENT#", agentId, a, "staff revoking an agent by id");
   if (!agent) throw { status: 404, message: "Agent not found" };
-  if (a.role !== "SUPER_ADMIN" && agent.tenantId !== a.tenantId)
-    throw { status: 403, message: "Agent belongs to another tenant" };
   agent.status = "revoked";
   agent.updatedAt = now();
   await save("AGENT", agent);
@@ -2000,11 +2264,8 @@ const runWorkflow = async (workflow, input, a) => {
 // /agent-tasks/{id}/result console route, which is already Cognito-authenticated and
 // role-checked at the gateway.
 const resumeAgentTask = async (taskId, result, a, grantToken, reportingAgent) => {
-  const allTasks = await scanType("TASK#", { role: "SUPER_ADMIN" });
-  const task = allTasks.find((t) => t.id === taskId);
+  const task = await resolveEntity("TASK#", taskId, a, "resolving an agent task by id");
   if (!task) throw { status: 404, message: "Task not found" };
-  if (a.role !== "SUPER_ADMIN" && task.tenantId !== a.tenantId)
-    throw { status: 403, message: "Task belongs to another tenant" };
   if (task.status !== "PENDING" && task.status !== "CLAIMED")
     throw { status: 409, message: "Task already resolved" };
   if (new Date(task.expiresAt).getTime() < Date.now())
@@ -2163,11 +2424,8 @@ const resumeAgentTask = async (taskId, result, a, grantToken, reportingAgent) =>
   return advance(workflow, run, auditStartIdx);
 };
 const resumeApproval = async (runId, stepId, approved, a) => {
-  const allRuns = await scanType("RUN#", { role: "SUPER_ADMIN" });
-  const run = allRuns.find((r) => r.id === runId);
+  const run = await resolveEntity("RUN#", runId, a, "deciding an approval by run id");
   if (!run) throw { status: 404, message: "Run not found" };
-  if (a.role !== "SUPER_ADMIN" && run.tenantId !== a.tenantId)
-    throw { status: 403, message: "Run belongs to another tenant" };
   if (run.status !== "WAITING_APPROVAL" || run.currentStepId !== stepId)
     throw { status: 409, message: "Run is not waiting for this approval" };
   const workflow = await getWorkflowVersion(
@@ -2207,11 +2465,8 @@ const resumeApproval = async (runId, stepId, approved, a) => {
   return advance(workflow, run, auditStartIdx);
 };
 const confirmActionGate = async (runId, stepId, a) => {
-  const allRuns = await scanType("RUN#", { role: "SUPER_ADMIN" });
-  const run = allRuns.find((r) => r.id === runId);
+  const run = await resolveEntity("RUN#", runId, a, "confirming an action gate by run id");
   if (!run) throw { status: 404, message: "Run not found" };
-  if (a.role !== "SUPER_ADMIN" && run.tenantId !== a.tenantId)
-    throw { status: 403, message: "Run belongs to another tenant" };
   if (run.status !== "AWAITING_CONFIRMATION" || run.currentStepId !== stepId)
     throw { status: 409, message: "Run is not waiting for this confirmation" };
   if (a.role === "FRONTLINE")
@@ -2247,13 +2502,14 @@ const confirmActionGate = async (runId, stepId, a) => {
   return advance(workflow, run, auditStartIdx);
 };
 const cancelRun = async (runId, a) => {
-  const allRuns = await scanType("RUN#", { role: "SUPER_ADMIN" });
-  const run = allRuns.find((r) => r.id === runId);
+  const run = await resolveEntity("RUN#", runId, a, "cancelling a run by id");
   if (!run) throw { status: 404, message: "Run not found" };
-  if (a.role !== "SUPER_ADMIN" && run.tenantId !== a.tenantId)
-    throw { status: 403, message: "Run belongs to another tenant" };
-  if (a.role === "FRONTLINE" && run.createdBy !== a.userId)
-    throw { status: 403, message: "You can only cancel your own runs" };
+  // Own-record narrowing now comes from the policy: OPERATOR holds run:cancel but not run:read_all,
+  // which is exactly what step 5 of can() reads to restrict it to its own runs.
+  await authorizeIn(asPrincipal(a), "run:cancel", {
+    orgId: run.tenantId,
+    ownerUserId: run.createdBy,
+  });
   const cancellable = [
     "RUNNING",
     "WAITING_APPROVAL",
@@ -3809,12 +4065,14 @@ const createTicket = async (a, body) => {
   return ticket;
 };
 const updateTicket = async (ticketId, a, body) => {
-  const items = await scanType("TICKET#", { role: "SUPER_ADMIN" });
-  const ticket = items.find((t) => t.id === ticketId);
+  const ticket = await resolveEntity("TICKET#", ticketId, a, "updating a support ticket by id");
   if (!ticket) throw { status: 404, message: "Ticket not found" };
-  if (a.role !== "SUPER_ADMIN" && ticket.tenantId !== a.tenantId)
-    throw { status: 403, message: "Ticket belongs to another tenant" };
-  if (a.role === "FRONTLINE" && ticket.createdBy !== a.userId)
+  // "Own tickets only" is the same narrowing the policy expresses: a role without run:read_all does
+  // not see other people's records in its own organization.
+  if (
+    !can(asPrincipal(a), "run:read_all", { orgId: ticket.tenantId }).allow &&
+    ticket.createdBy !== a.userId
+  )
     throw { status: 403, message: "You can only update your own tickets" };
   if (body.status) {
     if (!TICKET_STATUSES.includes(body.status))
@@ -3928,17 +4186,18 @@ const requireBrowserConnection = async (a, id) => {
       ? a.requestedTenantId
       : a.tenantId;
   let connection = await getBrowserConnection(tenantId, id);
-  if (!connection && a.role === "SUPER_ADMIN")
-    connection = (
-      await scanType("BROWSERCONNECTION#", { role: "SUPER_ADMIN" })
-    ).find((item) => item.id === id);
+  if (!connection && isStaffGroup(a.role))
+    // Already tenant-partitioned for a customer (getBrowserConnection keys on the caller's own
+    // organization), so the only branch that needed changing was the staff widening: it now goes
+    // through the named cross-organization read, which audits.
+    connection = await resolveEntity(
+      "BROWSERCONNECTION#",
+      id,
+      a,
+      "staff resolving a browser connection by id",
+    );
   if (!connection)
     throw { status: 404, message: "Browser connection not found" };
-  if (a.role !== "SUPER_ADMIN" && connection.tenantId !== a.tenantId)
-    throw {
-      status: 403,
-      message: "Browser connection belongs to another tenant",
-    };
   return connection;
 };
 const startBrowserLogin = async (a, id) => {
@@ -4269,14 +4528,24 @@ exports.handler = async (e) => {
         error: "This account has been deactivated. Contact your AmazFlow admin.",
         code: "ACCOUNT_DISABLED",
       });
+    // One principal per request. Constructing it is also what lazily backfills the MEMBERSHIP#
+    // record (task 7.5), so the migration happens as a side effect of normal use rather than as a
+    // batch job somebody has to remember to run.
+    const p = await principalFor(a);
     if (route === "GET /me")
       return reply(200, {
         userId: a.userId,
         tenantId: a.tenantId,
         organizationId: a.tenantId,
         role: a.role,
+        platformRole: p.role,
+        teamIds: p.teamIds,
+        sections: visibleSections(p),
         accountStatus,
       });
+    // The matrix as data, so /admin/roles renders the REAL policy rather than a frontend copy of it
+    // that can disagree with enforcement (requirement 7.17, task 7.13).
+    if (route === "GET /permissions/matrix") return reply(200, permissionMatrix());
     if (route === "GET /workflows") {
       const items = await scanType("WORKFLOW#", a);
       return reply(
@@ -4376,8 +4645,10 @@ exports.handler = async (e) => {
     }
     if (route === "GET /organizations/{slug}") {
       const slug = e.pathParameters?.slug;
-      if (a.role !== "SUPER_ADMIN" && slug !== a.tenantId)
-        return reply(403, { error: "You can only read your own organization" });
+      {
+        const denied = await guardIn(p, "org:read", { orgId: slug });
+        if (denied) return denied;
+      }
       const org = await getOrganization(slug);
       if (!org) return reply(404, { error: "Organization not found" });
       return reply(200, { ...org, settings: orgSettings(org) });
@@ -4423,16 +4694,16 @@ exports.handler = async (e) => {
         return reply(403, {
           error: "Only administrators change organization settings",
         });
-      if (a.role !== "SUPER_ADMIN" && slug !== a.tenantId)
-        return reply(403, {
-          error: "You can only change your own organization",
-        });
+      {
+        const denied = await guardIn(p, "org:settings", { orgId: slug });
+        if (denied) return denied;
+      }
       const org = await getOrganization(slug);
       if (!org) return reply(404, { error: "Organization not found" });
       const body = JSON.parse(e.body || "{}");
       // A customer admin owns presentation, not their own execution ceiling: letting a
       // CLIENT_ADMIN raise maxConcurrentRuns would make the limit advisory.
-      if (a.role !== "SUPER_ADMIN" && "maxConcurrentRuns" in body)
+      if (!maySetConcurrencyLimit(p) && "maxConcurrentRuns" in body)
         return reply(403, {
           error:
             "Only AmazFlow administrators change the concurrent run limit",
@@ -4789,6 +5060,10 @@ exports.handler = async (e) => {
       }
     }
     if (route === "POST /ai/execute") {
+      {
+        const denied = await guardIn(p, "internal:ai_execute", { orgId: a.tenantId });
+        if (denied) return denied;
+      }
       const body = JSON.parse(e.body || "{}");
       const allowedOps = [
         "classify",
@@ -4812,24 +5087,26 @@ exports.handler = async (e) => {
     }
     if (route === "GET /tenants/{tenantId}/summary") {
       const tenantId = e.pathParameters?.tenantId;
-      if (a.role !== "SUPER_ADMIN" && tenantId !== a.tenantId)
-        return reply(403, { error: "You can only view your own tenant" });
+      {
+        const denied = await guardIn(p, "org:read", { orgId: tenantId });
+        if (denied) return denied;
+      }
       return reply(200, await tenantSummary(tenantId));
     }
     if (route === "GET /tenants/{tenantId}/users") {
-      if (a.role === "FRONTLINE")
-        return reply(403, { error: "Only tenant admins view team members" });
       const tenantId = e.pathParameters?.tenantId;
-      if (a.role !== "SUPER_ADMIN" && tenantId !== a.tenantId)
-        return reply(403, { error: "You can only view your own tenant" });
+      {
+        const denied = await guardIn(p, "user:read", { orgId: tenantId });
+        if (denied) return denied;
+      }
       return reply(200, await listTenantUsers(tenantId));
     }
     if (route === "POST /tenants/{tenantId}/users") {
-      if (a.role === "FRONTLINE")
-        return reply(403, { error: "Only tenant admins invite team members" });
       const tenantId = e.pathParameters?.tenantId;
-      if (a.role !== "SUPER_ADMIN" && tenantId !== a.tenantId)
-        return reply(403, { error: "You can only invite into your own organization" });
+      {
+        const denied = await guardIn(p, "user:invite", { orgId: tenantId });
+        if (denied) return denied;
+      }
       const inviteBody = JSON.parse(e.body || "{}");
       // A customer admin must not be able to mint AmazFlow staff. INVITABLE_ROLES already
       // excludes SUPER_ADMIN for every caller, so this is defence in depth rather than the only
@@ -4859,11 +5136,11 @@ exports.handler = async (e) => {
       }
     }
     if (route === "POST /tenants/{tenantId}/users/{username}/status") {
-      if (a.role === "FRONTLINE")
-        return reply(403, { error: "Only tenant admins manage team members" });
       const tenantId = e.pathParameters?.tenantId;
-      if (a.role !== "SUPER_ADMIN" && tenantId !== a.tenantId)
-        return reply(403, { error: "You can only manage your own tenant" });
+      {
+        const denied = await guardIn(p, "user:set_status", { orgId: tenantId });
+        if (denied) return denied;
+      }
       const username = e.pathParameters?.username;
       const users = await listTenantUsers(tenantId);
       if (!users.find((u) => u.username === username))
@@ -4890,13 +5167,10 @@ exports.handler = async (e) => {
     }
     if (route === "POST /organizations/{slug}/branding") {
       const brandingSlug = e.pathParameters?.slug;
-      if (
-        a.role === "FRONTLINE" ||
-        (a.role !== "SUPER_ADMIN" && brandingSlug !== a.tenantId)
-      )
-        return reply(403, {
-          error: "You can only manage your own organization branding",
-        });
+      {
+        const denied = await guardIn(p, "org:branding", { orgId: brandingSlug });
+        if (denied) return denied;
+      }
       const org = await getOrganization(e.pathParameters?.slug);
       if (!org) return reply(404, { error: "Organization not found" });
       let patch;
@@ -4989,11 +5263,27 @@ exports.handler = async (e) => {
         throw err;
       }
     }
+    // An organization-scoped audit read, so /admin/audit does not need the cross-organization route
+    // widened to serve it (requirement 6.14). Reads the caller's OWN partition and nothing else.
+    if (route === "GET /audit") {
+      {
+        const denied = await guardIn(p, "audit:read", { orgId: a.tenantId });
+        if (denied) return denied;
+      }
+      const own = await tenantRead("ACTIVITY#", p);
+      const action = e.queryStringParameters?.action;
+      return reply(
+        200,
+        (action ? own.filter((x) => x.action === action) : own)
+          .sort((x, y) => String(y.at).localeCompare(String(x.at)))
+          .slice(0, 300),
+      );
+    }
     if (route === "GET /activity") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error: "Only AmazFlow administrators view the activity log",
-        });
+      {
+        const denied = await guardIn(p, "internal:audit_read_all", { orgId: a.tenantId });
+        if (denied) return denied;
+      }
       let items = await scanType("ACTIVITY#", { role: "SUPER_ADMIN" });
       const tenantId = e.queryStringParameters?.tenantId;
       const action = e.queryStringParameters?.action;
