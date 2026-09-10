@@ -922,7 +922,13 @@ const recordStepResult = async (grantToken, body) => {
   await saveRunWithAudit(run, auditStartIdx);
   return { ok: true, runId: run.id, stepId, status, recordedAt: now() };
 };
-const touchAgentHeartbeat = async (agentId, tenantId, version) => {
+const touchAgentHeartbeat = async (
+  agentId,
+  tenantId,
+  version,
+  capabilities,
+  permissions,
+) => {
   const out = await db.send(
     new GetItemCommand({
       TableName: table,
@@ -933,7 +939,195 @@ const touchAgentHeartbeat = async (agentId, tenantId, version) => {
   const agent = JSON.parse(out.Item.document.S);
   agent.lastSeenAt = now();
   if (version) agent.version = version;
+  // An agent that updates itself reports its new capability set on the next heartbeat, so
+  // newly supported actions become claimable without re-registering the installation. Without
+  // this, an updated build stays permanently ineligible for the very actions it just learned.
+  if (Array.isArray(capabilities))
+    agent.capabilities = capabilities
+      .filter((c) => typeof c === "string")
+      .slice(0, 60);
+  if (permissions && typeof permissions === "object")
+    agent.permissions = permissions;
   await save("AGENT", agent);
+};
+// How long after its last heartbeat an agent still counts as connected. Agents beat every two
+// minutes, so this tolerates exactly one missed beat before a workflow stops offering to run.
+const HEARTBEAT_GRACE_MS = 5 * 60000;
+// Connection status is DERIVED from heartbeat recency rather than stored. A stored status goes
+// stale the moment a laptop sleeps and nobody is there to update it; a derived one cannot.
+// Revocation outranks recency, so a revoked agent never reads as connected.
+const agentSnapshot = (agent) => ({
+  agentId: agent.id,
+  installationId: agent.installationId || null,
+  agentType: agent.agentType || "CHROME_EXTENSION",
+  name: agent.name,
+  version: agent.version || null,
+  capabilities: Array.isArray(agent.capabilities) ? agent.capabilities : [],
+  organizationId: agent.tenantId,
+  platform: agent.platform || null,
+  lastHeartbeatAt: agent.lastSeenAt || null,
+  permissions: agent.permissions || null,
+  connectionStatus:
+    agent.status !== "active"
+      ? "revoked"
+      : agent.lastSeenAt &&
+          Date.now() - new Date(agent.lastSeenAt).getTime() < HEARTBEAT_GRACE_MS
+        ? "connected"
+        : "offline",
+});
+// What a workflow needs before it can run, DERIVED from its own steps rather than declared
+// anywhere. A declared list is a second source of truth that drifts. This is what keeps a run
+// from being started only to sit waiting for an agent nobody ever installed, which is how every
+// historical run in this account timed out.
+const preflightFor = async (workflow, tenantId) => {
+  const targets = [
+    ...new Set(
+      (workflow.steps || [])
+        .filter((st) => st.type === "action")
+        .map((st) =>
+          st.provider === "desktop" || st.executionTarget === "desktop_agent"
+            ? "desktop_agent"
+            : st.provider === "browser"
+              ? "browser_extension"
+              : null,
+        )
+        .filter(Boolean),
+    ),
+  ];
+  const requiredActions = {};
+  for (const st of workflow.steps || []) {
+    if (st.type !== "action") continue;
+    if (st.provider !== "browser" && st.provider !== "desktop") continue;
+    const t = executionTargetFor(st);
+    (requiredActions[t] = requiredActions[t] || new Set()).add(st.operation);
+  }
+  const all = await scanType("AGENT#", { role: "SUPER_ADMIN" });
+  const mine = all.filter((x) => x.tenantId === tenantId).map(agentSnapshot);
+  const surfaces = targets.map((target) => {
+    const wanted = AGENT_TYPE_FOR_TARGET[target];
+    const candidates = mine.filter(
+      (x) => x.agentType === wanted && x.connectionStatus !== "revoked",
+    );
+    const needed = [...(requiredActions[target] || [])];
+    const connected = candidates.filter(
+      (x) => x.connectionStatus === "connected",
+    );
+    const capable = connected.filter(
+      (x) =>
+        !x.capabilities.length ||
+        needed.every((op) => x.capabilities.includes(op)),
+    );
+    const permissioned = capable.filter(
+      (x) =>
+        target !== "desktop_agent" ||
+        !x.permissions ||
+        x.permissions.accessibility !== false,
+    );
+    // Each state names the recovery action, because "not ready" without one is a dead end for
+    // the person looking at it.
+    let status = "not_installed";
+    let action = "install";
+    if (permissioned.length) {
+      status = "connected";
+      action = null;
+    } else if (capable.length) {
+      status = "missing_permissions";
+      action = "grant_permission";
+    } else if (connected.length) {
+      status = "outdated";
+      action = "update";
+    } else if (candidates.length) {
+      status = "offline";
+      action = target === "desktop_agent" ? "open_app" : "connect";
+    }
+    return {
+      target,
+      agentType: wanted,
+      status,
+      action,
+      requiredActions: needed,
+      agents: candidates,
+    };
+  });
+  return {
+    workflowId: workflow.id,
+    requiredTargets: targets,
+    surfaces,
+    ready: surfaces.every((x) => x.status === "connected"),
+  };
+};
+// Diagnostic only. This route is an alternative way to push a run that is already parked on an
+// agent step: instead of waiting for the extension to poll for that step's task, it mints a grant
+// and asks the Executor harness to act. It exists to prove the harness path end to end, and it is
+// deliberately kept staff-only and labelled a diagnostic rather than presented as a customer
+// feature -- nothing in the product depends on it, and the grant it mints is narrower than a
+// claim's (record_step_result only, no terminal result).
+//
+// Reuses agentCoreRuntime rather than constructing a second AgentCore client, so there is one way
+// to invoke a harness in this source rather than two that can drift.
+const invokeExecutorDiagnostic = async (run, workflow) => {
+  // WAITING_AGENT is the real state a run sits in at an agent action step -- advance() sets that
+  // (and creates the task the extension normally polls for) the moment it reaches one. A run
+  // essentially never rests at plain RUNNING.
+  if (run.status !== "WAITING_AGENT" || !run.currentStepId)
+    throw { status: 409, message: "Run is not waiting on an agent step" };
+  if (!executionGrants)
+    throw { status: 503, message: "Execution grants are not configured" };
+  if (!executionHarnessArn)
+    throw { status: 503, message: "The Executor harness is not configured" };
+  const stepId = run.currentStepId;
+  const confirmationGranted =
+    Array.isArray(run.confirmedStepIds) && run.confirmedStepIds.includes(stepId);
+  const grant = executionGrants.issue({
+    runId: run.id,
+    tenantId: run.tenantId,
+    workflowId: run.workflowId,
+    workflowVersion: run.workflowVersion,
+    stepId,
+    allowedTools: ["record_step_result"],
+    confirmationGranted,
+  });
+  const grantId = JSON.parse(
+    Buffer.from(grant.split(".")[1], "base64url").toString("utf8"),
+  ).grantId;
+  const step = (workflow.steps || []).find((s) => s.id === stepId);
+  const prompt = `Workflow "${workflow.name}", step "${stepId}"${step ? ` (${step.name})` : ""}. Report your progress on this step using the record_step_result tool. Execution grant -- pass this exact token as the tool's "grant" parameter on every call, it is the only thing that authorizes you to act:\n${grant}`;
+  try {
+    // allowedTools is deliberately not restricted here: the tool's model-visible name is
+    // namespaced by the Gateway target rather than being the bare operationId, and the harness's
+    // own persistent tool configuration already limits it to exactly this one operation. An
+    // invocation-level allowedTools naming the wrong string silently excludes the only real tool
+    // instead of erroring, which is what happened on the first live attempt.
+    const result = await agentCoreRuntime.invoke({
+      harnessArn: executionHarnessArn,
+      sessionId: run.id,
+      prompt,
+      maxIterations: 6,
+      maxTokens: 2000,
+      timeoutSeconds: 60,
+    });
+    return {
+      diagnostic: true,
+      grantIssued: true,
+      grantId,
+      stepId,
+      confirmationGranted,
+      harnessInvoked: true,
+      harnessText: result.text || null,
+    };
+  } catch (err) {
+    // A failed invocation is reported, not thrown: the grant was already minted and the caller
+    // needs to know that plus why the harness did not answer.
+    return {
+      diagnostic: true,
+      grantIssued: true,
+      grantId,
+      stepId,
+      confirmationGranted,
+      harnessInvoked: false,
+      harnessError: err && err.message ? err.message : String(err),
+    };
+  }
 };
 const revokeAgent = async (agentId, a) => {
   const allAgents = await scanType("AGENT#", { role: "SUPER_ADMIN" });
@@ -3950,6 +4144,8 @@ exports.handler = async (e) => {
           agentCtx.agentId,
           agentCtx.tenantId,
           body.version,
+          body.capabilities,
+          body.permissions,
         );
         return reply(200, { ok: true });
       } catch (err) {
@@ -4203,6 +4399,13 @@ exports.handler = async (e) => {
         ),
       );
     }
+    if (route === "GET /workflows/{id}/preflight") {
+      const id = e.pathParameters?.id;
+      const workflows = await scanType("WORKFLOW#", a);
+      const workflow = workflows.find((w) => w.id === id);
+      if (!workflow) return reply(404, { error: "Workflow not found" });
+      return reply(200, await preflightFor(workflow, workflow.tenantId));
+    }
     if (route === "POST /workflows/{id}/runs") {
       const id = e.pathParameters?.id;
       const workflows = await scanType("WORKFLOW#", a);
@@ -4244,12 +4447,43 @@ exports.handler = async (e) => {
             inFlight: liveNow,
           });
       }
+      // Refuse up front rather than creating a run that can only sit and time out. This is
+      // checked after the organization gates because being paused is not something plugging in
+      // an agent would fix.
+      const preflight = await preflightFor(workflow, workflow.tenantId);
+      if (!preflight.ready)
+        return reply(409, {
+          error: "This workflow needs an execution agent that is not ready yet.",
+          preflight,
+        });
       const body = JSON.parse(e.body || "{}");
       if ("description" in body && !String(body.description || "").trim())
         return reply(400, {
           error: "Tell us what you need done before starting.",
         });
       return reply(201, await runWorkflow(workflow, body, a));
+    }
+    if (route === "POST /runs/{id}/executor/invoke") {
+      if (a.role !== "SUPER_ADMIN")
+        return reply(403, {
+          error:
+            "Only AmazFlow administrators can invoke the Executor directly (diagnostic route)",
+        });
+      try {
+        const allRuns = await scanType("RUN#", a);
+        const run = allRuns.find((r) => r.id === e.pathParameters?.id);
+        if (!run) return reply(404, { error: "Run not found" });
+        const workflow = await getWorkflowVersion(
+          run.tenantId,
+          run.workflowId,
+          run.workflowVersion,
+        );
+        if (!workflow) return reply(400, { error: "Workflow not found for run" });
+        return reply(200, await invokeExecutorDiagnostic(run, workflow));
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
     }
     if (route === "POST /runs/{id}/cancel") {
       try {
@@ -4279,9 +4513,11 @@ exports.handler = async (e) => {
       const items = await scanType("AGENT#", a);
       return reply(
         200,
-        items.sort((x, y) =>
-          String(y.createdAt).localeCompare(String(x.createdAt)),
-        ),
+        items
+          .sort((x, y) =>
+            String(y.createdAt).localeCompare(String(x.createdAt)),
+          )
+          .map((x) => ({ ...x, ...agentSnapshot(x) })),
       );
     }
     if (route === "POST /agent-authorizations") {

@@ -12,12 +12,18 @@ const path = require("path");
 const assert = require("node:assert");
 const { extract } = require("./extract-inline-handler.cjs");
 
+const { deployedRoutes, canonicalRoutes } = require("./extract-routes.cjs");
+
 const root = path.join(__dirname, "..", "..", "..");
 const read = (p) => fs.readFileSync(path.join(root, p), "utf8");
 
 const deployed = extract();
+// The canonical copy is split across modules, so the comparison text has to include all of them.
+// The deployed template is one inline file, so a behaviour that lives in a separate module on the
+// canonical side must still be found SOMEWHERE on the deployed side -- which is the whole point.
 const canonical =
   read("services/control-plane/src/handler.ts") +
+  read("services/control-plane/src/browser-connections.ts") +
   read("packages/engine/src/index.ts");
 
 // [what it protects, pattern in the deployed template, pattern in the canonical source]
@@ -75,9 +81,148 @@ const invariants = [
   ["a suspended organization cannot add people", /Contact AmazFlow before adding people/, /Contact AmazFlow before adding people/],
   ["invitations are audited", /TEAM_MEMBER_INVITED/, /TEAM_MEMBER_INVITED/],
   ["the team list distinguishes an unaccepted invitation", /userStatus:u\.UserStatus/, /userStatus: u\.UserStatus/],
+
+  // Phase 0b (task 3.6): one invariant per behaviour ported between the copies. The standing rule
+  // this establishes -- any security-relevant behaviour added to either copy adds a matching
+  // invariant here -- is what stops the next port from being a one-way trip.
+  //
+  // Preflight (3.1). The gate matters more than the route: a copy carrying the route but not the
+  // run-creation check would report "not ready" on a screen and then start the run anyway.
+  ["the preflight route is exposed", /GET \/workflows\/\{id\}\/preflight/, /GET \/workflows\/\{id\}\/preflight/],
+  ["required surfaces are derived from the workflow's own steps", /requiredTargets:targets/, /requiredTargets: targets/],
+  ["a run is refused up front when its surface is not ready", /needs an execution agent that is not ready yet/, /needs an execution agent that is not ready yet/],
+  ["preflight names a recovery action per surface, not just a status", /action=target==='desktop_agent'\?'open_app':'connect'/, /action = target === "desktop_agent" \? "open_app" : "connect"/],
+
+  // Agent snapshot and heartbeat (3.3). Derived status is the point: a stored one goes stale the
+  // moment a laptop sleeps.
+  ["connection status is derived from heartbeat recency", /HEARTBEAT_GRACE_MS/, /HEARTBEAT_GRACE_MS/],
+  ["revocation outranks heartbeat recency", /agent\.status!=='active'\?'revoked'/, /agent\.status !== "active"\s*\?\s*"revoked"/],
+  ["the agent list returns the derived snapshot", /\.\.\.agentSnapshot\(x\)/, /\.\.\.agentSnapshot\(x\)/],
+  ["a heartbeat updates the advertised capability set", /if\(Array\.isArray\(capabilities\)\) agent\.capabilities=capabilities/, /if \(Array\.isArray\(capabilities\)\)\s*agent\.capabilities = capabilities/],
+  ["a heartbeat records reported permissions", /if\(permissions&&typeof permissions==='object'\) agent\.permissions=permissions/, /if \(permissions && typeof permissions === "object"\)\s*agent\.permissions = permissions/],
+
+  // Diagnostic executor invocation (3.2). Staff-only and labelled a diagnostic in both copies, and
+  // narrower than a claim's grant -- it may report progress, never submit a terminal result.
+  ["the diagnostic executor route is exposed", /POST \/runs\/\{id\}\/executor\/invoke/, /POST \/runs\/\{id\}\/executor\/invoke/],
+  ["the diagnostic executor route is staff-only", /Only AmazFlow administrators can invoke the Executor directly/, /Only AmazFlow administrators can invoke the Executor directly/],
+  ["the diagnostic executor route is labelled a diagnostic rather than a feature", /invoke the Executor directly \((proof-of-concept|diagnostic) route\)/, /invoke the Executor directly \(diagnostic route\)/],
+  ["the diagnostic grant cannot submit a terminal result", /allowedTools:\['record_step_result'\]/, /allowedTools: \["record_step_result"\]/],
+  ["the diagnostic route refuses a run that is not waiting on an agent", /Run is not waiting on an agent step/, /Run is not waiting on an agent step/],
+
+  // Browser connections (3.4).
+  ["the browser connection list route is exposed", /GET \/connections\/browser'/, /GET \/connections\/browser"/],
+  ["the browser connection create route is exposed", /POST \/connections\/browser'/, /POST \/connections\/browser"/],
+  ["the browser connection revoke route is exposed", /DELETE \/connections\/browser\/\{id\}/, /DELETE \/connections\/browser\/\{id\}/],
+  ["a connection may only target a public HTTPS origin", /must be a public HTTPS URL/, /must be a public HTTPS URL/],
+  ["private and link-local hosts are refused", /169\\\.254\|192\\\.168/, /169\\\.254\|192\\\.168/],
+  ["an allowed origin may carry no path, query or fragment", /without a path, query, or fragment/, /without a path, query, or fragment/],
+  ["the allowed origin list must include the base URL's own origin", /Allowed origins must include the base URL origin/, /Allowed origins must include the base URL origin/],
+  ["the allowed origin list is bounded", /at most 20 origins/, /at most 20 origins/],
+  ["the managed profile identifier never leaves the server", /const \{managedProfileId,\.\.\.safe\}=connection/, /const \{ managedProfileId, \.\.\.safe \} = connection/],
+  ["browser connections are admin-only", /Only tenant admins view browser connections/, /Only tenant admins view browser connections/],
+  ["a revoked connection cannot start a login session", /This connection has been revoked/, /This connection has been revoked/],
+  ["an unconfigured managed browser is reported plainly", /Managed browser is not configured/, /Managed browser is not configured/],
+  ["revoking a browser connection is audited", /BROWSER_CONNECTION_REVOKED/, /BROWSER_CONNECTION_REVOKED/],
 ];
 
 let pass = 0, fail = 0;
+
+// ---------------------------------------------------------------------- route-set symmetry -----
+//
+// The invariant list below is a presence check on individual behaviours, which only catches drift
+// in behaviours somebody thought to add a pattern for. It cannot catch a whole ROUTE existing in one
+// copy and not the other -- and that is exactly how these two copies drifted: the canonical copy
+// went months without the claim/grant work while the template carried it, and the template never had
+// the browser connection routes the canonical copy did.
+//
+// So the route set is compared as a set, in both directions, and any asymmetry fails the build.
+// Phase 0b converged the two; this is what keeps them converged.
+console.log("\nCONTROL-PLANE ROUTE-SET SYMMETRY\n");
+{
+  const deployedSet = new Set(deployedRoutes());
+  const canonicalSet = new Set(canonicalRoutes());
+  const deployedOnly = [...deployedSet].filter((r) => !canonicalSet.has(r)).sort();
+  const canonicalOnly = [...canonicalSet].filter((r) => !deployedSet.has(r)).sort();
+
+  if (deployedOnly.length === 0 && canonicalOnly.length === 0) {
+    pass++;
+    console.log(`  PASS  both copies serve the same ${deployedSet.size} routes`);
+  } else {
+    fail++;
+    console.log("  FAIL  the two control-plane copies do not serve the same route set");
+    if (deployedOnly.length)
+      console.log(
+        "        only in amazflow-dev.yaml (deploying the canonical copy would LOSE these):\n" +
+          deployedOnly.map((r) => "          " + r).join("\n"),
+      );
+    if (canonicalOnly.length)
+      console.log(
+        "        only in services/control-plane (these are written but not deployed):\n" +
+          canonicalOnly.map((r) => "          " + r).join("\n"),
+      );
+    console.log(
+      "        Port the missing routes rather than deleting the inventory entry. If a route is\n" +
+        "        genuinely being retired, remove it from BOTH copies in the same change.",
+    );
+  }
+}
+
+// A route the Lambda serves but the gateway does not declare is unreachable in production -- the
+// quieter half of the same defect, and one the handler-to-handler comparison above cannot see.
+console.log("\nGATEWAY ROUTE COVERAGE\n");
+{
+  const template = read("infrastructure/aws-cdk/amazflow-dev.yaml");
+  const declared = new Set(
+    [...template.matchAll(/RouteKey:\s*'([^']+)'/g)].map((match) => match[1]),
+  );
+  const served = deployedRoutes();
+  const unreachable = served.filter((route) => !declared.has(route)).sort();
+  const orphaned = [...declared].filter((route) => !served.includes(route)).sort();
+
+  if (unreachable.length === 0) {
+    pass++;
+    console.log(`  PASS  every one of the ${served.length} handled routes is declared at the gateway`);
+  } else {
+    fail++;
+    console.log(
+      "  FAIL  these routes are handled by the Lambda but not declared at the gateway, so they\n" +
+        "        cannot be called at all:\n" +
+        unreachable.map((r) => "          " + r).join("\n"),
+    );
+  }
+
+  if (orphaned.length === 0) {
+    pass++;
+    console.log("  PASS  the gateway declares no route the handler does not serve");
+  } else {
+    fail++;
+    console.log(
+      "  FAIL  the gateway declares these routes but the handler has no branch for them, so they\n" +
+        "        answer 404 from inside the Lambda:\n" +
+        orphaned.map((r) => "          " + r).join("\n"),
+    );
+  }
+
+  // CORS is part of reachability: a method missing from AllowMethods is refused at the preflight,
+  // before the request the route would have served is ever made.
+  const allowMethods = (template.match(/AllowMethods:\s*\[([^\]]+)\]/) || [, ""])[1]
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const methodsUsed = [...new Set(served.map((route) => route.split(" ")[0]))].sort();
+  const notAllowed = methodsUsed.filter((method) => !allowMethods.includes(method));
+  if (notAllowed.length === 0) {
+    pass++;
+    console.log(`  PASS  every method the routes use (${methodsUsed.join(", ")}) is permitted by CORS`);
+  } else {
+    fail++;
+    console.log(
+      `  FAIL  the routes use ${notAllowed.join(", ")} but CORS permits only ${allowMethods.join(", ")};\n` +
+        "        a browser's preflight is refused before the request is made",
+    );
+  }
+}
+
 console.log("\nCONTROL-PLANE SOURCE PARITY\n");
 for (const [name, deployedPattern, canonicalPattern] of invariants) {
   const inDeployed = deployedPattern.test(deployed);

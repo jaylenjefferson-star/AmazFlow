@@ -4,6 +4,7 @@
     {
       "route": "DELETE /connections/browser/{id}",
       "copies": [
+        "deployed",
         "canonical"
       ],
       "authMode": "cognito-session",
@@ -48,6 +49,7 @@
     {
       "route": "GET /connections/browser",
       "copies": [
+        "deployed",
         "canonical"
       ],
       "authMode": "cognito-session",
@@ -182,7 +184,8 @@
     {
       "route": "GET /workflows/{id}/preflight",
       "copies": [
-        "deployed"
+        "deployed",
+        "canonical"
       ],
       "authMode": "cognito-session",
       "orgScope": "entity-identifier-scoped"
@@ -280,6 +283,7 @@
     {
       "route": "POST /connections/browser",
       "copies": [
+        "deployed",
         "canonical"
       ],
       "authMode": "cognito-session",
@@ -288,6 +292,7 @@
     {
       "route": "POST /connections/browser/{id}/login-session",
       "copies": [
+        "deployed",
         "canonical"
       ],
       "authMode": "cognito-session",
@@ -296,6 +301,7 @@
     {
       "route": "POST /connections/browser/{id}/login-session/complete",
       "copies": [
+        "deployed",
         "canonical"
       ],
       "authMode": "cognito-session",
@@ -394,7 +400,8 @@
     {
       "route": "POST /runs/{id}/executor/invoke",
       "copies": [
-        "deployed"
+        "deployed",
+        "canonical"
       ],
       "authMode": "cognito-session",
       "orgScope": "entity-identifier-scoped"

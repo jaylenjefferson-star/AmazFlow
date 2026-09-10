@@ -85,30 +85,30 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       marked unsafe to retry is never automatically retried
     - _Requirements: 31.15, 31.16, 8.11, 31.18_
 
-- [ ] 3. Phase 0b — Converge the two control-plane copies (gates every later backend task)
+- [x] 3. Phase 0b — Converge the two control-plane copies (gates every later backend task)
 
-  - [ ] 3.1 Port the preflight route into the canonical control-plane source
+  - [x] 3.1 Port the preflight route into the canonical control-plane source
     - _Requirements: 32.1, 32.2, 15.18_
 
-  - [ ] 3.2 Port the diagnostic executor invocation route into the canonical source, staff-restricted and labelled a diagnostic
+  - [x] 3.2 Port the diagnostic executor invocation route into the canonical source, staff-restricted and labelled a diagnostic
     - Applies Q-10's conservative assumption: kept, staff-only, labelled
     - _Requirements: 32.1, 32.2, 7.15, 23.13_
 
-  - [ ] 3.3 Port agent snapshot derivation and heartbeat capability/permission handling into the canonical source
+  - [x] 3.3 Port agent snapshot derivation and heartbeat capability/permission handling into the canonical source
     - _Requirements: 32.1, 32.2, 15.9, 15.3_
 
-  - [ ] 3.4 Port the browser connection routes into the deployed control-plane template
+  - [x] 3.4 Port the browser connection routes into the deployed control-plane template
     - _Requirements: 32.1, 32.3, 20.3_
 
-  - [ ] 3.5 Extend the parity test to fail on route-set asymmetry, not only on missing regex invariants
+  - [x] 3.5 Extend the parity test to fail on route-set asymmetry, not only on missing regex invariants
     - A route present in one copy and absent from the other must fail the build
     - _Requirements: 32.4_
 
-  - [ ] 3.6 Add a parity invariant for each ported security-relevant behaviour
+  - [x] 3.6 Add a parity invariant for each ported security-relevant behaviour
     - Establish the standing rule that any new security-relevant behaviour adds a matching invariant
     - _Requirements: 32.5, 32.6_
 
-- [ ] 4. Checkpoint — convergence complete
+- [x] 4. Checkpoint — convergence complete
   - Ensure all tests pass, ask the user if questions arise.
   - Both copies expose the same route set; the guardrail suites are green. No later backend task starts
     until this checkpoint holds.
