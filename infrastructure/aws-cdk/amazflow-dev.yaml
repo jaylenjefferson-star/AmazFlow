@@ -177,8 +177,14 @@ Resources:
           TABLE_NAME: !Ref ControlPlaneTable
           USER_POOL_ID: !Ref UserPool
           DATA_BOUNDARY: !Ref DataBoundary
-          LEAD_TO: sales@amazflow.com
-          LEAD_FROM: sales@amazflow.com
+          # sales@amazflow.com is not a verified SES identity and the account is still in the SES
+          # sandbox (verified sender AND recipient required, amazflow.com domain verification is
+          # pending), so a send to/from it fails silently -- this caught every lead the form has
+          # captured since the account was created. hello@amazflow.com is the one identity that's
+          # actually verified. Move both back to a dedicated sales@ address once the domain
+          # verifies or SES production access is granted.
+          LEAD_TO: hello@amazflow.com
+          LEAD_FROM: hello@amazflow.com
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           EXECUTION_GRANT_SECRET: !Ref ExecutionGrantSecret
           EXECUTOR_HARNESS_ARN: !Ref ExecutorHarnessArn
