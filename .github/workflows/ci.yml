@@ -1,0 +1,95 @@
+name: CI
+
+# Runs on every push and pull request. Needs no AWS credentials: the control-plane suite
+# exercises the deployed template's own inline Lambda source against an in-memory DynamoDB.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Tests and typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.26.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The control plane first: it is the artifact that reaches production, and its suite
+      # includes the source-parity and provider-parity checks that catch the canonical source
+      # and the deployed template drifting apart.
+      - name: Control plane (critical path, source parity, provider parity)
+        run: pnpm --filter @amazflow/aws-cdk test
+
+      - name: Engine and schema
+        run: |
+          pnpm --filter @amazflow/engine test
+          pnpm --filter @amazflow/control-plane test
+
+      # Both agent contract suites assert against built output, so they need a build first.
+      - name: Chrome extension contract
+        run: |
+          pnpm --filter @amazflow/browser-agent build
+          pnpm --filter @amazflow/browser-agent test
+
+      - name: Desktop agent contract
+        run: |
+          pnpm --filter @amazflow/desktop-agent build
+          pnpm --filter @amazflow/desktop-agent test
+
+      - name: Typecheck the web app
+        run: pnpm --filter @amazflow/web typecheck
+
+      - name: Web app builds as a static export
+        run: |
+          pnpm --filter @amazflow/web build
+          test -f apps/web/out/index.html
+
+  shipped-extension-is-current:
+    name: Shipped extension zip matches source
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.26.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The extension is served to customers as a committed zip, so a source change that does
+      # not rebuild it ships nothing. That has happened before. Compare the committed zip's
+      # contents against a fresh build so it cannot happen silently again.
+      - name: Rebuild and compare
+        run: |
+          mkdir -p /tmp/shipped && cd /tmp/shipped
+          unzip -qo "$GITHUB_WORKSPACE/apps/web/public/downloads/amazflow-agent.zip"
+          cd "$GITHUB_WORKSPACE"
+          pnpm --filter @amazflow/browser-agent build
+          if ! diff -r --brief apps/browser-agent/dist /tmp/shipped; then
+            echo
+            echo "The committed extension zip does not match apps/browser-agent/dist."
+            echo "Customers would download a stale extension without this fix."
+            echo "Run: pnpm --filter @amazflow/browser-agent release"
+            exit 1
+          fi
+          echo "Shipped zip matches source."
