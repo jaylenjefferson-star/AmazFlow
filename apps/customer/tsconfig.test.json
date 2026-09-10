@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    // Next compiles the surface itself with `jsx: "preserve"` and applies its own transform. The
+    // rendering tests (task 9.13) run under tsx with no bundler in front of them, so they need the
+    // automatic runtime instead — otherwise every component in @amazflow/ui fails with
+    // "React is not defined" and the tests report a missing global rather than a missing state.
+    "jsx": "react-jsx"
+  },
+  "include": ["app/**/*.test.tsx", "app/**/*.tsx", "app/**/*.ts"]
+}

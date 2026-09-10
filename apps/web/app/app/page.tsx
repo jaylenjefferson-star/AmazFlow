@@ -35,7 +35,7 @@ import { UsersView } from "./ops/views/users";
 import { WorkflowDetailView, WorkflowsView } from "./ops/views/workflows";
 // ops.css is the console design system; workflow-builder.css styles the builder against the
 // same tokens, so it themes with the console instead of against it.
-import "./ops.css";
+import "@amazflow/ui/ops.css";
 import "./workflow-builder.css";
 
 export default function ControlConsole() {

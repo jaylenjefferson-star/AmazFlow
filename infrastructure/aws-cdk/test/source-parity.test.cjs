@@ -194,6 +194,18 @@ const invariants = [
   ["own-record list narrowing is driven by the permission, not by the group", /!can\(p,'run:read_all',\{orgId:p\.orgId\}\)\.allow/, /!can\(p, "run:read_all", \{ orgId: p\.orgId \}\)\.allow/],
   ["the audit actor label comes from the policy rather than a role comparison", /const actorLabelFor=/, /const actorLabelFor = /],
   ["a list route does not decide its own scope", /const tenantOrStaffRead=/, /const tenantOrStaffRead = /],
+
+  // Phase 3 -- the three surfaces. Same standing rule.
+  //
+  // The wildcard cross-origin header is the one worth spelling out. `*` told every browser on the
+  // internet that any page may read this API's responses. Bearer-token auth meant a drive-by page
+  // could not obtain a token, so it was not directly exploitable -- but that is a property of the auth
+  // scheme, and the header outlives the scheme.
+  ["exactly one origin is echoed from a closed allowlist", /const ALLOWED_ORIGINS=\['https:\/\/amazflow\.com','https:\/\/www\.amazflow\.com','https:\/\/app\.amazflow\.com','https:\/\/admin\.amazflow\.com'\]/, /const ALLOWED_ORIGINS = \[\s*"https:\/\/amazflow\.com",\s*"https:\/\/www\.amazflow\.com",\s*"https:\/\/app\.amazflow\.com",\s*"https:\/\/admin\.amazflow\.com",?\s*\]/],
+  ["an unlisted origin receives no cross-origin header at all", /const corsHeaders=\(\)=>requestOrigin\?\{'access-control-allow-origin':requestOrigin,'vary':'origin'\}:\{\}/, /requestOrigin \? \{ "access-control-allow-origin": requestOrigin, vary: "origin" \} : \{\}/],
+  ["the response varies by origin, so no cache serves one surface another's body", /'vary':'origin'/, /vary: "origin"/],
+  ["the requesting origin is resolved once per invocation", /requestOrigin=allowedOriginFor\(e\)/, /requestOrigin = allowedOriginFor\(e\)/],
+  ["the permissive wildcard cross-origin header is gone", /^(?![\s\S]*access-control-allow-origin':'\*')[\s\S]*$/, /^(?![\s\S]*"access-control-allow-origin": "\*")[\s\S]*$/],
 ];
 
 let pass = 0, fail = 0;
@@ -290,6 +302,111 @@ console.log("\nGATEWAY ROUTE COVERAGE\n");
     console.log(
       `  FAIL  the routes use ${notAllowed.join(", ")} but CORS permits only ${allowMethods.join(", ")};\n` +
         "        a browser's preflight is refused before the request is made",
+    );
+  }
+}
+
+// ------------------------------------------------------------------ origin allowlist coherence ---
+//
+// Task 9.11's actual requirement, which is not "update the callback URLs" but "a mismatch between the
+// callbacks and the cross-origin allowlist must not be able to ship separately". Three lists have to
+// agree for a surface to work at all, and each one is silent about the other two:
+//
+//   * the gateway's CorsConfiguration.AllowOrigins  -- answers the preflight
+//   * the handler's ALLOWED_ORIGINS                 -- answers the actual request
+//   * the user pool client's CallbackURLs           -- lets the surface sign in
+//
+// A callback URL whose origin is not allowlisted authenticates and then cannot call the API. An
+// allowlisted origin with no callback URL cannot sign in. Neither is visible from the side that has it
+// right, so the agreement is asserted here rather than remembered.
+console.log("\nORIGIN ALLOWLIST COHERENCE\n");
+{
+  const template = read("infrastructure/aws-cdk/amazflow-dev.yaml");
+  const yamlList = (label) => {
+    const block = template.match(new RegExp(`${label}:\\s*\\n((?:\\s*-\\s*'[^']*'\\s*\\n)+)`));
+    if (block) return [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    const inline = template.match(new RegExp(`${label}:\\s*\\[([^\\]]*)\\]`));
+    return inline ? [...inline[1].matchAll(/'([^']+)'/g)].map((m) => m[1]) : [];
+  };
+
+  const gatewayOrigins = yamlList("AllowOrigins");
+  const handlerOrigins = [
+    ...(deployed.match(/const ALLOWED_ORIGINS=\[([^\]]*)\]/) || [, ""])[1].matchAll(/'([^']+)'/g),
+  ].map((m) => m[1]);
+  const originOf = (url) => {
+    try {
+      return new URL(url).origin;
+    } catch {
+      return url;
+    }
+  };
+  const callbackOrigins = [...new Set(yamlList("CallbackURLs").map(originOf))];
+  const logoutOrigins = [...new Set(yamlList("LogoutURLs").map(originOf))];
+
+  const same = (a, b) => a.length === b.length && [...a].sort().join("|") === [...b].sort().join("|");
+
+  if (gatewayOrigins.length && same(gatewayOrigins, handlerOrigins)) {
+    pass++;
+    console.log(
+      `  PASS  the gateway and the handler allow the same ${gatewayOrigins.length} origins`,
+    );
+  } else {
+    fail++;
+    console.log(
+      "  FAIL  the gateway's AllowOrigins and the handler's ALLOWED_ORIGINS disagree\n" +
+        `        gateway: ${gatewayOrigins.join(", ") || "(none found)"}\n` +
+        `        handler: ${handlerOrigins.join(", ") || "(none found)"}\n` +
+        "        The gateway answers the preflight and the handler answers the request. A surface\n" +
+        "        present in one and absent from the other fails in a way neither side can see.",
+    );
+  }
+
+  for (const [label, origins] of [
+    ["callback", callbackOrigins],
+    ["sign-out", logoutOrigins],
+  ]) {
+    const stray = origins.filter((origin) => !gatewayOrigins.includes(origin));
+    if (stray.length === 0) {
+      pass++;
+      console.log(
+        `  PASS  every ${label} URL's origin is on the cross-origin allowlist (${origins.join(", ")})`,
+      );
+    } else {
+      fail++;
+      console.log(
+        `  FAIL  these ${label} origins are not on the cross-origin allowlist: ${stray.join(", ")}\n` +
+          "        A person would authenticate there and then be unable to call the API. Change the\n" +
+          "        callback URLs and the allowlist in the SAME edit (task 9.11 / requirement 1.8).",
+      );
+    }
+  }
+
+  // The three surfaces the design names must each be able to sign in. Otherwise "we added the origin"
+  // can pass the checks above while a surface still has no callback URL.
+  const surfaces = ["https://app.amazflow.com", "https://admin.amazflow.com", "https://amazflow.com"];
+  const missing = surfaces.filter((origin) => !callbackOrigins.includes(origin));
+  if (missing.length === 0) {
+    pass++;
+    console.log("  PASS  all three surfaces have a sign-in callback URL");
+  } else {
+    fail++;
+    console.log(
+      `  FAIL  these surfaces have no callback URL, so nobody can sign in to them: ${missing.join(", ")}`,
+    );
+  }
+
+  // Task 9.12 / requirement 1.11: the legacy paths stay reachable through the deprecation window, and
+  // "reachable" includes being able to complete a sign-in redirect. Dropping them from the callback
+  // list would sign out everyone mid-session on the old surfaces the day this shipped.
+  const legacy = ["https://amazflow.com/app/", "https://amazflow.com/console/"];
+  const droppedLegacy = legacy.filter((url) => !yamlList("CallbackURLs").includes(url));
+  if (droppedLegacy.length === 0) {
+    pass++;
+    console.log("  PASS  the legacy /app and /console callback URLs are retained until the cutover");
+  } else {
+    fail++;
+    console.log(
+      `  FAIL  these legacy callback URLs were removed before the task 28.4 cutover: ${droppedLegacy.join(", ")}`,
     );
   }
 }

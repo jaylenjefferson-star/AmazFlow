@@ -352,7 +352,8 @@ const STAFF = claimsFor(STAFF_EMAIL, "amazflow", "SUPER_ADMIN");
   section("the browser half of the session lifecycle is wired into real surfaces");
 
   const fs = require("node:fs");
-  const webApp = path.join(__dirname, "..", "..", "..", "apps", "web", "app");
+  const root = path.join(__dirname, "..", "..", "..");
+  const webApp = path.join(root, "apps", "web", "app");
   const readWeb = (relative) => fs.readFileSync(path.join(webApp, relative), "utf8");
 
   await check("a signed-in person of any role can reach a password-change form", () => {
@@ -400,11 +401,24 @@ const STAFF = claimsFor(STAFF_EMAIL, "amazflow", "SUPER_ADMIN");
   });
 
   await check("apiCall refreshes at most once and force-signs-out a disabled account", () => {
-    const client = readWeb(path.join("lib", "api-client.ts"));
-    assert.ok(client.includes("ACCOUNT_DISABLED"), "the disabled-account code is handled");
+    // Task 9.3 moved the latch and the deactivated-account handling into @amazflow/api-client so the
+    // customer app and the internal console inherit them rather than growing a third and fourth copy.
+    // This check FOLLOWS the behaviour rather than being deleted: what matters is that the single
+    // refresh and the forced sign-out still exist and that the web surface still goes through them.
+    const shared = fs.readFileSync(path.join(root, "packages", "api-client", "src", "index.ts"), "utf8");
+    assert.ok(shared.includes("ACCOUNT_DISABLED"), "the disabled-account code is handled");
     assert.ok(
-      /refreshed = true/.test(client) && /!refreshed/.test(client),
+      /refreshed = true/.test(shared) && /!refreshed/.test(shared),
       "the single-refresh latch is present",
+    );
+    const adapter = readWeb(path.join("lib", "api-client.ts"));
+    assert.ok(
+      /createApiClient</.test(adapter),
+      "apps/web must call the control plane through the shared client, not a fourth copy of it",
+    );
+    assert.ok(
+      !/fetch\(/.test(adapter),
+      "the web adapter must not issue its own fetch -- that would bypass the shared lifecycle",
     );
   });
 

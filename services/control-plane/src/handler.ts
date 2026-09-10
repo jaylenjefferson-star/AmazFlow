@@ -131,11 +131,37 @@ const withErrorEnvelope = (status, body) => {
     correlationId,
   };
 };
+// Task 9.10 / requirement 1.8-1.10: the three surfaces, echoed one at a time.
+//
+// This replaced `access-control-allow-origin: *`. The wildcard was not merely untidy: it told every
+// browser on the internet that any page, on any origin, may read this API's responses. Bearer-token
+// auth means a drive-by page cannot get a token, so the wildcard was not directly exploitable -- but
+// "not exploitable given the current auth scheme" is a property of the auth scheme, not of the header,
+// and the header outlives the scheme.
+//
+// Exactly one origin is echoed, and only if it is on the list. An unknown origin gets NO header at all
+// rather than a refusal, which is the correct shape: the browser then refuses the read itself.
+// `vary: origin` is required because the response now differs per origin and any cache in front of
+// this must not serve one surface's response to another.
+const ALLOWED_ORIGINS = [
+  "https://amazflow.com",
+  "https://www.amazflow.com",
+  "https://app.amazflow.com",
+  "https://admin.amazflow.com",
+];
+let requestOrigin = null;
+const allowedOriginFor = (e) => {
+  const h = (e && e.headers) || {};
+  const raw = h.origin || h.Origin;
+  return typeof raw === "string" && ALLOWED_ORIGINS.includes(raw) ? raw : null;
+};
+const corsHeaders = () =>
+  requestOrigin ? { "access-control-allow-origin": requestOrigin, vary: "origin" } : {};
 const reply = (s, b) => ({
   statusCode: s,
   headers: {
     "content-type": "application/json",
-    "access-control-allow-origin": "*",
+    ...corsHeaders(),
   },
   body: JSON.stringify(withErrorEnvelope(s, b), (key, value) =>
     privateResponseFields.has(key) ? undefined : value,
@@ -4300,6 +4326,7 @@ const revokeBrowserConnection = async (a, id) => {
 exports.handler = async (e) => {
   correlationId =
     e.requestContext?.requestId || `local_${crypto.randomUUID()}`;
+  requestOrigin = allowedOriginFor(e);
   try {
     if (e.source === "amazflow.sweep") {
       const result = await sweepExpired();

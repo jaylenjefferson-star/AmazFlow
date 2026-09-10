@@ -27,6 +27,10 @@ import {
 import type { WorkflowDefinition, WorkflowRun } from "@amazflow/workflow-schema";
 import { type Session } from "../../lib/cognito-auth";
 import { apiCall } from "../../lib/api-client";
+// Task 9.4: the refresh cadence and the tab-hidden rule now come from the shared provider rather
+// than being a constant in this file, so the customer app and this console cannot drift on how
+// often they poll or on whether a backgrounded tab keeps spending requests.
+import { LIVE_POLL_MS } from "@amazflow/domain-ui";
 import { EXCEPTION_STATUSES, isException, isLive } from "./terms";
 
 /* ================================================================================== types = */
@@ -323,8 +327,6 @@ export function useOps() {
 
 /* =============================================================================== provider = */
 
-const LIVE_POLL_MS = 15_000;
-
 export function OpsDataProvider({ session, children }: { session: Session; children: ReactNode }) {
   const [workflows, setWorkflows] = useState<WorkflowDefinition[]>([]);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
@@ -387,7 +389,10 @@ export function OpsDataProvider({ session, children }: { session: Session; child
   );
 
   const refresh = useCallback(async () => {
-    await Promise.all([
+    // allSettled rather than all: loadInto already catches per resource, and allSettled makes the
+    // isolation structural rather than dependent on that -- one rejected loader must never abort the
+    // others and blank the console (requirement 3.12).
+    await Promise.allSettled([
       loadInto<WorkflowDefinition[]>("workflows", "/workflows", setWorkflows),
       loadInto<WorkflowRun[]>("runs", "/runs", setRuns),
       loadInto<Organization[]>("organizations", "/organizations", setOrganizations),
@@ -406,7 +411,7 @@ export function OpsDataProvider({ session, children }: { session: Session; child
 
   /** Cheap refresh for the live views -- runs plus the two queues that move with them. */
   const refreshRuns = useCallback(async () => {
-    await Promise.all([
+    await Promise.allSettled([
       loadInto<WorkflowRun[]>("runs", "/runs", setRuns),
       loadInto<AgentTask[]>("agentTasks", "/agent-tasks", setAgentTasks),
     ]);

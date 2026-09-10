@@ -24,6 +24,49 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  apps/customer:
+    dependencies:
+      '@amazflow/api-client':
+        specifier: workspace:*
+        version: link:../../packages/api-client
+      '@amazflow/domain-ui':
+        specifier: workspace:*
+        version: link:../../packages/domain-ui
+      '@amazflow/permissions':
+        specifier: workspace:*
+        version: link:../../packages/permissions
+      '@amazflow/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      '@amazflow/workflow-schema':
+        specifier: workspace:*
+        version: link:../../packages/workflow-schema
+      next:
+        specifier: ^15.2.0
+        version: 15.5.25(@types/node@22.20.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      react:
+        specifier: ^19.0.0
+        version: 19.2.8
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.8(react@19.2.8)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.20.1
+      '@types/react':
+        specifier: ^19.0.8
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: ^19.0.3
+        version: 19.2.7(@types/react@19.2.18)
+      tsx:
+        specifier: ^4.19.3
+        version: 4.23.13
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   apps/desktop-agent:
     devDependencies:
       '@types/node':
@@ -39,8 +82,63 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  apps/internal:
+    dependencies:
+      '@amazflow/api-client':
+        specifier: workspace:*
+        version: link:../../packages/api-client
+      '@amazflow/domain-ui':
+        specifier: workspace:*
+        version: link:../../packages/domain-ui
+      '@amazflow/permissions':
+        specifier: workspace:*
+        version: link:../../packages/permissions
+      '@amazflow/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      '@amazflow/workflow-schema':
+        specifier: workspace:*
+        version: link:../../packages/workflow-schema
+      next:
+        specifier: ^15.2.0
+        version: 15.5.25(@types/node@22.20.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      react:
+        specifier: ^19.0.0
+        version: 19.2.8
+      react-dom:
+        specifier: ^19.0.0
+        version: 19.2.8(react@19.2.8)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.20.1
+      '@types/react':
+        specifier: ^19.0.8
+        version: 19.2.18
+      '@types/react-dom':
+        specifier: ^19.0.3
+        version: 19.2.7(@types/react@19.2.18)
+      tsx:
+        specifier: ^4.19.3
+        version: 4.23.13
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   apps/web:
     dependencies:
+      '@amazflow/api-client':
+        specifier: workspace:*
+        version: link:../../packages/api-client
+      '@amazflow/domain-ui':
+        specifier: workspace:*
+        version: link:../../packages/domain-ui
+      '@amazflow/permissions':
+        specifier: workspace:*
+        version: link:../../packages/permissions
+      '@amazflow/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
       '@amazflow/workflow-schema':
         specifier: workspace:*
         version: link:../../packages/workflow-schema
@@ -104,6 +202,40 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/api-client:
+    devDependencies:
+      tsx:
+        specifier: ^4.19.3
+        version: 4.23.13
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/domain-ui:
+    dependencies:
+      '@amazflow/api-client':
+        specifier: workspace:*
+        version: link:../api-client
+      '@amazflow/permissions':
+        specifier: workspace:*
+        version: link:../permissions
+      '@amazflow/workflow-schema':
+        specifier: workspace:*
+        version: link:../workflow-schema
+      react:
+        specifier: ^19.0.0
+        version: 19.2.8
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.8
+        version: 19.2.18
+      tsx:
+        specifier: ^4.19.3
+        version: 4.23.13
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/engine:
     dependencies:
       '@amazflow/workflow-schema':
@@ -128,6 +260,22 @@ importers:
       tsx:
         specifier: ^4.19.3
         version: 4.23.13
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/ui:
+    dependencies:
+      '@amazflow/domain-ui':
+        specifier: workspace:*
+        version: link:../domain-ui
+      react:
+        specifier: ^19.0.0
+        version: 19.2.8
+    devDependencies:
+      '@types/react':
+        specifier: ^19.0.8
+        version: 19.2.18
       typescript:
         specifier: ^5.7.3
         version: 5.9.3

@@ -1,62 +1,55 @@
 import type { AmazFlowRole, RunStatus, WorkflowDefinition, WorkflowRun, WorkflowStep } from "@amazflow/workflow-schema";
+import {
+  CUSTOMER_ROLE_LABEL,
+  CUSTOMER_STAGE_LABEL,
+  PROVIDER_BACKEND_LABEL,
+  runStatus,
+  type Tone,
+} from "@amazflow/domain-ui";
 
 export type StatusTone = "progress" | "approval" | "done" | "attention";
 
-export function statusInfo(status: RunStatus): { label: string; tone: StatusTone } {
-  switch (status) {
-    case "RUNNING":
-      return { label: "Making the change", tone: "progress" };
-    case "WAITING_AGENT":
-      return { label: "Waiting for the AmazFlow Agent", tone: "progress" };
-    case "AWAITING_CONFIRMATION":
-      return { label: "Waiting for your confirmation", tone: "approval" };
-    case "WAITING_APPROVAL":
-      return { label: "Waiting on your approval", tone: "approval" };
-    case "COMPLETED":
-      return { label: "Completed and verified", tone: "done" };
-    case "CANCELLED":
-      return { label: "Cancelled", tone: "attention" };
-    case "TIMED_OUT":
-      return { label: "Timed out", tone: "attention" };
-    case "FAILED":
-      return { label: "Needs a look", tone: "attention" };
-    default:
-      return { label: "In progress", tone: "progress" };
-  }
-}
-
-const STAGE_LABELS: Record<WorkflowStep["type"], string> = {
-  ai: "Reading the request",
-  condition: "Checking the details",
-  approval: "Waiting for approval",
-  action: "Making the change",
-  verify: "Confirming it worked",
-  end: "Done",
+/**
+ * Task 9.2: this file's own run-status `switch`, step-stage map, role labels and provider-backend map
+ * are DELETED. They were the second enumeration-to-label mapping in the repository, and the two had
+ * already diverged on which statuses exist. The labels themselves are unchanged -- they moved into
+ * `@amazflow/domain-ui` as the customer register of the one shared status enumeration, so this
+ * surface reads exactly what it read before while there is now only one place a status can be named.
+ *
+ * `StatusTone` stays local because it is this surface's stylesheet vocabulary, mapped from the shared
+ * tone rather than re-decided per status.
+ */
+const TONE_TO_STATUS_TONE: Record<Tone, StatusTone> = {
+  running: "progress",
+  waiting: "approval",
+  good: "done",
+  bad: "attention",
+  muted: "attention",
+  neutral: "progress",
+  ai: "progress",
 };
 
+export function statusInfo(status: RunStatus): { label: string; tone: StatusTone } {
+  const shared = runStatus(status, "customer");
+  return { label: shared.label, tone: TONE_TO_STATUS_TONE[shared.tone] ?? "progress" };
+}
+
 export function stageLabel(stepType: string): string {
-  return STAGE_LABELS[stepType as WorkflowStep["type"]] ?? "Working on it";
+  return CUSTOMER_STAGE_LABEL[stepType as WorkflowStep["type"]] ?? "Working on it";
 }
 
 export function roleLabel(role: AmazFlowRole): string {
-  return role === "CLIENT_ADMIN" ? "Team admin" : "Team member";
+  return CUSTOMER_ROLE_LABEL[role] ?? "Team member";
 }
 
-// SUPER_ADMIN-only troubleshooting label: which real execution mechanism handled a step.
-// 'browser' is the only provider that goes through the Chrome extension today -- everything
-// else is either the engine itself (api/mock) or a not-yet-built connector.
-const PROVIDER_BACKEND_LABELS: Record<string, string> = {
-  browser: "Chrome extension agent",
-  api: "AmazFlow API call",
-  spreadsheet: "Spreadsheet connector",
-  email: "Email connector",
-  file: "File connector",
-  mock: "Simulated (mock)",
-};
-
+/**
+ * Staff-only troubleshooting label: which real execution mechanism handled a step. Now the shared
+ * `EXECUTOR_LABEL`, so "Chrome extension agent" is named once rather than in two files that could
+ * disagree about what `browser` means.
+ */
 export function providerBackendLabel(provider?: string): string {
   if (!provider) return "Unknown";
-  return PROVIDER_BACKEND_LABELS[provider] ?? provider;
+  return PROVIDER_BACKEND_LABEL[provider] ?? provider;
 }
 
 function humanizeSegment(segment: string): string {

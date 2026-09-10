@@ -324,72 +324,188 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
 
 - [ ] 9. Phase 3 — Shared packages, three surfaces, and hosting infrastructure
 
-  - [ ] 9.1 Promote the staff design system into a shared user-interface package
+  - [x] 9.1 Promote the staff design system into a shared user-interface package
     - Page headers, cards, tables, buttons, form fields, badges, status indicators, modals, drawers, toasts,
       skeletons, empty states, error states — one module, both surfaces render from it
+    - `packages/ui` (`@amazflow/ui`) holds `primitives.tsx` and `icons.tsx`, moved with `git mv` rather than
+      reimplemented: they already carry the three-state discipline Phase 13's honesty work depends on, and a
+      rewrite would have produced a second set of states to keep in agreement
+    - `ops/primitives.tsx` and `ops/icons.tsx` are now re-export shims, so all twelve `/app` views and the
+      customer console are untouched by the move. Task 28.4 retires the shims with the rest of `/app`
+    - Styling stays in `ops.css`, which each surface imports. Named as a real coupling: a surface without the
+      stylesheet renders unstyled markup rather than failing the build
     - _Requirements: 3.1_
 
-  - [ ] 9.2 Promote the label mapping and the run-narrative model into a shared domain package
+  - [x] 9.2 Promote the label mapping and the run-narrative model into a shared domain package
     - Exactly one enumeration-to-label mapping and exactly one run-narrative model in the repository; delete
       the duplicate customer status and provider maps once the new surfaces read the shared ones
+    - `packages/domain-ui` holds `terms.ts` and `run-model.ts`. The duplicates in `console/copy.ts` are
+      **deleted**: its run-status `switch`, its `STAGE_LABELS`, its `roleLabel`, and its
+      `PROVIDER_BACKEND_LABELS` are gone
+    - The customer *phrasings* are kept, as a second REGISTER of the one enumeration
+      (`CUSTOMER_RUN_STATUS_LABEL`, `CUSTOMER_STAGE_LABEL`, `CUSTOMER_ROLE_LABEL`,
+      `PROVIDER_BACKEND_LABEL`), because an operator wanting the status and a customer wanting to know what
+      is happening to their work are genuinely different needs. Two registers, one enumeration:
+      `runStatus(status, "customer")` reads whichever register the surface asks for, so a status added in one
+      place cannot go missing from the other. That was not true before — the two maps had already diverged on
+      which statuses exist, and the customer's reading is the one that becomes true for them
     - _Requirements: 3.2, 3.3, 16.5_
 
-  - [ ] 9.3 Create the typed API client package with session handling and correlation-identifier propagation
+  - [x] 9.3 Create the typed API client package with session handling and correlation-identifier propagation
     - Applies Q-3's conservative assumption: bearer token in a header, existing storage retained
+    - `packages/api-client` never imports Cognito. It takes a `SessionTransport` (`refresh`, `endSession`,
+      `persist`) and the surface supplies one, so the refresh-exactly-once and deactivated-account
+      behaviours are testable with no network and no user pool — 9 unit tests, including that a second 401
+      after the retry ends the session rather than looping
+    - Correlation identifier propagates both ways: sent as `x-correlation-id`, read back off the envelope,
+      and `supportCode()` derives the six-character `ERR-XXXXXX` form with the ambiguous characters removed
+      so a person can read it down a phone line
+    - `apps/web/app/lib/api-client.ts` is now the Cognito adapter and keeps `apiCall`'s exact signature, so
+      every existing `/app` and `/console` caller is unchanged
     - _Requirements: 27.12, 28.1, 28.2_
 
-  - [ ] 9.4 Generalize the shared data provider
+  - [x] 9.4 Generalize the shared data provider
     - 15-second refresh, suspended while the tab is hidden, immediate refresh on return, per-resource error
       isolation so one failed resource does not blank a surface
+    - `useResources(client, principal, specs)` takes the resource list as a PARAMETER; the rules live in the
+      package. A resource whose permission the principal lacks reports `unavailable` rather than being
+      requested and refused, so a surface never renders a 403 the person cannot act on
+    - A failed refresh keeps the previous value rather than resetting to empty: stale data with a visible
+      error beats no data. `Promise.allSettled`, not `all` — `ops/data.tsx` was switched to the same, since
+      one rejection aborting the batch is exactly how a single 403 blanks a page
     - _Requirements: 3.11, 3.12, 29.7_
 
-  - [ ] 9.5 Generalize the declarative route table and permission-filtered navigation
+  - [x] 9.5 Generalize the declarative route table and permission-filtered navigation
     - Exactly one route table per surface with no inline path-to-view mapping alongside it; navigation built
       by filtering the route table through the permission policy; a section with no permission is omitted,
       except where omission would be confusing, in which case it is shown with a stated reason
+    - One `RouteDef` per route carries path, label, entity, permission, group, glyph, badge and shortcut.
+      `ops/router.ts`'s five parallel records (`SECTION_PATH`, `SECTION_LABEL`, `SECTION_ENTITY`,
+      `NAV_GROUPS`, `GOTO_KEYS`) are now DERIVED from one table, with their exported shapes unchanged so
+      `shell.tsx` and `command-palette.tsx` needed no edit
+    - `/app`'s navigation is deliberately not permission-filtered: every principal who reaches it is staff
+      holding every internal grant. Its rows carry their permission anyway, which is what task 21.1's port
+      to the internal console will read
+    - A real bug the tests caught: alias resolution iterated in insertion order, so `/console/` matched
+      before `/console/runs/` and every legacy deep link landed on home with the rest of the path mistaken
+      for an entity id. Aliases are now matched longest-first, like the routes
+    - 13 tests, including that navigation and enforcement cannot disagree for any of the six customer roles
     - _Requirements: 3.4, 3.6, 3.7, 3.8, 7.17_
 
-  - [ ] 9.6 Scaffold the customer application shell
+  - [x] 9.6 Scaffold the customer application shell
     - Organization display name, breadcrumbs, notification indicator, user menu; usable layout at 1024
       pixels and above; the customer route map from the design
+    - `apps/customer` at `app.amazflow.com`. `page.tsx` is the gate, the route dispatch, and the data
+      wiring and nothing else: the route table is in `routes.ts`, the shell in `shell.tsx`, the route
+      modules in `views.tsx`, the polling in `@amazflow/domain-ui`, every authorization decision in
+      `@amazflow/permissions`
+    - The organization DISPLAY name comes from `GET /me`, with the identifier as the fallback — never the
+      slug dressed up as a name. An account with no organization claim renders its own state and names a
+      real person to ask, because the alternative shipped for months as a silent default to the staff tenant
+    - Ten route modules are wired. The eleven Phase 4+ sections are declared in the table (so navigation is
+      complete and deep links resolve) and are named in a test assertion rather than passing silently — 11.4,
+      11.6, 11.8, 11.11–11.14 fill them
     - _Requirements: 3.9, 3.10, 1.2_
 
-  - [ ] 9.7 Scaffold the internal console shell with a data-free access-denied state
+  - [x] 9.7 Scaffold the internal console shell with a data-free access-denied state
     - A principal outside the staff group renders a shell containing no organization data from any tenant
+    - "Data-free" is the load-bearing word, and it is stronger than a filtered view: `AccessDenied` renders
+      INSTEAD of the provider, so `useResources` is never mounted, no read is issued, and no tenant record
+      is ever in the page's memory. Asserted against the rendered markup, not against the intent
+    - The page names the caller's own organization and no other. A message reading "this is for staff, you
+      are org X of Y" would leak the shape of the tenancy in order to make a point about it
+    - Design decision D-2 is restated in the file: a static bundle is not a security boundary, the control
+      plane is. A separate origin is defence in depth and anti-confusion
     - _Requirements: 1.3, 2.3, 2.4_
 
-  - [ ] 9.8 Add the three surface entries to the hosting build configuration
+  - [x] 9.8 Add the three surface entries to the hosting build configuration
     - Marketing plus authentication pages, customer application, internal console, all built from the one
       monorepo, all retaining static export
+    - `amplify.yml` now declares three applications. Each build ends in `test -f out/index.html`: a static
+      export can fail to emit anything and still exit 0, and deploying an empty artifact takes a surface
+      down while reporting success
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5_
 
-  - [ ] 9.9 Commit the deep-link rewrite configuration for each surface as version-controlled infrastructure
+  - [x] 9.9 Commit the deep-link rewrite configuration for each surface as version-controlled infrastructure
     - Currently console-only deployment state and load-bearing for every deep link (Risk R-4); a hard reload
       or direct navigation to any deep link must serve the shell and resolve the route
+    - `infrastructure/hosting/{amazflow.com,app.amazflow.com,admin.amazflow.com}.json` plus a README that
+      states what each rule is for and how to apply it. Applying is a deliberate command, not a build step:
+      a wrong rewrite rule takes a surface down and should not be able to arrive as a side effect of a push
+    - The marketing origin gets per-section rules rather than a catch-all, and this is the substantive
+      decision. `amazflow.com` serves real exported pages, so a catch-all there would answer 200 with the
+      home page for every mistyped URL and dead link — destroying the 404 signal link checkers, search
+      engines, and support tickets all rely on. Its rules name `/app` and `/console` and leave the rest alone
+    - The asset-extension exclusion is not cosmetic: without it the rewrite swallows `/_next/static/...`
+      and the surface renders blank while the network tab shows 200s for everything
     - _Requirements: 1.6, 1.7_
 
-  - [ ] 9.10 Replace the permissive cross-origin header with a per-origin allowlist echo and align gateway methods
+  - [x] 9.10 Replace the permissive cross-origin header with a per-origin allowlist echo and align gateway methods
     - Echo exactly one requesting origin from the three-surface allowlist; omit the origin otherwise; accept
       the methods the routes actually use (remediates H-5)
+    - Both halves, because they answer different requests: the gateway's `AllowOrigins` answers the
+      preflight, `reply()`'s echo answers the actual request, and `*` from either one is the header
+      requirement 1.8 exists to remove. An unlisted origin gets NO header rather than a refusal — the
+      browser then refuses the read itself, which is the correct shape
+    - `vary: origin` ships with it. The response now differs per origin, and without it a cache in front of
+      the API can serve one surface's body to another
+    - Stated plainly rather than minimised: `*` was not directly exploitable, because bearer-token auth means
+      a drive-by page cannot obtain a token. But that is a property of the auth scheme, and the header
+      outlives the scheme
+    - `AllowMethods` was already aligned in Phase 0b and the parity suite's CORS-vs-methods check keeps it so
     - _Requirements: 1.8, 1.9, 1.10, 33.8_
 
-  - [ ] 9.11 Update identity-provider callback and sign-out locations in the same template change as the new origins
+  - [x] 9.11 Update identity-provider callback and sign-out locations in the same template change as the new origins
     - Applies Q-9's conservative assumption: the three named origins are the intended domains; a mismatch
       between callbacks and the cross-origin allowlist must not be able to ship separately
+    - "Must not be able to" is the requirement, so it is enforced rather than remembered: a new
+      ORIGIN ALLOWLIST COHERENCE section in `source-parity.test.cjs` asserts that the gateway's allowlist and
+      the handler's `ALLOWED_ORIGINS` are the same set, that every callback and sign-out URL's origin is on
+      that list, that all three surfaces have a callback URL at all, and that the legacy `/app` and
+      `/console` callbacks are retained until the task 28.4 cutover
+    - Each of those three lists is silent about the other two, which is why they drift: a callback URL whose
+      origin is not allowlisted authenticates and then cannot call the API, and an allowlisted origin with no
+      callback URL cannot sign in. Neither is visible from the side that has it right
     - _Requirements: 1.1, 1.2, 1.3, 1.8_
 
-  - [ ] 9.12 Keep the previous surface paths functional with legacy route aliases
+  - [x] 9.12 Keep the previous surface paths functional with legacy route aliases
     - No previously reachable route is removed until its replacement is live and a deprecation window has
       elapsed
+    - `CUSTOMER_ALIASES` maps all six `/console` paths and `INTERNAL_ALIASES` all fifteen `/app` paths onto
+      the sections that replaced them, entity id and query string preserved, so a bookmark or an emailed run
+      link lands on the right screen. `/app/clients/` resolves as well as `/app/customers/`: a deprecation
+      window that only honours the most recent rename is not a deprecation window
+    - Both surfaces themselves stay live. This table is what makes the eventual redirect land somewhere
+      correct rather than on a home page that loses the person's place
     - _Requirements: 1.11_
 
-  - [ ] 9.13* Route-level rendering tests for the new shells
+  - [x] 9.13* Route-level rendering tests for the new shells
     - Loading, empty, and error states per route module; a section the principal cannot use is absent from
       navigation
+    - 19 tests (9 customer, 10 internal) rendering each route module through `react-dom/server`. Driven by
+      the module list rather than written per view, so a new view without an error branch fails here instead
+      of being noticed in production when a read starts failing
+    - `unavailable` is asserted NOT to render as an error. A role restriction shown as a system failure sends
+      somebody to support about a working system
+    - Navigation and enforcement are asserted unable to disagree for all six customer roles, in both
+      directions — and the "nothing is offered" degenerate pass is excluded by requiring a VIEWER to still
+      be offered Runs
     - _Requirements: 34.16, 3.7_
 
-- [ ] 10. Checkpoint — three surfaces serve, old surfaces still work
+- [x] 10. Checkpoint — three surfaces serve, old surfaces still work
   - Ensure all tests pass, ask the user if questions arise.
+  - **Met.** `aws-cdk` 19 suites green (524 assertions, 0 failures) including the new ORIGIN ALLOWLIST
+    COHERENCE section and 5 new CORS parity invariants; `customer` 9 and `internal` 10 rendering tests;
+    typecheck and static export build green for all three surfaces
+  - One pre-existing guardrail had to follow its behaviour rather than be deleted: task 9.3 moved the
+    single-refresh latch and the `ACCOUNT_DISABLED` handling into `@amazflow/api-client`, so
+    `auth-session.test.cjs` was still reading the old location. It now asserts the latch in the shared
+    package AND that the web adapter goes through `createApiClient` and issues no `fetch` of its own —
+    which is a stronger check than the one it replaced, since it catches a fourth copy as well as a
+    missing latch
+  - **Old surfaces still work** is not an assumption: `/app` and `/console` keep their Cognito callback
+    URLs (asserted), keep their origin on the CORS allowlist, keep their rewrite rules, and every path
+    they serve resolves through the alias tables (asserted). The cutover is task 28.4
 
 - [ ] 11. Phase 4 — Organization, users, teams, invitations, personal settings
 

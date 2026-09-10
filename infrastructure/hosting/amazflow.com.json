@@ -1,0 +1,14 @@
+[
+  {
+    "source": "/app</^[^.]+$|\\.(?!(?:css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp|avif)$)([^.]+$)/>",
+    "target": "/app/index.html",
+    "status": "200",
+    "condition": null
+  },
+  {
+    "source": "/console</^[^.]+$|\\.(?!(?:css|gif|ico|jpg|js|png|txt|svg|woff|woff2|ttf|map|json|webp|avif)$)([^.]+$)/>",
+    "target": "/console/index.html",
+    "status": "200",
+    "condition": null
+  }
+]

@@ -1,3 +1,21 @@
+# Hosting build configuration for all three surfaces (task 9.8, requirements 1.1-1.5).
+#
+# One monorepo, three applications, three origins:
+#
+#   apps/web       -> amazflow.com        marketing pages plus /login, /forgot-password,
+#                                         /reset-password, /signed-out, and -- until the task 28.4
+#                                         cutover -- the live /app and /console surfaces
+#   apps/customer  -> app.amazflow.com    the customer application
+#   apps/internal  -> admin.amazflow.com  the internal staff console
+#
+# Every entry keeps `output: "export"` (requirement 1.4), so each artifact is a static bundle with no
+# frontend server. That is why the deep-link rewrite is load-bearing and why it is committed next to
+# this file rather than left as console state -- see infrastructure/hosting/README.md (task 9.9,
+# Risk R-4).
+#
+# The `test -f out/index.html` line on each build is deliberate. A Next static export that fails to
+# emit anything still exits 0 under some failure modes, and a deploy of an empty artifact takes the
+# surface down while reporting success.
 version: 1
 applications:
   - appRoot: apps/web
@@ -12,6 +30,52 @@ applications:
         build:
           commands:
             - cd apps/web
+            - pnpm exec next build
+            - test -f out/index.html
+      artifacts:
+        baseDirectory: out
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - ../../node_modules/**/*
+          - ../../.pnpm-store/**/*
+
+  - appRoot: apps/customer
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - cd ../..
+            - corepack enable
+            - corepack prepare pnpm@11.26.0 --activate
+            - pnpm install --no-frozen-lockfile
+        build:
+          commands:
+            - cd apps/customer
+            - pnpm exec next build
+            - test -f out/index.html
+      artifacts:
+        baseDirectory: out
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - ../../node_modules/**/*
+          - ../../.pnpm-store/**/*
+
+  - appRoot: apps/internal
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            - cd ../..
+            - corepack enable
+            - corepack prepare pnpm@11.26.0 --activate
+            - pnpm install --no-frozen-lockfile
+        build:
+          commands:
+            - cd apps/internal
             - pnpm exec next build
             - test -f out/index.html
       artifacts:
