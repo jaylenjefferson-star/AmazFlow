@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { LogoMark } from "../../site-components";
-import { API, type Session } from "../../lib/cognito-auth";
+import { type Session } from "../../lib/cognito-auth";
+import { apiCall } from "../../lib/api-client";
 import { customerSurface, enforceSessionAccess } from "../../lib/session-gate";
 // This page is built from the auth card primitives (auth-standalone, auth-card, auth-field,
 // auth-submit) but only ever imported console.css, so every one of those eight classes resolved
@@ -76,11 +77,11 @@ export default function SettingsPage() {
     try {
       // The full organization rather than the public branding subset, so this page can show the
       // limits actually in force alongside what the customer is allowed to change.
-      const response = await fetch(`${API}/organizations/${encodeURIComponent(currentSession.tenantId)}`, {
-        headers: { Authorization: `Bearer ${currentSession.idToken}` },
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error ?? "Failed to load organization settings");
+      const body = await apiCall<Organization>(
+        currentSession,
+        `/organizations/${encodeURIComponent(currentSession.tenantId)}`,
+        { onSessionRenewed: setSession },
+      );
 
       setOrg(body);
       setDisplayName(body.branding?.displayName || body.name);
@@ -105,41 +106,29 @@ export default function SettingsPage() {
     setSaved(false);
 
     try {
-      const response = await fetch(`${API}/organizations/${encodeURIComponent(session.tenantId)}/branding`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          Authorization: `Bearer ${session.idToken}`,
+      let latest = await apiCall<Organization>(
+        session,
+        `/organizations/${encodeURIComponent(session.tenantId)}/branding`,
+        {
+          method: "POST",
+          body: {
+            displayName: displayName.trim() || org.name,
+            logoUrl: logoUrl.trim() || undefined,
+            accent: primaryColor.trim() || "#ff765c",
+            loginMessage: loginMessage.trim() || undefined,
+          },
+          onSessionRenewed: setSession,
         },
-        body: JSON.stringify({
-          displayName: displayName.trim() || org.name,
-          logoUrl: logoUrl.trim() || undefined,
-          accent: primaryColor.trim() || "#ff765c",
-          loginMessage: loginMessage.trim() || undefined,
-        }),
-      });
-
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error ?? "Failed to save settings");
-      let latest = body;
+      );
 
       // Branding and settings are separate routes because they carry different authority: a
       // customer admin owns their presentation, but not their own execution limits.
       if (timezone !== savedTimezone) {
-        const zoneResponse = await fetch(
-          `${API}/organizations/${encodeURIComponent(session.tenantId)}/settings`,
-          {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              Authorization: `Bearer ${session.idToken}`,
-            },
-            body: JSON.stringify({ timezone }),
-          },
+        latest = await apiCall<Organization>(
+          session,
+          `/organizations/${encodeURIComponent(session.tenantId)}/settings`,
+          { method: "POST", body: { timezone }, onSessionRenewed: setSession },
         );
-        const zoneBody = await zoneResponse.json().catch(() => ({}));
-        if (!zoneResponse.ok) throw new Error(zoneBody.error ?? "Failed to save the time zone");
-        latest = zoneBody;
         setSavedTimezone(timezone);
       }
 

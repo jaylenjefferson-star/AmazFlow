@@ -8,7 +8,8 @@ import { HomeScreen } from "./home";
 import { RunDetailScreen } from "./run-detail";
 import { TeamScreen, type TeamMember } from "./team";
 import { visibleWorkflows } from "./copy";
-import { API, type Session, signOut as authSignOut, guardBFCacheRestore } from "../lib/cognito-auth";
+import { type Session, signOut as authSignOut, guardBFCacheRestore } from "../lib/cognito-auth";
+import { apiCall } from "../lib/api-client";
 import { customerSurface, enforceSessionAccess } from "../lib/session-gate";
 
 type ConsoleWorkflow = WorkflowDefinition & { manualMinutesEstimate?: number; customerSummary?: string };
@@ -72,20 +73,26 @@ export default function CustomerConsole() {
     });
   }, []);
 
-  const authGet = async (currentSession: Session, path: string) => {
-    const response = await fetch(`${API}${path}`, { headers: { Authorization: `Bearer ${currentSession.idToken}` } });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
-    return body;
-  };
+  // Every control-plane call on this surface goes through apiCall(), which is what makes the
+  // session lifecycle actually work: one refresh attempt on an expired id token before giving up,
+  // and a forced sign-out when the account has been deactivated mid-session. Calling fetch()
+  // directly -- as this file used to -- meant a refreshable session showed "Something went wrong"
+  // and a deactivated account kept rendering a workspace it no longer had.
+  //
+  // onSessionRenewed lifts the renewed session into state so the NEXT call uses the new token
+  // rather than refreshing again.
+  const call = <T,>(currentSession: Session, path: string, options: { method?: string; body?: unknown } = {}) =>
+    apiCall<T>(currentSession, path, { ...options, onSessionRenewed: setSession });
+
+  const authGet = <T,>(currentSession: Session, path: string) => call<T>(currentSession, path);
 
   const loadData = async (currentSession: Session) => {
     setDataLoading(true);
     setDataError(null);
     try {
-      const [workflowResponse, runResponse]: [ConsoleWorkflow[], WorkflowRun[]] = await Promise.all([
-        authGet(currentSession, "/workflows"),
-        authGet(currentSession, "/runs"),
+      const [workflowResponse, runResponse] = await Promise.all([
+        authGet<ConsoleWorkflow[]>(currentSession, "/workflows"),
+        authGet<WorkflowRun[]>(currentSession, "/runs"),
       ]);
       setWorkflows(visibleWorkflows(workflowResponse, currentSession.role));
       setRuns(runResponse.sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
@@ -108,7 +115,7 @@ export default function CustomerConsole() {
     if (!background) setTeamLoading(true);
     setTeamError(null);
     try {
-      const response: TeamMember[] = await authGet(currentSession, `/tenants/${currentSession.tenantId}/users`);
+      const response = await authGet<TeamMember[]>(currentSession, `/tenants/${currentSession.tenantId}/users`);
       setMembers(response);
     } catch (err) {
       setTeamError(err instanceof Error ? err.message : "Something went wrong");
@@ -129,28 +136,19 @@ export default function CustomerConsole() {
 
   const startRun = async (workflow: ConsoleWorkflow, description: string) => {
     if (!session) return;
-    const response = await fetch(`${API}/workflows/${workflow.id}/runs`, {
+    const body = await call<WorkflowRun>(session, `/workflows/${workflow.id}/runs`, {
       method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${session.idToken}` },
-      body: JSON.stringify({ description }),
+      body: { description },
     });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
     setRuns((current) => [body, ...current]);
     setView({ kind: "run", runId: body.id });
   };
 
   const postAction = async (path: string, body?: unknown) => {
     if (!session) throw new Error("Sign in required");
-    const response = await fetch(`${API}${path}`, {
-      method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${session.idToken}` },
-      body: JSON.stringify(body ?? {}),
-    });
-    const responseBody = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(responseBody.error ?? `Request failed (${response.status})`);
+    const responseBody = await call<WorkflowRun>(session, path, { method: "POST", body: body ?? {} });
     setRuns((current) => current.map((item) => (item.id === responseBody.id ? responseBody : item)));
-    return responseBody as WorkflowRun;
+    return responseBody;
   };
 
   const confirmRun = async (run: WorkflowRun) => {
@@ -175,40 +173,28 @@ export default function CustomerConsole() {
 
   const decideApproval = async (run: WorkflowRun, approved: boolean) => {
     if (!session) return;
-    const response = await fetch(`${API}/runs/${run.id}/approvals/${run.currentStepId}`, {
+    const body = await call<WorkflowRun>(session, `/runs/${run.id}/approvals/${run.currentStepId}`, {
       method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${session.idToken}` },
-      body: JSON.stringify({ approved }),
+      body: { approved },
     });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
     setRuns((current) => current.map((item) => (item.id === body.id ? body : item)));
   };
 
   const setMemberEnabled = async (member: TeamMember, enabled: boolean) => {
     if (!session) return;
-    const response = await fetch(`${API}/tenants/${session.tenantId}/users/${member.username}/status`, {
+    await call(session, `/tenants/${session.tenantId}/users/${member.username}/status`, {
       method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${session.idToken}` },
-      body: JSON.stringify({ enabled }),
+      body: { enabled },
     });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
     setMembers((current) => current.map((item) => (item.username === member.username ? { ...item, enabled } : item)));
   };
 
   const inviteMember = async (email: string, role: AmazFlowRole) => {
     if (!session) throw new Error("Sign in required");
-    const response = await fetch(`${API}/tenants/${session.tenantId}/users`, {
-      method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${session.idToken}` },
-      body: JSON.stringify({ email, role }),
-    });
-    const body = await response.json().catch(() => ({}));
     // The control plane's message is shown as-is: it knows why it refused (an address outside the
     // allowed domains, someone who already has an account) and paraphrasing it here would lose
-    // the reason.
-    if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
+    // the reason. apiCall() surfaces that message on ApiError.message.
+    await call(session, `/tenants/${session.tenantId}/users`, { method: "POST", body: { email, role } });
     // Re-read rather than appending the response: the list is the source of truth for who is a
     // member, and an invitation that half-succeeded must not appear as though it worked. Done in
     // the background so the screen -- and the confirmation the admin just earned -- survives it.
@@ -273,6 +259,22 @@ export default function CustomerConsole() {
                 Organization settings
               </a>
             )}
+            {/* Outside the CLIENT_ADMIN branch above on purpose: every role has an account, and
+                changing your own password is the one thing nobody should need an administrator
+                for. */}
+            <a
+              href="/console/account/"
+              style={{
+                display: "block",
+                padding: "10px 16px",
+                fontSize: 13,
+                fontWeight: 700,
+                color: "var(--muted)",
+                textDecoration: "none",
+              }}
+            >
+              Your account
+            </a>
             <a
               href="/console/support/"
               style={{

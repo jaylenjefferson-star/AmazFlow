@@ -97,6 +97,21 @@ export const staffSurface = (returnTo: string, customerPath = "/console/"): Sess
 });
 
 /**
+ * A surface every authenticated role reaches, staff and customer alike.
+ *
+ * This exists for account self-service. Changing your own password is not a capability that some
+ * roles have and others do not -- it is the one thing every account holder must be able to do
+ * without asking an administrator, and routing a FRONTLINE user to a CLIENT_ADMIN-gated settings
+ * page to find it would mean they simply never could. So: signed in is the only requirement, and
+ * there is no `elsewhere` worth computing, because nobody signed in is in the wrong place here.
+ */
+export const anySignedInSurface = (returnTo: string): SessionGateOptions => ({
+  returnTo,
+  allow: () => true,
+  elsewhere: () => returnTo,
+});
+
+/**
  * A customer surface. Staff are sent to the matching internal path; customers whose role does not
  * reach this particular surface are sent back to their console home.
  */

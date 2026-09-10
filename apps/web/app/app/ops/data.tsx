@@ -25,7 +25,8 @@ import {
   type ReactNode,
 } from "react";
 import type { WorkflowDefinition, WorkflowRun } from "@amazflow/workflow-schema";
-import { API, type Session } from "../../lib/cognito-auth";
+import { type Session } from "../../lib/cognito-auth";
+import { apiCall } from "../../lib/api-client";
 import { EXCEPTION_STATUSES, isException, isLive } from "./terms";
 
 /* ================================================================================== types = */
@@ -347,25 +348,20 @@ export function OpsDataProvider({ session, children }: { session: Session; child
   const [summaries, setSummaries] = useState<Record<string, Slot<TenantSummary>>>({});
   const [versions, setVersions] = useState<Record<string, Slot<WorkflowDefinition[]>>>({});
 
-  const tokenRef = useRef(session.idToken);
-  tokenRef.current = session.idToken;
+  // The whole session, not just its token: apiCall() needs the refresh token to renew, and the
+  // renewed session has to land back in the ref so subsequent polls use it. A ref rather than state
+  // because this provider polls on an interval and a state dependency would rebuild the interval
+  // on every renewal.
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
-  const request = useCallback(async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
-    const response = await fetch(`${API}${path}`, {
+  const request = useCallback(async <T,>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> => {
+    return apiCall<T>(sessionRef.current, path, {
       ...options,
-      headers: {
-        "content-type": "application/json",
-        Authorization: `Bearer ${tokenRef.current}`,
-        ...options.headers,
+      onSessionRenewed: (renewed) => {
+        sessionRef.current = renewed;
       },
     });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(
-        (body as { error?: string }).error ?? `Request failed (${response.status})`,
-      );
-    }
-    return body as T;
   }, []);
 
   /** Load one collection, recording its failure without aborting the others. */

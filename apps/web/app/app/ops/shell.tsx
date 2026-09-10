@@ -326,6 +326,11 @@ function IdentityMenu() {
             </span>
             {nav.theme === "dark" ? "Light mode" : "Dark mode"}
           </button>
+          {/* Staff change their own password on the same self-service page customers use -- there
+              is one account-security surface, not a staff copy of it. */}
+          <a className="ops-menuitem" role="menuitem" href="/console/account/">
+            <span className="ops-menuitem-glyph"><Icon name="settings" size={13} /></span> Your account
+          </a>
           <a className="ops-menuitem" role="menuitem" href="/console/">
             <span className="ops-menuitem-glyph"><Icon name="console" size={13} /></span> Open customer console
           </a>

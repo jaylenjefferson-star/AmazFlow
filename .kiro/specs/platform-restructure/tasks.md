@@ -124,23 +124,24 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       usable principal for such a token
     - _Requirements: 4.4, 6.1_
 
-  - [ ] 5.3 Implement self-service password change and confirm no operator path can set a customer password
-    - PARTIAL: `changeOwnPassword()` is implemented in the auth module (access-token + current-password
-      authorized) and the "no operator path" half is asserted by auth-session.test.cjs against the
-      route inventory and the handler source. No UI calls it yet, so a user still cannot change their
-      own password in the product. Remaining: the form, on a surface every role can reach.
+  - [x] 5.3 Implement self-service password change and confirm no operator path can set a customer password
+    - `changeOwnPassword()` (access-token + current-password authorized) is now called from
+      `/console/account/`, a surface gated on being signed in and nothing else — `anySignedInSurface`,
+      no `requireRole` — because a role-gated password form is unreachable for the roles that need it
+      most. Linked from both the customer console sidebar and the staff identity menu. The "no
+      operator path" half stays asserted against the route inventory and the handler source
     - _Requirements: 4.7, 4.8, 12.2, 12.7_
 
-  - [ ] 5.4 Implement disabled-account and single-refresh-then-sign-out handling
+  - [x] 5.4 Implement disabled-account and single-refresh-then-sign-out handling
     - One refresh attempt on an unauthenticated response, then sign out; account-disabled indication forces
       sign-out; expose the current user's identifier, organization, role, and account status
-    - PARTIAL: the control-plane half is done and tested -- `GET /me` reports identifier, organization,
-      role and account status, and every authenticated route refuses a deactivated account with
-      `ACCOUNT_DISABLED` (this closed baseline defect D-4). The browser half exists as `apiCall()` in
-      apps/web/app/lib/api-client.ts, which implements exactly-one-refresh-then-sign-out and the
-      forced sign-out on `ACCOUNT_DISABLED`. Remaining: the existing surfaces still call `fetch()`
-      directly, so the handling is not yet in effect for real requests. Threading every call site
-      through `apiCall()` is the rest of this task.
+    - Control-plane half: `GET /me` reports identifier, organization, role and account status, and every
+      authenticated route refuses a deactivated account with `ACCOUNT_DISABLED` (closed baseline defect
+      D-4). Browser half: all four authenticated surfaces (`/console`, `/console/settings`,
+      `/console/support`, `/app` via `ops/data.tsx`) now route every control-plane call through
+      `apiCall()`, so the single-refresh latch and the forced sign-out are in effect for real requests.
+      A source-level guardrail in auth-session.test.cjs fails if a surface reintroduces a raw
+      `fetch(\`${API}…\`)`
     - _Requirements: 4.10, 4.11, 4.12, 4.13, 4.14, 4.15_
 
   - [x] 5.5 Implement sign-out everywhere and staff-initiated session revocation with audit

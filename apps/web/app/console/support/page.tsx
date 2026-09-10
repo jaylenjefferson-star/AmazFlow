@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { LogoMark } from "../../site-components";
-import { API, type Session } from "../../lib/cognito-auth";
+import { type Session } from "../../lib/cognito-auth";
+import { apiCall } from "../../lib/api-client";
 import { customerSurface, enforceSessionAccess } from "../../lib/session-gate";
 import { openSupportChat } from "../../lib/intercom";
 import "../../auth.css";
@@ -52,27 +53,18 @@ export default function SupportTicketPage() {
     setError(null);
 
     try {
-      const response = await fetch(`${API}/support/tickets`, {
+      const body = await apiCall<{ id: string }>(session, "/support/tickets", {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          Authorization: `Bearer ${session.idToken}`,
-        },
-        body: JSON.stringify({
+        body: {
           subject: subject.trim(),
           message: message.trim(),
           category,
           priority,
           runId: runId.trim() || undefined,
           workflowId: workflowId.trim() || undefined,
-        }),
+        },
+        onSessionRenewed: setSession,
       });
-
-      const body = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(body.error ?? `Request failed (${response.status})`);
-      }
 
       setTicketId(body.id);
       setStatus("success");

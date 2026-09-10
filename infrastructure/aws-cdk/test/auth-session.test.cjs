@@ -344,6 +344,70 @@ const STAFF = claimsFor(STAFF_EMAIL, "amazflow", "SUPER_ADMIN");
       );
   });
 
+  /* ------------------------------------------------------- the browser half is actually wired --- */
+  // Tasks 5.3 and 5.4 both had the same failure mode before this: the capability existed in a
+  // library module and nothing called it, so the requirement was satisfied on paper and not in the
+  // product. These two checks are source-level on purpose -- they assert the WIRING, which is
+  // exactly the part that was missing, and they fail if a future surface reintroduces a raw fetch().
+  section("the browser half of the session lifecycle is wired into real surfaces");
+
+  const fs = require("node:fs");
+  const webApp = path.join(__dirname, "..", "..", "..", "apps", "web", "app");
+  const readWeb = (relative) => fs.readFileSync(path.join(webApp, relative), "utf8");
+
+  await check("a signed-in person of any role can reach a password-change form", () => {
+    const page = readWeb(path.join("console", "account", "page.tsx"));
+    assert.ok(
+      page.includes("changeOwnPassword"),
+      "the account page must call changeOwnPassword, not merely exist",
+    );
+    assert.ok(
+      page.includes("anySignedInSurface"),
+      "the page must be gated on being signed in only -- a role-gated password form is unreachable for the roles that need it most",
+    );
+    assert.ok(
+      !/requireRole/.test(page),
+      "no role requirement may narrow the account page",
+    );
+    // And it has to be findable: a page nothing links to is a page nobody uses.
+    assert.ok(
+      readWeb(path.join("console", "page.tsx")).includes("/console/account/"),
+      "the customer console links to it",
+    );
+    assert.ok(
+      readWeb(path.join("app", "ops", "shell.tsx")).includes("/console/account/"),
+      "the staff console links to it",
+    );
+  });
+
+  await check("every authenticated surface calls the control plane through apiCall()", () => {
+    // The refresh-once-then-sign-out and ACCOUNT_DISABLED handling live in apiCall(). A surface
+    // that calls fetch() directly opts out of both, silently.
+    const surfaces = [
+      path.join("console", "page.tsx"),
+      path.join("console", "settings", "page.tsx"),
+      path.join("console", "support", "page.tsx"),
+      path.join("app", "ops", "data.tsx"),
+    ];
+    for (const relative of surfaces) {
+      const source = readWeb(relative);
+      assert.ok(source.includes("apiCall"), `${relative} must call the control plane via apiCall()`);
+      assert.ok(
+        !/fetch\(`\$\{API\}/.test(source),
+        `${relative} must not call fetch(\`\${API}...\`) directly -- that bypasses the session lifecycle`,
+      );
+    }
+  });
+
+  await check("apiCall refreshes at most once and force-signs-out a disabled account", () => {
+    const client = readWeb(path.join("lib", "api-client.ts"));
+    assert.ok(client.includes("ACCOUNT_DISABLED"), "the disabled-account code is handled");
+    assert.ok(
+      /refreshed = true/.test(client) && /!refreshed/.test(client),
+      "the single-refresh latch is present",
+    );
+  });
+
   /* --------------------------------------------------------------------- the error envelope ---- */
   section("the structured error envelope");
 
