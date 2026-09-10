@@ -270,6 +270,27 @@ export function useOpsActions() {
     [ops, run],
   );
 
+  /**
+   * Invite someone into a tenant. Cognito emails the temporary password and /login handles the
+   * forced-change challenge in-page, so there is no separate acceptance step to build.
+   */
+  const inviteUser = useCallback(
+    (tenantId: string, email: string, role: string) =>
+      run(
+        `invite_${tenantId}`,
+        async () => {
+          const created = await ops.request<{ email: string }>(
+            `/tenants/${encodeURIComponent(tenantId)}/users`,
+            { method: "POST", body: JSON.stringify({ email, role }) },
+          );
+          await ops.loadUsers(tenantId);
+          return created;
+        },
+        `Account created for ${email} — delivery of the invite email isn't confirmed`,
+      ),
+    [ops, run],
+  );
+
   const setUserEnabled = useCallback(
     (tenantId: string, username: string, enabled: boolean) =>
       run(
@@ -462,6 +483,7 @@ export function useOpsActions() {
     saveBranding,
     saveOrgProfile,
     saveOrgSettings,
+    inviteUser,
     setUserEnabled,
     setTicketStatus,
     addTicketNote,

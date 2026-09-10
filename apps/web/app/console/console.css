@@ -244,3 +244,164 @@
   height: 1px;
   background: var(--line);
 }
+
+
+/* -------------------------------------------------------------------- team invitations ------ */
+
+/* A team admin can add their own people now. This used to read "ask your AmazFlow contact",
+   because creating a user was a manual operation in the AWS console. */
+.console-invite-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin: 0 0 18px;
+}
+.console-invite-sent {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.console-invite-card {
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  padding: 20px 22px;
+  background: var(--paper);
+  margin: 0 0 20px;
+}
+.console-invite-card h3 { margin: 0; font-size: 17px; }
+.console-invite-card > p {
+  margin: 6px 0 16px;
+  font-size: 13.5px;
+  color: var(--muted);
+  line-height: 1.55;
+  max-width: 56ch;
+}
+
+.console-invite-fields { display: grid; gap: 14px; }
+.console-invite-fields label { display: grid; gap: 5px; }
+.console-invite-fields label > span { font-size: 12.5px; font-weight: 700; }
+.console-invite-fields input,
+.console-invite-fields select {
+  font: inherit;
+  font-size: 15px;
+  padding: 11px 13px;
+  border: 1.5px solid var(--line);
+  border-radius: 11px;
+  background: var(--paper);
+  color: var(--ink);
+  width: 100%;
+}
+
+.console-invite-actions { display: flex; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+
+.console-invite-error {
+  border: 1.5px solid #f3cbc7;
+  background: #fdeceb;
+  color: #8f2c20;
+  border-radius: 11px;
+  padding: 11px 13px;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+
+/* Marks an invitation nobody has accepted yet, so "added but never signed in" is visible
+   rather than looking like a working account. */
+.console-invite-pill {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--yellow);
+  color: var(--ink);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  vertical-align: middle;
+}
+
+.console-team-pending {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+
+/* ------------------------------------------------------------------ getting started --------- */
+
+/* Replaces the old "Your workspace is ready" dead end. Every row reflects real state, and the
+   step that is genuinely waiting on AmazFlow says so rather than looking like the customer's
+   problem. */
+.console-onboarding { max-width: 680px; }
+
+.console-onboarding-head {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 28px;
+}
+.console-onboarding-head h2 { margin: 0; font-size: 26px; letter-spacing: -0.01em; }
+.console-onboarding-head p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 14.5px;
+  line-height: 1.55;
+}
+
+.console-checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+  counter-reset: step;
+}
+
+.console-checklist-item {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  padding: 16px 18px;
+  background: var(--paper);
+}
+
+.console-checklist-mark {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+  margin-top: 1px;
+}
+.console-checklist-item[data-done="true"] .console-checklist-mark {
+  background: var(--mint);
+  border-color: var(--mint);
+  color: var(--ink);
+}
+/* Waiting on AmazFlow rather than on the customer: no empty circle implying an unstarted task. */
+.console-checklist-item[data-waiting="true"] .console-checklist-mark {
+  border-style: dashed;
+  background: transparent;
+}
+
+.console-checklist-body b { display: block; font-size: 15px; }
+.console-checklist-body p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.console-checklist-action { margin-top: 12px; }
+
+.console-checklist-item[data-done="true"] .console-checklist-body b { color: var(--muted); }
