@@ -73,14 +73,27 @@ const asAgent = async (token, routeKey, { pathParameters, body, grant } = {}) =>
 };
 
 /** Invoke a route as a signed-in human. */
-const asUser = async ({ userId = "user_admin", tenantId, group = "CLIENT_ADMIN" }, routeKey, { pathParameters, body } = {}) => {
+const asUser = async (
+  { userId = "user_admin", tenantId, group = "CLIENT_ADMIN", email },
+  routeKey,
+  { pathParameters, body } = {},
+) => {
   const res = await handler({
     routeKey,
     headers: {},
     pathParameters,
     body: body === undefined ? undefined : JSON.stringify(body),
     requestContext: {
-      authorizer: { jwt: { claims: { sub: userId, "custom:tenant_id": tenantId, "cognito:groups": `[${group}]` } } },
+      authorizer: {
+        jwt: {
+          claims: {
+            sub: userId,
+            email: email || userId,
+            "custom:tenant_id": tenantId,
+            "cognito:groups": `[${group}]`,
+          },
+        },
+      },
     },
   });
   return { status: res.statusCode, body: parseBody(res), raw: res.body || "" };

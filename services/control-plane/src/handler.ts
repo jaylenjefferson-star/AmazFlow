@@ -33,6 +33,8 @@ const {
   AdminDisableUserCommand,
   AdminCreateUserCommand,
   AdminAddUserToGroupCommand,
+  AdminGetUserCommand,
+  AdminUserGlobalSignOutCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
 const db = new DynamoDBClient({});
 const bedrock = new BedrockRuntimeClient({});
@@ -75,13 +77,46 @@ const privateResponseFields = new Set([
   "agentSessionId",
   "browserSessionId",
 ]);
+// One correlation identifier per invocation, so a customer reporting "it said forbidden" can be
+// matched to the exact log line. Set once at the top of the handler; a Lambda container serves one
+// invocation at a time, so module scope is the right lifetime.
+let correlationId = null;
+const CODE_FOR_STATUS = {
+  400: "BAD_REQUEST",
+  401: "UNAUTHENTICATED",
+  403: "FORBIDDEN",
+  404: "NOT_FOUND",
+  409: "CONFLICT",
+  422: "UNPROCESSABLE",
+  429: "TOO_MANY_REQUESTS",
+  500: "INTERNAL_ERROR",
+  502: "UPSTREAM_ERROR",
+  503: "UNAVAILABLE",
+};
+// The structured error envelope, added alongside the flat `error` field rather than replacing it:
+// the deployed frontend still reads `error`, so removing it would break every error message in the
+// product on the day this shipped. Both shapes are emitted until the frontend has moved over.
+//
+// `code` is the machine-readable half and must stay stable while prose changes, so it is NEVER
+// derived from the message. It is either passed explicitly by the call site (NO_ORGANIZATION,
+// SESSION_REVOKED) or falls back to the status's own name, which is stable by construction.
+const withErrorEnvelope = (status, body) => {
+  if (status < 400 || !body || typeof body !== "object" || typeof body.error !== "string")
+    return body;
+  return {
+    ...body,
+    code: body.code || CODE_FOR_STATUS[status] || "ERROR",
+    message: body.message || body.error,
+    correlationId,
+  };
+};
 const reply = (s, b) => ({
   statusCode: s,
   headers: {
     "content-type": "application/json",
     "access-control-allow-origin": "*",
   },
-  body: JSON.stringify(b, (key, value) =>
+  body: JSON.stringify(withErrorEnvelope(s, b), (key, value) =>
     privateResponseFields.has(key) ? undefined : value,
   ),
 });
@@ -110,10 +145,32 @@ const auth = (e) => {
     .replace(/^\[|\]$/g, "")
     .split(",")
     .map((g) => g.trim());
-  const role = ["SUPER_ADMIN", "CLIENT_ADMIN", "FRONTLINE"].find((r) =>
+  const matchedRole = ["SUPER_ADMIN", "CLIENT_ADMIN", "FRONTLINE"].find((r) =>
     groups.includes(r),
   );
-  return { userId: c.sub, tenantId: c["custom:tenant_id"], role };
+  const tenantId = c["custom:tenant_id"];
+  const hasOrganization = typeof tenantId === "string" && tenantId.trim() !== "";
+  // A token with no organization claim yields NO usable principal. `role` is deliberately left
+  // undefined in that case rather than being returned alongside a missing tenantId, because every
+  // authorization check in this file is written as `a.role === ...` or `a.role !== ...` -- so a
+  // principal with no organization fails all of them, including any check somebody adds later
+  // without thinking about this. `reason` exists only so the refusal can say which of the two
+  // things is missing.
+  if (!hasOrganization)
+    return {
+      userId: c.sub,
+      email: c.email,
+      tenantId: undefined,
+      role: undefined,
+      reason: "no_organization",
+    };
+  return {
+    userId: c.sub,
+    email: c.email,
+    tenantId,
+    role: matchedRole,
+    reason: matchedRole ? undefined : "no_role",
+  };
 };
 const parse = (i) => JSON.parse(i.document.S);
 const now = () => new Date().toISOString();
@@ -1127,6 +1184,30 @@ const invokeExecutorDiagnostic = async (run, workflow) => {
       harnessInvoked: false,
       harnessError: err && err.message ? err.message : String(err),
     };
+  }
+};
+// The account's state in the user pool, which is the only authority on whether the person behind a
+// still-valid token is still allowed in. Returns "active", "disabled", or "unknown" when the pool
+// could not be consulted -- and "unknown" is treated as allowed by the caller, deliberately: a
+// transient pool failure must not sign every customer out at once.
+//
+// The lookup is by email because email IS the username in this pool (invitations create the account
+// with the address as Username), and the sub is not accepted as a Username by AdminGetUser.
+const accountStatusFor = async (a) => {
+  if (!a.email || !process.env.USER_POOL_ID) return "unknown";
+  try {
+    const found = await cognito.send(
+      new AdminGetUserCommand({
+        UserPoolId: process.env.USER_POOL_ID,
+        Username: a.email,
+      }),
+    );
+    return found && found.Enabled === false ? "disabled" : "active";
+  } catch (err) {
+    // UserNotFoundException included: an account absent from the pool is not evidence that this
+    // token's holder was deactivated, and refusing here would break every principal whose
+    // username is not its email.
+    return "unknown";
   }
 };
 const revokeAgent = async (agentId, a) => {
@@ -3974,6 +4055,8 @@ const revokeBrowserConnection = async (a, id) => {
 };
 
 exports.handler = async (e) => {
+  correlationId =
+    e.requestContext?.requestId || `local_${crypto.randomUUID()}`;
   try {
     if (e.source === "amazflow.sweep") {
       const result = await sweepExpired();
@@ -4163,8 +4246,37 @@ exports.handler = async (e) => {
       });
     }
     const a = auth(e);
-    if (!a.role) return reply(403, { error: "Role required" });
-    if (route === "GET /me") return reply(200, a);
+    if (!a.role)
+      return reply(
+        403,
+        a.reason === "no_organization"
+          ? {
+              error: "This account is not attached to an organization.",
+              code: "NO_ORGANIZATION",
+            }
+          : { error: "Role required", code: "NO_ROLE" },
+      );
+    // An account disabled while a session is still live must stop working on the NEXT call, not
+    // whenever the token happens to expire. Nothing here re-checked membership before, so a
+    // deactivated person kept full access for the remaining life of their token.
+    //
+    // This fails OPEN on a lookup error and CLOSED only on a definite Enabled === false. An
+    // inability to reach the user pool must not sign the whole customer base out; a pool that
+    // clearly says "disabled" must be honoured.
+    const accountStatus = await accountStatusFor(a);
+    if (accountStatus === "disabled")
+      return reply(403, {
+        error: "This account has been deactivated. Contact your AmazFlow admin.",
+        code: "ACCOUNT_DISABLED",
+      });
+    if (route === "GET /me")
+      return reply(200, {
+        userId: a.userId,
+        tenantId: a.tenantId,
+        organizationId: a.tenantId,
+        role: a.role,
+        accountStatus,
+      });
     if (route === "GET /workflows") {
       const items = await scanType("WORKFLOW#", a);
       return reply(
@@ -4462,6 +4574,80 @@ exports.handler = async (e) => {
           error: "Tell us what you need done before starting.",
         });
       return reply(201, await runWorkflow(workflow, body, a));
+    }
+    // Sign out everywhere: revokes every session this user holds at the identity provider, not
+    // just the one that made the call. Self-service, so no role check beyond having a session --
+    // ending your own sessions is never a privileged act.
+    if (route === "POST /me/sessions/revoke") {
+      if (!a.email)
+        return reply(400, {
+          error: "This session carries no email claim, so its sessions cannot be revoked.",
+          code: "NO_EMAIL_CLAIM",
+        });
+      try {
+        await cognito.send(
+          new AdminUserGlobalSignOutCommand({
+            UserPoolId: process.env.USER_POOL_ID,
+            Username: a.email,
+          }),
+        );
+      } catch (err) {
+        return reply(502, {
+          error: "Could not revoke your sessions. Try again in a moment.",
+          code: "SESSION_REVOKE_FAILED",
+        });
+      }
+      await logActivity(a.tenantId, {
+        actor: a.userId,
+        actorLabel:
+          a.role === "SUPER_ADMIN"
+            ? "AmazFlow super admin"
+            : a.role === "CLIENT_ADMIN"
+              ? "Team admin"
+              : "Team member",
+        action: "SESSIONS_REVOKED_SELF",
+        summary: "Signed out of all devices",
+      });
+      return reply(200, { ok: true, revoked: "all_sessions" });
+    }
+    // Staff-initiated revocation of a customer user's sessions. Separate from the self-service
+    // route above because this one IS privileged, is audited against the target's organization
+    // rather than the actor's, and is the operational answer to "that laptop was stolen".
+    if (route === "POST /tenants/{tenantId}/users/{username}/sessions/revoke") {
+      if (a.role !== "SUPER_ADMIN")
+        return reply(403, {
+          error: "Only AmazFlow administrators revoke another user's sessions",
+          code: "STAFF_ONLY",
+        });
+      const tenantId = e.pathParameters?.tenantId;
+      const username = e.pathParameters?.username;
+      // Resolved through the tenant's own member list, so a username from another organization is
+      // simply not found rather than being revoked across a tenancy boundary.
+      const members = await listTenantUsers(tenantId);
+      const target = members.find((u) => u.username === username);
+      if (!target)
+        return reply(404, { error: "User not found in this tenant", code: "NOT_FOUND" });
+      try {
+        await cognito.send(
+          new AdminUserGlobalSignOutCommand({
+            UserPoolId: process.env.USER_POOL_ID,
+            Username: username,
+          }),
+        );
+      } catch (err) {
+        return reply(502, {
+          error: "Could not revoke that user's sessions. Try again in a moment.",
+          code: "SESSION_REVOKE_FAILED",
+        });
+      }
+      await logActivity(tenantId, {
+        actor: a.userId,
+        actorLabel: "AmazFlow super admin",
+        action: "SESSIONS_REVOKED_BY_STAFF",
+        summary: `Revoked all sessions for ${target.email || username}`,
+        details: { targetUsername: username, targetEmail: target.email || null },
+      });
+      return reply(200, { ok: true, username, revoked: "all_sessions" });
     }
     if (route === "POST /runs/{id}/executor/invoke") {
       if (a.role !== "SUPER_ADMIN")

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { LogoMark } from "../../site-components";
-import { API, type Session, resolveSession } from "../../lib/cognito-auth";
+import { API, type Session } from "../../lib/cognito-auth";
+import { customerSurface, enforceSessionAccess } from "../../lib/session-gate";
 // This page is built from the auth card primitives (auth-standalone, auth-card, auth-field,
 // auth-submit) but only ever imported console.css, so every one of those eight classes resolved
 // to nothing and the form rendered unstyled. /console/support imports both for the same reason.
@@ -57,21 +58,15 @@ export default function SettingsPage() {
   const [savedTimezone, setSavedTimezone] = useState("UTC");
 
   useEffect(() => {
-    resolveSession().then((restored) => {
-      if (!restored) {
-        window.location.assign(`/login?next=${encodeURIComponent("/console/settings/")}`);
-        return;
-      }
-      if (restored.role === "SUPER_ADMIN") {
-        window.location.assign("/app/settings/");
-        return;
-      }
-      if (restored.role !== "CLIENT_ADMIN") {
-        window.location.assign("/console/");
-        return;
-      }
-      setSession(restored);
-      loadOrg(restored);
+    enforceSessionAccess(
+      customerSurface("/console/settings/", {
+        staffPath: "/app/settings/",
+        requireRole: "CLIENT_ADMIN",
+      }),
+    ).then((allowed) => {
+      if (!allowed) return;
+      setSession(allowed);
+      loadOrg(allowed);
     });
   }, []);
 

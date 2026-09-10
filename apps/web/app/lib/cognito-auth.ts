@@ -20,7 +20,7 @@ export const COGNITO_IDP_ENDPOINT = `https://cognito-idp.${COGNITO_REGION}.amazo
 export const COGNITO_CLIENT_ID = "4cjp4kpmmofnr9gmd3h90i4i2i";
 export const API = "https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com";
 
-export type Session = { idToken: string; refreshToken?: string; sub: string; email: string; role: AmazFlowRole; tenantId: string; expiresAt: number };
+export type Session = { idToken: string; accessToken?: string; refreshToken?: string; sub: string; email: string; role: AmazFlowRole; tenantId: string; expiresAt: number };
 
 export class AuthError extends Error {
   code: string;
@@ -72,18 +72,45 @@ function mapCognitoError(code: string, fallback?: string): string {
   }
 }
 
+/**
+ * The sign-in result, as a discriminated union.
+ *
+ * `challenge` is the general case and exists so that adding multi-factor later is an extension
+ * rather than a rewrite: the identity provider already supports optional software-token MFA, and the
+ * day it is enabled the response arrives as SOFTWARE_TOKEN_MFA on this same variant. Callers switch
+ * on `kind` and can handle an unrecognized challenge by name instead of misreading it as a success.
+ *
+ * `new_password_required` is kept as its own variant rather than folded into `challenge` because it
+ * is the invitation flow -- every invited user hits it on first sign-in, it is handled in-page, and
+ * it is not an additional authentication factor.
+ *
+ * No multi-factor enrolment control ships in this release (requirement 5.7): modelling the challenge
+ * is not the same as offering a control that accepts input without effect.
+ */
 export type SignInResult =
   | { kind: "success"; session: Session }
-  | { kind: "new_password_required"; session: string; email: string };
+  | { kind: "new_password_required"; session: string; email: string }
+  | { kind: "challenge"; challengeName: string; session: string; email: string; parameters?: Record<string, string> };
 
 export async function signIn(email: string, password: string): Promise<SignInResult> {
-  const data = await cognito<{ AuthenticationResult?: CognitoAuthResult; ChallengeName?: string; Session?: string }>("InitiateAuth", {
+  const data = await cognito<{ AuthenticationResult?: CognitoAuthResult; ChallengeName?: string; Session?: string; ChallengeParameters?: Record<string, string> }>("InitiateAuth", {
     AuthFlow: "USER_PASSWORD_AUTH",
     ClientId: COGNITO_CLIENT_ID,
     AuthParameters: { USERNAME: email, PASSWORD: password },
   });
   if (data.ChallengeName === "NEW_PASSWORD_REQUIRED" && data.Session) {
     return { kind: "new_password_required", session: data.Session, email };
+  }
+  // Any other challenge is surfaced by name rather than being flattened into a failure. Nothing
+  // issues one today; when software-token MFA is enabled it arrives here.
+  if (data.ChallengeName && data.Session) {
+    return {
+      kind: "challenge",
+      challengeName: data.ChallengeName,
+      session: data.Session,
+      email,
+      parameters: data.ChallengeParameters,
+    };
   }
   if (!data.AuthenticationResult) throw new AuthError(GENERIC_CREDENTIALS_ERROR, "NotAuthorizedException");
   return { kind: "success", session: sessionFromAuthResult(data.AuthenticationResult) };
@@ -116,6 +143,52 @@ export async function refreshSession(refreshToken: string, tenantId: string): Pr
   return session;
 }
 
+/**
+ * Self-service password change for the signed-in user's OWN account (requirement 4.7).
+ *
+ * Authorized by the access token and the person's current password -- Cognito verifies both, so
+ * possession of a live session alone is not enough to change a password. This is the only
+ * password-change path in the product, and it is deliberately the only one: requirement 4.8 forbids
+ * any route by which an operator or staff member could set a customer's password. Staff can disable
+ * an account and revoke its sessions; they cannot become the customer.
+ */
+export async function changeOwnPassword(
+  session: Session,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  if (!session.accessToken)
+    // Sessions stored before the access token was kept cannot authorize this call. Say so plainly
+    // rather than failing with an opaque Cognito error.
+    throw new AuthError("Please sign in again before changing your password.", "NoAccessToken");
+  await cognito("ChangePassword", {
+    AccessToken: session.accessToken,
+    PreviousPassword: currentPassword,
+    ProposedPassword: newPassword,
+  });
+}
+
+/**
+ * Sign out everywhere: asks the control plane to revoke every session this user holds at the
+ * identity provider, then clears this browser and redirects. Revoking server-side is what makes it
+ * "everywhere" -- clearing local storage only ever affected this one browser.
+ */
+export async function signOutEverywhere(session: Session | null | undefined) {
+  if (session?.idToken) {
+    try {
+      await fetch(`${API}/me/sessions/revoke`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.idToken}` },
+      });
+    } catch (error) {
+      // Best effort: the local session is cleared regardless, and the refresh token is revoked
+      // below, so this browser is signed out even if the global call did not land.
+      console.warn("Failed to revoke sessions everywhere:", error);
+    }
+  }
+  await signOut(session);
+}
+
 export async function requestPasswordReset(email: string): Promise<void> {
   await cognito("ForgotPassword", { ClientId: COGNITO_CLIENT_ID, Username: email });
 }
@@ -124,20 +197,32 @@ export async function confirmPasswordReset(email: string, code: string, newPassw
   await cognito("ConfirmForgotPassword", { ClientId: COGNITO_CLIENT_ID, Username: email, ConfirmationCode: code, Password: newPassword });
 }
 
-type CognitoAuthResult = { IdToken: string; RefreshToken?: string; ExpiresIn: number };
+type CognitoAuthResult = { IdToken: string; AccessToken?: string; RefreshToken?: string; ExpiresIn: number };
 
 function sessionFromAuthResult(result: CognitoAuthResult): Session {
   const claims = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(result.IdToken.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")), (character) => character.charCodeAt(0))));
   const groups = (claims["cognito:groups"] ?? []) as string[];
   const role = (["SUPER_ADMIN", "CLIENT_ADMIN", "FRONTLINE"] as AmazFlowRole[]).find((candidate) => groups.includes(candidate));
   if (!role) throw new AuthError("This account does not have an AmazFlow access role. Contact your AmazFlow admin.", "NoRole");
+  // A missing organization claim used to default to "amazflow" -- which is not a neutral
+  // fallback, it is the STAFF tenant. Any account created without the claim silently became a
+  // member of AmazFlow's own organization and was shown AmazFlow's own data. Refuse instead: a
+  // token with no organization cannot establish a session, and the person is told what is
+  // actually wrong rather than being dropped into someone else's tenant.
+  const tenantId = claims["custom:tenant_id"];
+  if (!tenantId || typeof tenantId !== "string" || !tenantId.trim())
+    throw new AuthError(
+      "This account is not attached to an organization yet. Contact your AmazFlow admin.",
+      "NoOrganization",
+    );
   return {
     idToken: result.IdToken,
+    accessToken: result.AccessToken,
     refreshToken: result.RefreshToken,
     sub: claims.sub,
     email: claims.email,
     role,
-    tenantId: claims["custom:tenant_id"] ?? "amazflow",
+    tenantId,
     expiresAt: Date.now() + result.ExpiresIn * 1000,
   };
 }

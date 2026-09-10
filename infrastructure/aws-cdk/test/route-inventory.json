@@ -344,6 +344,15 @@
       "orgScope": "unauthenticated"
     },
     {
+      "route": "POST /me/sessions/revoke",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
       "route": "POST /organizations",
       "copies": [
         "deployed",
@@ -435,6 +444,15 @@
     },
     {
       "route": "POST /tenants/{tenantId}/users",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "POST /tenants/{tenantId}/users/{username}/sessions/revoke",
       "copies": [
         "deployed",
         "canonical"

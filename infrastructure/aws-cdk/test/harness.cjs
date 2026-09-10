@@ -25,12 +25,15 @@ class AdminDisableUserCommand extends Cmd {}
 class AdminCreateUserCommand extends Cmd {}
 class AdminAddUserToGroupCommand extends Cmd {}
 class AdminGetUserCommand extends Cmd {}
+class AdminUserGlobalSignOutCommand extends Cmd {}
 
 class UsernameExists extends Error { constructor() { super("User already exists"); this.name = "UsernameExistsException"; } }
 class UserNotFound extends Error { constructor() { super("User does not exist"); this.name = "UserNotFoundException"; } }
 
 /** username -> { Username, Attributes[], Enabled, UserStatus, UserCreateDate } */
 const users = new Map();
+/** usernames whose sessions have been globally revoked, so a test can assert the call landed. */
+const globallySignedOut = new Set();
 /** group name -> Set<username> */
 const groups = new Map();
 /** Set on the harness to make the next AdminAddUserToGroup fail, for the partial-failure test. */
@@ -76,6 +79,12 @@ const cognito = {
       if (!found) throw new UserNotFound();
       return found;
     }
+    if (cmd instanceof AdminUserGlobalSignOutCommand) {
+      const found = users.get(cmd.input.Username);
+      if (!found) throw new UserNotFound();
+      globallySignedOut.add(cmd.input.Username);
+      return {};
+    }
     if (cmd instanceof AdminEnableUserCommand || cmd instanceof AdminDisableUserCommand) {
       const found = users.get(cmd.input.Username);
       if (!found) throw new UserNotFound();
@@ -104,6 +113,7 @@ const seedUser = (username, { tenantId, role, enabled = true, status = "CONFIRME
 const resetPool = () => {
   users.clear();
   groups.clear();
+  globallySignedOut.clear();
   cognitoFaults.failNextAddToGroup = false;
 };
 
@@ -175,6 +185,7 @@ const stubs = {
     },
     ListUsersCommand, ListUsersInGroupCommand, AdminEnableUserCommand, AdminDisableUserCommand,
     AdminCreateUserCommand, AdminAddUserToGroupCommand, AdminGetUserCommand,
+    AdminUserGlobalSignOutCommand,
   },
   "@aws-sdk/client-bedrock-agentcore": { BedrockAgentCoreClient: class { async send() { throw new Error("no agentcore in harness"); } }, InvokeHarnessCommand: Cmd },
 };
@@ -191,4 +202,4 @@ process.env.DATA_BOUNDARY = "harness";
 process.env.EXECUTION_GRANT_SECRET = "harness-secret-not-a-real-key";
 process.env.BEDROCK_MODEL_ID = "harness-model";
 
-module.exports = { store, key, db, crypto, users, groups, seedUser, resetPool, cognitoFaults };
+module.exports = { store, key, db, crypto, users, groups, globallySignedOut, seedUser, resetPool, cognitoFaults };

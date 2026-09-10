@@ -172,7 +172,7 @@
       "id": "ISO-29",
       "name": "a deactivated member is refused on an authenticated route",
       "requirement": "34.10",
-      "outcome": "DEFECT"
+      "outcome": "PASS"
     }
   ],
   "details": [
@@ -181,42 +181,42 @@
       "name": "Org A admin cancelling Org B's run",
       "requirement": "34.4",
       "outcome": "DEFECT",
-      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Run belongs to another tenant\"}"
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Run belongs to another tenant\",\"code\":\"FORBIDDEN\",\"message\":\"Run belongs to another tenant\",\"correlationId\":\"local_f7b441e8-b3b3-4ec6-8244-8a25e8dc81f"
     },
     {
       "id": "ISO-02",
       "name": "Org A admin deciding an approval on Org B's run",
       "requirement": "34.4",
       "outcome": "DEFECT",
-      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Run belongs to another tenant\"}"
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Run belongs to another tenant\",\"code\":\"FORBIDDEN\",\"message\":\"Run belongs to another tenant\",\"correlationId\":\"local_ea83541a-57cb-45ce-a751-dff430a5e1a"
     },
     {
       "id": "ISO-03",
       "name": "Org A admin confirming a protected action on Org B's run",
       "requirement": "34.4",
       "outcome": "DEFECT",
-      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Run belongs to another tenant\"}"
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Run belongs to another tenant\",\"code\":\"FORBIDDEN\",\"message\":\"Run belongs to another tenant\",\"correlationId\":\"local_2e2a9274-daf0-442c-ba33-778212ebb0d"
     },
     {
       "id": "ISO-04",
       "name": "Org A admin revoking Org B's agent",
       "requirement": "34.4",
       "outcome": "DEFECT",
-      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Agent belongs to another tenant\"}"
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Agent belongs to another tenant\",\"code\":\"FORBIDDEN\",\"message\":\"Agent belongs to another tenant\",\"correlationId\":\"local_9995c5e2-e00b-4d3d-852b-ec8b656"
     },
     {
       "id": "ISO-05",
       "name": "Org A admin resolving Org B's agent task",
       "requirement": "34.4",
       "outcome": "DEFECT",
-      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Task belongs to another tenant\"}"
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Task belongs to another tenant\",\"code\":\"FORBIDDEN\",\"message\":\"Task belongs to another tenant\",\"correlationId\":\"local_298c7d04-9793-40a6-bfb9-72a495b80"
     },
     {
       "id": "ISO-06",
       "name": "Org A admin changing the status of Org B's support ticket",
       "requirement": "34.4",
       "outcome": "DEFECT",
-      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Ticket belongs to another tenant\"}"
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Ticket belongs to another tenant\",\"code\":\"FORBIDDEN\",\"message\":\"Ticket belongs to another tenant\",\"correlationId\":\"local_6b26ebc0-fd01-4690-b495-8483e"
     },
     {
       "id": "ISO-07",
@@ -244,49 +244,49 @@
       "name": "Org A admin reading Org B's organization record",
       "requirement": "34.4",
       "outcome": "DEFECT",
-      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only read your own organization\"}"
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only read your own organization\",\"code\":\"FORBIDDEN\",\"message\":\"You can only read your own organization\",\"correlationId\":\"local_37c921d9-2f6b-4"
     },
     {
       "id": "ISO-11",
       "name": "Org A admin changing Org B's organization settings",
       "requirement": "34.4",
       "outcome": "DEFECT",
-      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only change your own organization\"}"
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only change your own organization\",\"code\":\"FORBIDDEN\",\"message\":\"You can only change your own organization\",\"correlationId\":\"local_ed0e19f1-8a"
     },
     {
       "id": "ISO-12",
       "name": "Org A admin changing Org B's branding",
       "requirement": "34.4",
       "outcome": "DEFECT",
-      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only manage your own organization branding\"}"
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only manage your own organization branding\",\"code\":\"FORBIDDEN\",\"message\":\"You can only manage your own organization branding\",\"correlationId\":"
     },
     {
       "id": "ISO-13",
       "name": "Org A admin reading Org B's tenant summary",
       "requirement": "34.4",
       "outcome": "DEFECT",
-      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only view your own tenant\"}"
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only view your own tenant\",\"code\":\"FORBIDDEN\",\"message\":\"You can only view your own tenant\",\"correlationId\":\"local_f9ccf390-13aa-4fa8-8905-e3a"
     },
     {
       "id": "ISO-14",
       "name": "Org A admin listing Org B's team members",
       "requirement": "34.4",
       "outcome": "DEFECT",
-      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only view your own tenant\"}"
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only view your own tenant\",\"code\":\"FORBIDDEN\",\"message\":\"You can only view your own tenant\",\"correlationId\":\"local_7486ee1f-0de2-4b75-8e36-233"
     },
     {
       "id": "ISO-15",
       "name": "Org A admin inviting a user into Org B",
       "requirement": "34.5",
       "outcome": "DEFECT",
-      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only invite into your own organization\"}"
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only invite into your own organization\",\"code\":\"FORBIDDEN\",\"message\":\"You can only invite into your own organization\",\"correlationId\":\"local_7"
     },
     {
       "id": "ISO-16",
       "name": "Org A admin disabling a member of Org B",
       "requirement": "34.5",
       "outcome": "DEFECT",
-      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only manage your own tenant\"}"
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only manage your own tenant\",\"code\":\"FORBIDDEN\",\"message\":\"You can only manage your own tenant\",\"correlationId\":\"local_f643c425-ca0c-4045-93bb"
     },
     {
       "id": "ISO-17",
@@ -376,8 +376,8 @@
       "id": "ISO-29",
       "name": "a deactivated member is refused on an authenticated route",
       "requirement": "34.10",
-      "outcome": "DEFECT",
-      "detail": "a member disabled in the user pool still reached the route and received 200. Authorization is derived entirely from the session's own claims; no route re-checks membership state."
+      "outcome": "PASS",
+      "detail": "refused with 403"
     }
   ]
 }

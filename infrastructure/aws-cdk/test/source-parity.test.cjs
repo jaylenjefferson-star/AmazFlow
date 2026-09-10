@@ -123,6 +123,28 @@ const invariants = [
   ["a revoked connection cannot start a login session", /This connection has been revoked/, /This connection has been revoked/],
   ["an unconfigured managed browser is reported plainly", /Managed browser is not configured/, /Managed browser is not configured/],
   ["revoking a browser connection is audited", /BROWSER_CONNECTION_REVOKED/, /BROWSER_CONNECTION_REVOKED/],
+
+  // Phase 1 -- authentication and session lifecycle. Same standing rule as above: each
+  // security-relevant behaviour gets an invariant in both copies.
+  //
+  // The organization-claim default was the sharpest of these: a missing claim used to fall back to
+  // "amazflow", which is the STAFF tenant, so an account created without the claim silently became a
+  // member of AmazFlow's own organization.
+  ["a token with no organization claim yields no usable principal", /reason:'no_organization'/, /reason: "no_organization"/],
+  ["the organization claim is not defaulted", /typeof tenantId!=='string'\|\|tenantId\.trim\(\)===''/, /typeof tenantId === "string" && tenantId\.trim\(\) !== ""/],
+  ["a missing organization is reported distinctly from a missing role", /code:'NO_ORGANIZATION'/, /code: "NO_ORGANIZATION"/],
+  ["a disabled account is refused on its next call", /code:'ACCOUNT_DISABLED'/, /code: "ACCOUNT_DISABLED"/],
+  ["the account-status lookup fails open rather than signing everyone out", /return 'unknown';/, /return "unknown";/],
+  ["the current-user route reports organization, role and account status", /organizationId:a\.tenantId,role:a\.role,accountStatus/, /organizationId: a\.tenantId,\s*role: a\.role,\s*accountStatus/],
+  ["sign-out-everywhere is exposed", /POST \/me\/sessions\/revoke/, /POST \/me\/sessions\/revoke/],
+  ["sign-out-everywhere revokes at the identity provider", /AdminUserGlobalSignOutCommand/, /AdminUserGlobalSignOutCommand/],
+  ["sign-out-everywhere is audited", /SESSIONS_REVOKED_SELF/, /SESSIONS_REVOKED_SELF/],
+  ["staff session revocation is exposed", /POST \/tenants\/\{tenantId\}\/users\/\{username\}\/sessions\/revoke/, /POST \/tenants\/\{tenantId\}\/users\/\{username\}\/sessions\/revoke/],
+  ["staff session revocation is staff-only", /Only AmazFlow administrators revoke another user's sessions/, /Only AmazFlow administrators revoke another user's sessions/],
+  ["staff session revocation is audited against the target's organization", /SESSIONS_REVOKED_BY_STAFF/, /SESSIONS_REVOKED_BY_STAFF/],
+  ["the structured error envelope rides alongside the flat error field", /const withErrorEnvelope=/, /const withErrorEnvelope = /],
+  ["the error code is stable rather than derived from prose", /CODE_FOR_STATUS/, /CODE_FOR_STATUS/],
+  ["every error carries a correlation identifier", /correlationId/, /correlationId/],
 ];
 
 let pass = 0, fail = 0;

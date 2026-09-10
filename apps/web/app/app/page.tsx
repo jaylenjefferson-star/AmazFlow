@@ -13,11 +13,8 @@
  */
 
 import { useEffect, useState } from "react";
-import {
-  guardBFCacheRestore,
-  resolveSession,
-  type Session,
-} from "../lib/cognito-auth";
+import { guardBFCacheRestore, type Session } from "../lib/cognito-auth";
+import { enforceSessionAccess, staffSurface } from "../lib/session-gate";
 import { CommandPalette } from "./ops/command-palette";
 import { Copilot } from "./ops/copilot";
 import { OpsDataProvider } from "./ops/data";
@@ -47,18 +44,8 @@ export default function ControlConsole() {
   useEffect(() => guardBFCacheRestore(), []);
 
   useEffect(() => {
-    const hadStoredSession = Boolean(localStorage.getItem("amazflow_session"));
-    resolveSession().then((restored) => {
-      if (!restored) {
-        const reason = hadStoredSession ? "&reason=expired" : "";
-        window.location.assign(`/login?next=${encodeURIComponent("/app/")}${reason}`);
-        return;
-      }
-      if (restored.role !== "SUPER_ADMIN") {
-        window.location.assign("/console/");
-        return;
-      }
-      setSession(restored);
+    enforceSessionAccess(staffSurface("/app/")).then((allowed) => {
+      if (allowed) setSession(allowed);
     });
   }, []);
 

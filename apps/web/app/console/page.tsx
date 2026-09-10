@@ -8,7 +8,8 @@ import { HomeScreen } from "./home";
 import { RunDetailScreen } from "./run-detail";
 import { TeamScreen, type TeamMember } from "./team";
 import { visibleWorkflows } from "./copy";
-import { API, type Session, signOut as authSignOut, guardBFCacheRestore, resolveSession } from "../lib/cognito-auth";
+import { API, type Session, signOut as authSignOut, guardBFCacheRestore } from "../lib/cognito-auth";
+import { customerSurface, enforceSessionAccess } from "../lib/session-gate";
 
 type ConsoleWorkflow = WorkflowDefinition & { manualMinutesEstimate?: number; customerSummary?: string };
 type View = { kind: "home" } | { kind: "run"; runId: string } | { kind: "team" };
@@ -63,20 +64,11 @@ export default function CustomerConsole() {
   useEffect(() => guardBFCacheRestore(), []);
 
   useEffect(() => {
-    const hadStoredSession = Boolean(localStorage.getItem("amazflow_session"));
-    resolveSession().then((restored) => {
-      if (!restored) {
-        const reason = hadStoredSession ? "&reason=expired" : "";
-        window.location.assign(`/login?next=${encodeURIComponent("/console/")}${reason}`);
-        return;
-      }
-      if (restored.role === "SUPER_ADMIN") {
-        window.location.assign("/app/");
-        return;
-      }
-      setSession(restored);
+    enforceSessionAccess(customerSurface("/console/", { staffPath: "/app/" })).then((allowed) => {
+      if (!allowed) return;
+      setSession(allowed);
       setViewState(pathToView(window.location.pathname));
-      loadData(restored);
+      loadData(allowed);
     });
   }, []);
 

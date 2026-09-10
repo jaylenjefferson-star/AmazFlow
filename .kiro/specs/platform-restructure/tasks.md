@@ -115,37 +115,48 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
 
 - [ ] 5. Phase 1 — Authentication and session lifecycle
 
-  - [ ] 5.1 Replace the four copy-pasted auth gates with one shared session-gate component
+  - [x] 5.1 Replace the four copy-pasted auth gates with one shared session-gate component
     - Keep the passive session read and the redirecting access check as two distinct operations
     - _Requirements: 3.5, 4.5_
 
-  - [ ] 5.2 Remove the organization-claim default and fail visibly instead
+  - [x] 5.2 Remove the organization-claim default and fail visibly instead
     - Make session construction throw when `custom:tenant_id` is absent; make the handler produce no
       usable principal for such a token
     - _Requirements: 4.4, 6.1_
 
   - [ ] 5.3 Implement self-service password change and confirm no operator path can set a customer password
+    - PARTIAL: `changeOwnPassword()` is implemented in the auth module (access-token + current-password
+      authorized) and the "no operator path" half is asserted by auth-session.test.cjs against the
+      route inventory and the handler source. No UI calls it yet, so a user still cannot change their
+      own password in the product. Remaining: the form, on a surface every role can reach.
     - _Requirements: 4.7, 4.8, 12.2, 12.7_
 
   - [ ] 5.4 Implement disabled-account and single-refresh-then-sign-out handling
     - One refresh attempt on an unauthenticated response, then sign out; account-disabled indication forces
       sign-out; expose the current user's identifier, organization, role, and account status
+    - PARTIAL: the control-plane half is done and tested -- `GET /me` reports identifier, organization,
+      role and account status, and every authenticated route refuses a deactivated account with
+      `ACCOUNT_DISABLED` (this closed baseline defect D-4). The browser half exists as `apiCall()` in
+      apps/web/app/lib/api-client.ts, which implements exactly-one-refresh-then-sign-out and the
+      forced sign-out on `ACCOUNT_DISABLED`. Remaining: the existing surfaces still call `fetch()`
+      directly, so the handling is not yet in effect for real requests. Threading every call site
+      through `apiCall()` is the rest of this task.
     - _Requirements: 4.10, 4.11, 4.12, 4.13, 4.14, 4.15_
 
-  - [ ] 5.5 Implement sign-out everywhere and staff-initiated session revocation with audit
+  - [x] 5.5 Implement sign-out everywhere and staff-initiated session revocation with audit
     - _Requirements: 4.16, 4.18, 4.19, 12.2_
 
-  - [ ] 5.6 Model the sign-in result as a discriminated union carrying a challenge case
+  - [x] 5.6 Model the sign-in result as a discriminated union carrying a challenge case
     - Architecture only: no multi-factor enrolment control ships; retain the identity provider's existing
       optional software-token configuration untouched
     - _Requirements: 5.1, 5.2, 5.7_
 
-  - [ ] 5.7 Add the structured error envelope alongside the existing flat error field
+  - [x] 5.7 Add the structured error envelope alongside the existing flat error field
     - Stable machine-readable code, displayable message, correlation identifier; keep the flat field while
       the deployed frontend still reads it
     - _Requirements: 27.12, 27.15, 27.16_
 
-  - [ ] 5.8 Auth and session test suite
+  - [x] 5.8 Auth and session test suite
     - Wrong password message identical for a nonexistent account; no role group refused; no organization
       claim refused; silent refresh; expired refresh redirecting with a reason; tampered token rejected at
       the gateway; disabled account force sign-out; revoked refresh token unusable; back-navigation after

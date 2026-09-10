@@ -62,6 +62,12 @@ export default function LoginPage() {
       const result = await signIn(email.trim(), password);
       if (result.kind === "new_password_required") {
         setChallenge({ session: result.session, email: result.email });
+      } else if (result.kind === "challenge") {
+        // Nothing issues an additional challenge today. If one ever arrives, say so plainly rather
+        // than treating it as a successful sign-in -- which is what an `else` here would have done.
+        setError(
+          "This account needs an extra verification step that AmazFlow does not support yet. Contact your AmazFlow admin.",
+        );
       } else {
         saveSession(result.session);
         redirectAfterSignIn(result.session.role, nextPath);

@@ -343,6 +343,9 @@ const sessionEvent = (principal, routeKey, { pathParameters, body, queryStringPa
       jwt: {
         claims: {
           sub: principal.userId,
+          // A real Cognito id token carries the email claim, and the gateway forwards it. The
+          // account-status check needs it, because email is the username in this pool.
+          email: principal.username || principal.userId,
           "custom:tenant_id": principal.tenantId,
           "cognito:groups": `[${principal.group}]`,
         },

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { LogoMark } from "../../site-components";
-import { API, type Session, resolveSession } from "../../lib/cognito-auth";
+import { API, type Session } from "../../lib/cognito-auth";
+import { customerSurface, enforceSessionAccess } from "../../lib/session-gate";
 import { openSupportChat } from "../../lib/intercom";
 import "../../auth.css";
 import "../console.css";
@@ -37,16 +38,10 @@ export default function SupportTicketPage() {
   const [ticketId, setTicketId] = useState<string | null>(null);
 
   useEffect(() => {
-    resolveSession().then((restored) => {
-      if (!restored) {
-        window.location.assign(`/login?next=${encodeURIComponent("/console/support/")}`);
-        return;
-      }
-      if (restored.role === "SUPER_ADMIN") {
-        window.location.assign("/app/support/");
-        return;
-      }
-      setSession(restored);
+    enforceSessionAccess(
+      customerSurface("/console/support/", { staffPath: "/app/support/" }),
+    ).then((allowed) => {
+      if (allowed) setSession(allowed);
     });
   }, []);
 

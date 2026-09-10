@@ -10,7 +10,11 @@ each probe against `infrastructure/aws-cdk/test/isolation-baseline.json` and fai
 a change that fixes or introduces a defect cannot land without updating this baseline in the same
 commit.
 
-**Result: 29 probes — 13 pass, 15 defects, 1 deliberate cross-organization behaviour.**
+**Result at baseline: 29 probes — 13 pass, 15 defects, 1 deliberate cross-organization behaviour.**
+
+**Current: 14 pass, 14 defects, 1 by design.** D-4 was closed by Phase 1 (task 5.4); the entry below
+is kept, marked fixed, because this document is the record Phase 2 is measured against and deleting
+closed items would make the remaining count meaningless.
 
 Correct isolation, per requirement 34.4, is: a principal of Org A presenting an identifier
 belonging to Org B receives status `404` and a body containing nothing of Org B's.
@@ -59,12 +63,16 @@ is correct and intended). No cross-tenant read audit event is recorded. Requirem
 the read to succeed *and* to produce one. Today the only audit trail for staff activity is on
 writes.
 
-### D-4 — A deactivated member still reaches authenticated routes
+### D-4 — A deactivated member still reaches authenticated routes — FIXED in Phase 1 (task 5.4)
 
-**Probe ISO-29.** A user disabled in the user pool presents a session and receives `200` from
-`GET /runs`. Authorization is derived entirely from the session's own claims; no route re-checks
-membership state against the pool or a membership record. The account stays usable until its token
-expires.
+**Probe ISO-29.** At baseline, a user disabled in the user pool presented a session and received
+`200` from `GET /runs`. Authorization was derived entirely from the session's own claims; no route
+re-checked membership state, so the account stayed usable until its token expired.
+
+Now every authenticated route consults the user pool and refuses a disabled account with `403`
+`ACCOUNT_DISABLED` on its next call. The lookup fails **open** on a pool error and closed only on a
+definite `Enabled === false`, so a transient identity-provider failure cannot sign the whole customer
+base out at once.
 
 ## Deliberate cross-organization behaviour
 
