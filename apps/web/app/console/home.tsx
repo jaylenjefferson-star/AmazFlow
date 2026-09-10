@@ -18,6 +18,8 @@ export function HomeScreen({
   onOpenRun,
   draftResume,
   onDraftConsumed,
+  teamSize = 0,
+  onOpenTeam,
 }: {
   role: AmazFlowRole;
   workflows: ConsoleWorkflow[];
@@ -29,6 +31,9 @@ export function HomeScreen({
   onOpenRun: (runId: string) => void;
   draftResume?: { workflowId: string; text: string } | null;
   onDraftConsumed?: () => void;
+  /** Members already in this tenant, so the checklist reflects real state rather than guessing. */
+  teamSize?: number;
+  onOpenTeam?: () => void;
 }) {
   if (loading) {
     return (
@@ -60,13 +65,7 @@ export function HomeScreen({
 
   if (workflows.length === 0) {
     return (
-      <div className="console-empty">
-        <div className="console-signin-logo" style={{ width: 64, height: 64, borderRadius: 20 }}>
-          <LogoMark size={30} />
-        </div>
-        <h2>Your workspace is ready.</h2>
-        <p>Your AmazFlow contact will assign your first workflow shortly.</p>
-      </div>
+      <GettingStarted role={role} teamSize={teamSize} onOpenTeam={onOpenTeam} />
     );
   }
 
@@ -253,6 +252,118 @@ function WorkflowCard({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+
+/**
+ * What a brand-new workspace sees instead of a dead end.
+ *
+ * This replaced "Your workspace is ready. Your AmazFlow contact will assign your first workflow
+ * shortly." -- which was accurate but left the customer with nothing to do and no sense of what
+ * was outstanding. Each step below reflects real state: the account exists because they are
+ * reading this, the team step counts actual members, and the workflow step is genuinely waiting on
+ * AmazFlow, which it now says plainly rather than implying the customer is blocked on themselves.
+ */
+function GettingStarted({
+  role,
+  teamSize,
+  onOpenTeam,
+}: {
+  role: AmazFlowRole;
+  teamSize: number;
+  onOpenTeam?: () => void;
+}) {
+  const isAdmin = role === "CLIENT_ADMIN";
+  // The signed-in person is themselves a member, so "invited someone" means more than one.
+  const teamDone = teamSize > 1;
+
+  const steps = [
+    {
+      done: true,
+      title: "Your workspace is set up",
+      body: "You're signed in, so this one is already finished.",
+      action: null as React.ReactNode,
+    },
+    ...(isAdmin
+      ? [
+          {
+            done: teamDone,
+            title: teamDone
+              ? `Your team is set up — ${teamSize} people`
+              : "Invite the people who'll run your workflows",
+            body: teamDone
+              ? "You can add more or switch someone off at any time."
+              : "They get an email with a temporary password and choose their own on first sign-in.",
+            action: onOpenTeam ? (
+              <button className="console-btn console-btn-quiet" onClick={onOpenTeam}>
+                {teamDone ? "Manage your team" : "Invite someone"}
+              </button>
+            ) : null,
+          },
+          {
+            done: false,
+            title: "Install the AmazFlow extension",
+            body: "Workflows that use your browser need it. Install it on the computer that will run the work.",
+            action: (
+              <a
+                className="console-btn console-btn-quiet"
+                href="/downloads/amazflow-agent.zip"
+                style={{ textDecoration: "none" }}
+              >
+                Download the extension
+              </a>
+            ),
+          },
+        ]
+      : []),
+    {
+      done: false,
+      waiting: true,
+      title: "Your first workflow",
+      body: isAdmin
+        ? "Your AmazFlow contact is building this with you. It'll appear here the moment it's published — nothing is needed from you."
+        : "Nothing is assigned to you yet. Your team admin will let you know when there is.",
+      action: null,
+    },
+  ];
+
+  return (
+    <div className="console-onboarding">
+      <div className="console-onboarding-head">
+        <div className="console-signin-logo" style={{ width: 56, height: 56, borderRadius: 18 }}>
+          <LogoMark size={26} />
+        </div>
+        <div>
+          <h2>Let&apos;s get you running.</h2>
+          <p>
+            {isAdmin
+              ? "Two things you can do now, and one we're doing for you."
+              : "Your workspace is ready. Here's where things stand."}
+          </p>
+        </div>
+      </div>
+
+      <ol className="console-checklist">
+        {steps.map((step) => (
+          <li
+            key={step.title}
+            className="console-checklist-item"
+            data-done={step.done ? "true" : undefined}
+            data-waiting={"waiting" in step && step.waiting ? "true" : undefined}
+          >
+            <span className="console-checklist-mark" aria-hidden="true">
+              {step.done ? "✓" : ""}
+            </span>
+            <div className="console-checklist-body">
+              <b>{step.title}</b>
+              <p>{step.body}</p>
+              {step.action && <div className="console-checklist-action">{step.action}</div>}
+            </div>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

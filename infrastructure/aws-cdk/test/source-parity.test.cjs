@@ -59,6 +59,22 @@ const invariants = [
   ["a customer admin cannot raise their own run limit", /Only AmazFlow administrators change the concurrent run limit/, /Only AmazFlow administrators change the concurrent run limit/],
   ["org changes are audited", /ORG_SETTINGS_CHANGED/, /ORG_SETTINGS_CHANGED/],
   ["email domains are normalised before storage", /replace\(\/\^@\+\/,''\)/, /replace\(\/\^@\+\/, ""\)/],
+
+  // Invitations. The asymmetric risk here is a copy that creates the Cognito user but skips the
+  // tenant claim or the group, either of which produces an account that silently misbehaves
+  // rather than one that visibly fails.
+  ["the invite route is exposed", /POST \/tenants\/\{tenantId\}\/users'/, /POST \/tenants\/\{tenantId\}\/users"/],
+  ["an invitation stamps the tenant claim", /Name:'custom:tenant_id',Value:tenantId/, /Name: "custom:tenant_id", Value: tenantId/],
+  ["an invitation records the real sign-up date", /Name:'custom:created_at'/, /Name: "custom:created_at"/],
+  ["an invitation puts the person in a role group", /AdminAddUserToGroupCommand/, /AdminAddUserToGroupCommand/],
+  ["only non-staff roles are invitable", /INVITABLE_ROLES=\['CLIENT_ADMIN','FRONTLINE'\]/, /INVITABLE_ROLES = \["CLIENT_ADMIN", "FRONTLINE"\]/],
+  ["staff accounts are refused explicitly", /AmazFlow staff accounts are not created through this route/, /AmazFlow staff accounts are not created through this route/],
+  ["the allowed-domain list gates invitations", /outside this organization's allowed email domains/, /outside this organization's allowed email domains/],
+  ["a duplicate address is refused", /already has an AmazFlow account/, /already has an AmazFlow account/],
+  ["a group failure is reported, not swallowed", /they cannot sign in yet/, /they cannot sign in yet/],
+  ["a suspended organization cannot add people", /Contact AmazFlow before adding people/, /Contact AmazFlow before adding people/],
+  ["invitations are audited", /TEAM_MEMBER_INVITED/, /TEAM_MEMBER_INVITED/],
+  ["the team list distinguishes an unaccepted invitation", /userStatus:u\.UserStatus/, /userStatus: u\.UserStatus/],
 ];
 
 let pass = 0, fail = 0;

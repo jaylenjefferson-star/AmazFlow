@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { WorkflowDefinition, WorkflowRun } from "@amazflow/workflow-schema";
+import type { AmazFlowRole, WorkflowDefinition, WorkflowRun } from "@amazflow/workflow-schema";
 import { LogoMark } from "../site-components";
 import "./console.css";
 import { HomeScreen } from "./home";
@@ -104,8 +104,16 @@ export default function CustomerConsole() {
     }
   };
 
-  const loadTeam = async (currentSession: Session) => {
-    setTeamLoading(true);
+  /**
+   * `background` re-reads the team without showing the loading skeleton.
+   *
+   * The skeleton replaces the whole team screen, which unmounts the invite form along with it. A
+   * refresh after a successful invitation would therefore blank the screen the admin is looking at
+   * and throw away the "invitation sent" confirmation they had just earned. A refresh of something
+   * already on screen should not look like a first load.
+   */
+  const loadTeam = async (currentSession: Session, background = false) => {
+    if (!background) setTeamLoading(true);
     setTeamError(null);
     try {
       const response: TeamMember[] = await authGet(currentSession, `/tenants/${currentSession.tenantId}/users`);
@@ -113,12 +121,15 @@ export default function CustomerConsole() {
     } catch (err) {
       setTeamError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
-      setTeamLoading(false);
+      if (!background) setTeamLoading(false);
     }
   };
 
   useEffect(() => {
-    if (session && view.kind === "team" && members.length === 0 && !teamError) {
+    // The team list also feeds the getting-started checklist on Home, so a team admin loads it
+    // on arrival rather than only when they open the Team tab. Restricted to CLIENT_ADMIN because
+    // the route refuses a frontline caller.
+    if (session && session.role === "CLIENT_ADMIN" && members.length === 0 && !teamError) {
       loadTeam(session);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -192,6 +203,24 @@ export default function CustomerConsole() {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
     setMembers((current) => current.map((item) => (item.username === member.username ? { ...item, enabled } : item)));
+  };
+
+  const inviteMember = async (email: string, role: AmazFlowRole) => {
+    if (!session) throw new Error("Sign in required");
+    const response = await fetch(`${API}/tenants/${session.tenantId}/users`, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${session.idToken}` },
+      body: JSON.stringify({ email, role }),
+    });
+    const body = await response.json().catch(() => ({}));
+    // The control plane's message is shown as-is: it knows why it refused (an address outside the
+    // allowed domains, someone who already has an account) and paraphrasing it here would lose
+    // the reason.
+    if (!response.ok) throw new Error(body.error ?? `Request failed (${response.status})`);
+    // Re-read rather than appending the response: the list is the source of truth for who is a
+    // member, and an invitation that half-succeeded must not appear as though it worked. Done in
+    // the background so the screen -- and the confirmation the admin just earned -- survives it.
+    await loadTeam(session, true);
   };
 
   const signOut = async () => {
@@ -311,6 +340,10 @@ export default function CustomerConsole() {
                 onOpenRun={(runId) => setView({ kind: "run", runId })}
                 draftResume={draftResume}
                 onDraftConsumed={() => setDraftResume(null)}
+                teamSize={members.length}
+                onOpenTeam={
+                  session.role === "CLIENT_ADMIN" ? () => setView({ kind: "team" }) : undefined
+                }
               />
             )}
             {view.kind === "run" && activeRun && activeWorkflow && (
@@ -330,7 +363,7 @@ export default function CustomerConsole() {
               <NotFoundScreen onBackHome={() => setView({ kind: "home" })} />
             )}
             {view.kind === "team" && session.role === "CLIENT_ADMIN" && (
-              <TeamScreen members={members} loading={teamLoading} error={teamError} onRetry={() => loadTeam(session)} onSetEnabled={setMemberEnabled} />
+              <TeamScreen members={members} loading={teamLoading} error={teamError} onRetry={() => loadTeam(session)} onSetEnabled={setMemberEnabled} onInvite={inviteMember} />
             )}
             {view.kind === "team" && session.role !== "CLIENT_ADMIN" && <NotFoundScreen onBackHome={() => setView({ kind: "home" })} />}
           </main>

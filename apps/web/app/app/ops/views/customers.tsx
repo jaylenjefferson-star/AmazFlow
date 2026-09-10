@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { WorkflowDefinition, WorkflowRun } from "@amazflow/workflow-schema";
 import {
+  isPendingInvite,
   orgSettingsOf,
   runsByDay,
   useOps,
@@ -554,7 +555,7 @@ export function OrgDetailView({ slug }: { slug: string }) {
           {tab === "runs" && <OrgRuns runs={runs} />}
           {tab === "attention" && <OrgRuns runs={failures} emptyLabel="Nothing needs attention" />}
           {tab === "approvals" && <OrgRuns runs={waiting} emptyLabel="Nothing is waiting on a human" />}
-          {tab === "users" && <OrgUsers tenantId={tenantId} />}
+          {tab === "users" && <OrgUsers tenantId={tenantId} org={org} />}
           {tab === "connections" && <OrgConnections tenantId={tenantId} />}
           {tab === "support" && <OrgSupport tickets={tickets} />}
           {tab === "audit" && <OrgAudit tenantId={tenantId} />}
@@ -876,9 +877,106 @@ function OrgRuns({ runs, emptyLabel }: { runs: WorkflowRun[]; emptyLabel?: strin
 
 /* ---------------------------------------------------------------------------------- users --- */
 
-function OrgUsers({ tenantId }: { tenantId: string }) {
+/**
+ * Invitation form. The organization's allowed-domain list is mirrored here so the operator is
+ * told before sending rather than after the server refuses -- but the server check is the real
+ * one, and its message is shown verbatim if they disagree.
+ */
+function InviteMemberModal({
+  org,
+  onClose,
+}: {
+  org: Organization;
+  onClose: () => void;
+}) {
+  const actions = useOpsActions();
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("FRONTLINE");
+  const allowed = orgSettingsOf(org).allowedEmailDomains;
+
+  const trimmed = email.trim().toLowerCase();
+  const looksLikeEmail = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmed);
+  const domain = looksLikeEmail ? trimmed.slice(trimmed.lastIndexOf("@") + 1) : "";
+  const domainBlocked = looksLikeEmail && allowed.length > 0 && !allowed.includes(domain);
+  const busy = actions.busy === `invite_${org.slug}`;
+
+  const error = !trimmed
+    ? undefined
+    : !looksLikeEmail
+      ? "That doesn't look like an email address"
+      : domainBlocked
+        ? `${domain} is not one of this organization's allowed domains`
+        : undefined;
+
+  return (
+    <Modal
+      title={`Invite someone to ${org.branding?.displayName || org.name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Btn onClick={onClose}>Cancel</Btn>
+          <Btn
+            variant="primary"
+            disabled={!looksLikeEmail || domainBlocked || busy}
+            onClick={async () => {
+              await actions.inviteUser(org.slug, trimmed, role);
+              onClose();
+            }}
+          >
+            {busy ? "Sending…" : "Send invitation"}
+          </Btn>
+        </>
+      }
+    >
+      <div className="ops-col">
+        <Field
+          label="Email address"
+          hint="They receive a temporary password and set their own on first sign-in."
+          error={error}
+        >
+          <input
+            className="ops-input"
+            type="email"
+            autoFocus
+            value={email}
+            placeholder={allowed.length ? `name@${allowed[0]}` : "name@company.com"}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </Field>
+        <Field
+          label="Role"
+          hint={
+            role === "CLIENT_ADMIN"
+              ? "Can run workflows, decide approvals, manage their team, and edit branding."
+              : "Can run the workflows assigned to their role and see their own runs."
+          }
+        >
+          <Select
+            value={role}
+            onChange={setRole}
+            label="Role"
+            // ROLE_SHORT, not friendlier wording of my own: this modal adds a row to the table
+            // directly behind it, and one role should not have two names on one screen.
+            options={[
+              { value: "FRONTLINE", label: ROLE_SHORT.FRONTLINE },
+              { value: "CLIENT_ADMIN", label: ROLE_SHORT.CLIENT_ADMIN },
+            ]}
+          />
+        </Field>
+        {allowed.length > 0 && (
+          <p className="ops-small ops-muted">
+            Allowed domains: {allowed.join(", ")}. Change this on the Configuration tab.
+          </p>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function OrgUsers({ tenantId, org }: { tenantId: string; org: Organization }) {
   const ops = useOps();
   const actions = useOpsActions();
+  const [inviting, setInviting] = useState(false);
   const slot = ops.users[tenantId];
 
   if (!slot || slot.state === "loading") {
@@ -902,17 +1000,42 @@ function OrgUsers({ tenantId }: { tenantId: string }) {
 
   const users = slot.data ?? [];
 
+  const pending = users.filter(isPendingInvite);
+
   return (
     <>
+      <Toolbar>
+        <ResultCount shown={users.length} total={users.length} noun="person" />
+        {pending.length > 0 && (
+          <Pill tone="waiting" title="Invited, but they have not signed in yet">
+            {pending.length} awaiting first sign-in
+          </Pill>
+        )}
+        <ToolbarSpacer />
+        <Btn variant="primary" size="sm" onClick={() => setInviting(true)}>
+          Invite someone
+        </Btn>
+      </Toolbar>
+
+      {inviting && <InviteMemberModal org={org} onClose={() => setInviting(false)} />}
+
       <DataTable
         rows={users}
         columns={[
           {
             key: "status",
             header: "Access",
-            width: 100,
+            width: 132,
             render: (user) =>
-              user.enabled ? <Pill tone="good">Active</Pill> : <Pill tone="bad">Disabled</Pill>,
+              !user.enabled ? (
+                <Pill tone="bad">Disabled</Pill>
+              ) : isPendingInvite(user) ? (
+                <Pill tone="waiting" title="The invitation has been sent but not accepted">
+                  Invited
+                </Pill>
+              ) : (
+                <Pill tone="good">Active</Pill>
+              ),
           },
           {
             key: "email",
@@ -950,8 +1073,13 @@ function OrgUsers({ tenantId }: { tenantId: string }) {
         emptyState={
           <EmptyState
             glyph="users"
-            title="No users in this organization"
-            body="Users are provisioned in the identity pool with a tenant claim and a role group."
+            title="Nobody has been invited yet"
+            body="Invite the first person and AmazFlow emails them a temporary password. They set their own on first sign-in."
+            actions={
+              <Btn variant="primary" size="sm" onClick={() => setInviting(true)}>
+                Invite someone
+              </Btn>
+            }
             inline
           />
         }
@@ -959,9 +1087,14 @@ function OrgUsers({ tenantId }: { tenantId: string }) {
 
       <div style={{ marginTop: 12 }}>
         <Alert tone="neutral" title="What can be changed here">
-          Disabling a user blocks their sign-in immediately. Creating users, changing roles, and
-          resetting passwords are not exposed on the control plane, so they remain identity-pool
-          operations. AmazFlow Super Admins are intentionally not listed.
+          Inviting creates the account, stamps the tenant claim, and grants the role in one step.
+          Disabling blocks sign-in immediately and is reversible, which is why there is no delete:
+          removing the account would take its audit trail with it.
+          <br />
+          <br />
+          Changing an existing person&apos;s role and resetting passwords are still identity-pool
+          operations with no control-plane route. AmazFlow staff are intentionally not listed here,
+          and cannot be created through this screen.
         </Alert>
       </div>
     </>
