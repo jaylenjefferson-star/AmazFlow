@@ -2,7 +2,11 @@
 .marketing-site{overflow-x:clip}
 .wrap{width:min(1180px,calc(100% - 48px));margin-inline:auto}
 .section{padding-block:110px}
-.section h2{font:800 clamp(38px,4.6vw,66px)/1.05 var(--font-display);letter-spacing:-.045em;margin:16px 0 40px}
+/* text-wrap:balance is the single biggest craft win on display type. At 38-66px a headline that
+   breaks one word onto its own line reads as an accident; balance distributes the lines evenly so
+   the shape looks chosen. Explicit <br> in the markup still wins, which is why the deliberate
+   two-line headlines keep their breaks. */
+.section h2{font:800 clamp(38px,4.6vw,66px)/1.05 var(--font-display);letter-spacing:-.045em;margin:16px 0 40px;text-wrap:balance}
 .section h2 i{font-style:normal;color:var(--coral-dark)}
 .section-label{display:flex;align-items:center;gap:9px;font-size:10px;font-weight:800;letter-spacing:.16em;color:var(--muted)}
 .section-label.light{color:#c3c9c0}
@@ -42,24 +46,38 @@
 }
 
 /* ===== Buttons & links ===== */
-.button{display:inline-flex;align-items:center;justify-content:center;gap:14px;min-height:50px;padding:0 22px;border:1.5px solid var(--ink);border-radius:12px;text-decoration:none;font-weight:800;font-size:14px;color:var(--ink);background:transparent;cursor:pointer;transition:transform .2s,box-shadow .2s}
-.button:hover{transform:translateY(-2px);box-shadow:0 7px 0 rgba(30,33,29,.12)}
+/* The offset shadow is the site's signature, so hover deepens it rather than replacing it with a
+   soft one -- the previous rule swapped a 3px hard offset for a blurred shadow on .primary, which
+   changed the button's material mid-interaction. Now the offset grows as the button lifts, which is
+   what the flat-graphic language implies should happen. */
+.button{display:inline-flex;align-items:center;justify-content:center;gap:14px;min-height:50px;padding:0 22px;border:1.5px solid var(--ink);border-radius:12px;text-decoration:none;font-weight:800;font-size:14px;letter-spacing:-.005em;color:var(--ink);background:transparent;cursor:pointer;transition:transform .22s var(--ease),box-shadow .22s var(--ease),background-color .18s var(--ease)}
+.button:hover{transform:translateY(-2px)}
+.button:active{transform:translateY(0)}
 .button.primary{background:var(--coral);border-color:var(--ink);box-shadow:3px 3px 0 var(--ink)}
+.button.primary:hover{box-shadow:5px 5px 0 var(--ink)}
+.button.primary:active{box-shadow:2px 2px 0 var(--ink)}
 .button.quiet{background:transparent}
+.button.quiet:hover{background:rgb(30 33 29 / .045);box-shadow:0 6px 18px rgb(30 33 29 / .07)}
 .button.dark{background:var(--ink);color:#fff;border-color:var(--ink)}
+.button.dark:hover{box-shadow:0 8px 22px rgb(30 33 29 / .26)}
 .button.quiet.on-dark{border-color:#fff;color:#fff}
-.button.quiet.on-dark:hover{background:rgba(255,255,255,.08)}
-.text-link{display:inline-block;font-weight:800;text-decoration:none;color:var(--ink);margin-top:30px;border-bottom:2px solid var(--coral-dark);padding-bottom:4px}
+.button.quiet.on-dark:hover{background:rgba(255,255,255,.1);box-shadow:none}
+/* The underline animates from the text's own baseline rather than appearing, so the affordance
+   reads as part of the link instead of decoration attached on hover. */
+.text-link{display:inline-block;font-weight:800;text-decoration:none;color:var(--ink);margin-top:30px;padding-bottom:4px;background-image:linear-gradient(var(--coral-dark),var(--coral-dark));background-repeat:no-repeat;background-position:0 100%;background-size:100% 2px;transition:background-size .28s var(--ease),color .18s var(--ease)}
+.text-link:hover{color:var(--coral-dark);background-size:100% 3px}
 
 /* ===== Hero ===== */
 .hero{min-height:min(740px,92vh);display:grid;grid-template-columns:.92fr 1.08fr;align-items:center;gap:52px;padding-block:64px 76px}
-.hero h1,.page-hero h1{font:800 clamp(50px,7vw,100px)/.92 var(--font-display);letter-spacing:-.07em;margin:22px 0 26px}
+.hero h1,.page-hero h1{font:800 clamp(50px,7vw,100px)/.92 var(--font-display);letter-spacing:-.07em;margin:22px 0 26px;text-wrap:balance}
 .hero h1 em,.page-hero h1 em{font-style:normal;color:var(--coral-dark)}
-.hero-copy>p{font-size:19px;line-height:1.55;max-width:585px;color:var(--muted)}
+.hero-copy>p{font-size:19px;line-height:1.58;max-width:585px;color:var(--muted);text-wrap:pretty}
 .hero-actions{display:flex;gap:12px;margin-top:28px;flex-wrap:wrap}
 .hero-note{display:block;margin-top:16px;color:var(--muted);font-size:13px}
 
-.workflow-visual{position:relative;background:var(--paper);border:1.5px solid var(--ink);border-radius:26px;padding:24px;box-shadow:12px 12px 0 var(--ink)}
+/* Hard offset plus a faint ambient shadow: keeps the flat-graphic signature while letting the card
+   sit in the page rather than hover above it as a pure silhouette. */
+.workflow-visual{position:relative;background:var(--paper);border:1.5px solid var(--ink);border-radius:26px;padding:24px;box-shadow:12px 12px 0 var(--ink),var(--shadow-ambient)}
 .visual-top{font-size:10px;letter-spacing:.12em;font-weight:800;color:var(--muted);display:flex;align-items:center;gap:8px}
 .visual-top b{margin-left:auto;color:var(--ink)}
 .live-dot{width:8px;height:8px;border-radius:50%;background:#52b76b;box-shadow:0 0 0 4px #52b76b25}
@@ -94,7 +112,7 @@
 .expansion-chip:hover{border-color:var(--coral-dark);transform:translateY(-1px)}
 
 /* ===== Interactive demo component ===== */
-.demo{background:#fff;border:1.5px solid var(--ink);border-radius:26px;box-shadow:10px 10px 0 var(--mint);overflow:hidden}
+.demo{background:#fff;border:1.5px solid var(--ink);border-radius:26px;box-shadow:10px 10px 0 var(--mint),var(--shadow-ambient);overflow:hidden}
 .demo-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;padding:26px 28px 0}
 .demo-badge{font-size:9px;font-weight:800;letter-spacing:.1em;color:var(--muted);margin:0 0 8px}
 .demo-head h3{font:800 26px var(--font-display);margin:0;letter-spacing:-.02em}
@@ -258,11 +276,70 @@
 .copy-block h2{font:800 40px/1.1 var(--font-display);letter-spacing:-.04em}
 .copy-block p{font-size:16px;line-height:1.75;color:var(--muted)}
 .copy-block p b{color:var(--ink)}
-.legal-copy p,.legal-copy li{font-size:16px;line-height:1.75;color:var(--muted)}
-.legal-copy{max-width:840px;padding-block:64px 110px}
-.legal-copy h1{font:800 52px var(--font-display);letter-spacing:-.05em}
-.legal-copy h2{font:800 22px var(--font-display);margin-top:40px}
-.legal-copy .updated{color:var(--muted);font-size:12px}
+/* ===== Legal documents =====
+   A policy is a reference document, not an article. It is read by someone looking for one clause,
+   usually under time pressure, often to answer a security questionnaire. So: a measure tuned for
+   sustained reading, a contents list, anchored sections, and real tables where the content is
+   tabular. */
+.legal-copy{max-width:820px;padding-block:56px 120px}
+.legal-copy p,.legal-copy li{font-size:16.5px;line-height:1.78;color:var(--muted);text-wrap:pretty}
+.legal-copy b{color:var(--ink)}
+.legal-copy a{color:var(--ink);text-decoration-color:var(--coral-dark);text-decoration-thickness:1.5px;text-underline-offset:3px}
+.legal-copy a:hover{color:var(--coral-dark)}
+
+.legal-head{padding-bottom:30px;border-bottom:1px solid var(--line)}
+.legal-copy h1{font:800 clamp(38px,5.2vw,54px)/1.02 var(--font-display);letter-spacing:-.045em;margin:14px 0 12px;text-wrap:balance}
+.legal-copy .updated{color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums;margin:0}
+
+/* Plain-language framing above the document. The document still governs, and says so. */
+.legal-summary{margin-top:26px;padding:20px 22px;background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--coral-dark);border-radius:4px 14px 14px 4px}
+.legal-summary p{font-size:15.5px;line-height:1.7;margin:0}
+.legal-summary p+p{margin-top:10px}
+
+.legal-toc{margin:34px 0 8px;padding:22px 24px;background:#f0eddf;border:1px solid var(--line);border-radius:16px}
+.legal-toc>b{display:block;font-size:10px;font-weight:800;letter-spacing:.16em;color:var(--muted);margin-bottom:12px}
+.legal-toc ol{margin:0;padding:0;list-style:none;counter-reset:toc;columns:2;column-gap:32px}
+.legal-toc li{counter-increment:toc;break-inside:avoid;margin-bottom:7px}
+.legal-toc li::before{content:counter(toc) ".";display:inline-block;width:22px;font-size:12px;font-weight:800;color:var(--muted);font-variant-numeric:tabular-nums}
+.legal-toc a{font-size:14px;font-weight:600;color:var(--ink);text-decoration:none;border-bottom:1px solid transparent}
+.legal-toc a:hover{border-bottom-color:var(--coral-dark);color:var(--coral-dark)}
+
+.legal-section{padding-top:38px;scroll-margin-top:110px}
+.legal-copy h2{font:800 23px var(--font-display);letter-spacing:-.02em;margin:0 0 14px;color:var(--ink);text-wrap:balance}
+.legal-copy h2>span{color:var(--coral-dark);font-variant-numeric:tabular-nums;margin-right:2px}
+.legal-copy h3{font:800 16px var(--font-display);letter-spacing:-.01em;margin:28px 0 8px;color:var(--ink)}
+.legal-body>.legal-section+.legal-section{border-top:1px solid var(--line)}
+
+.legal-table-wrap{overflow-x:auto;margin:18px 0 6px;border:1px solid var(--line);border-radius:14px;background:var(--paper)}
+.legal-table{width:100%;border-collapse:collapse;font-size:14.5px}
+.legal-table caption{caption-side:top;text-align:left;padding:14px 18px 0;font-size:12.5px;color:var(--muted)}
+.legal-table th,.legal-table td{padding:13px 18px;text-align:left;vertical-align:top;line-height:1.6;border-bottom:1px solid var(--line)}
+.legal-table thead th{font-size:10.5px;font-weight:800;letter-spacing:.1em;color:var(--muted);white-space:nowrap;background:#f0eddf}
+.legal-table tbody th{font-weight:800;color:var(--ink);width:1%;white-space:nowrap}
+.legal-table td{color:var(--muted)}
+.legal-table tbody tr:last-child th,.legal-table tbody tr:last-child td{border-bottom:0}
+
+.legal-callout{margin:20px 0;padding:16px 18px;border-radius:14px;border:1px solid var(--line);background:#f0eddf;display:grid;gap:6px}
+.legal-callout[data-tone="warn"]{background:#fdf3e8;border-color:#eddcc0}
+.legal-callout>b{font-size:14.5px;color:var(--ink)}
+.legal-callout p{font-size:15px;line-height:1.7;margin:0}
+.legal-callout p+p{margin-top:8px}
+
+.legal-foot{margin-top:52px;padding-top:24px;border-top:1px solid var(--line)}
+.legal-foot p{font-size:12.5px}
+
+@media(max-width:640px){
+  .legal-toc ol{columns:1}
+  .legal-copy{padding-block:40px 80px}
+}
+
+/* ===== Legal index ===== */
+.legal-index-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-top:8px}
+.legal-index-card{display:grid;align-content:start;gap:8px;padding:24px;background:var(--paper);border:1px solid var(--line);border-radius:18px;text-decoration:none;color:var(--ink);transition:border-color .18s var(--ease),transform .18s var(--ease),box-shadow .18s var(--ease)}
+.legal-index-card:hover{border-color:var(--ink);transform:translateY(-2px);box-shadow:0 10px 24px rgb(30 33 29 / .07)}
+.legal-index-card b{font:800 18px var(--font-display);letter-spacing:-.01em}
+.legal-index-card p{font-size:14px;line-height:1.6;color:var(--muted);margin:0}
+.legal-index-card small{font-size:11px;font-weight:700;letter-spacing:.08em;color:var(--muted)}
 
 /* ===== Company: founder spotlight ===== */
 .founder-spotlight{display:grid;grid-template-columns:auto 1fr;gap:32px;align-items:start;margin-top:24px;max-width:760px}
@@ -340,6 +417,41 @@
 .lead-done h3{font:800 27px var(--font-display);letter-spacing:-.03em;margin:0 0 10px}
 .lead-done p{color:var(--muted);line-height:1.6;max-width:360px;margin:0 auto}
 .lead-again{margin-top:20px;background:none;border:0;border-bottom:2px solid var(--coral-dark);padding:0 0 3px;font:800 13px var(--font-body);color:var(--ink);cursor:pointer}
+
+/* ===== Premium craft: cohesive surfaces, links, and life =====
+   The design language is intentionally flat, with hard offset shadows reserved for the hero
+   "device" cards. So content cards stay flat and do NOT lift on hover -- lifting would imply they
+   are buttons. They firm their hairline and pick up a faint ambient shadow instead: enough to feel
+   considered and responsive, not enough to fight the flatness. All motion is disabled under the
+   prefers-reduced-motion rule inherited from styles.css. */
+.subpage-card,.credibility-card,.testimonial-card,.roi-card,.price-card,.how-grid article{
+  transition:border-color .2s var(--ease),box-shadow .2s var(--ease);
+}
+.subpage-card:hover,.credibility-card:hover,.testimonial-card:hover,.roi-card:hover,.price-card:hover,.how-grid article:hover{
+  border-color:var(--muted);
+  box-shadow:var(--shadow-ambient);
+}
+
+/* The founder portrait is a hero "device" card, so it gets the same hard-offset + ambient pairing
+   as the workflow visual. */
+.founder-photo{box-shadow:8px 8px 0 var(--mint),var(--shadow-ambient)}
+
+/* Nav links: an underline that grows from the baseline, matching the .text-link treatment, so the
+   whole site shares one link gesture instead of two. */
+.nav-desktop a{
+  background-image:linear-gradient(var(--coral-dark),var(--coral-dark));
+  background-repeat:no-repeat;
+  background-position:0 100%;
+  background-size:0 2px;
+  padding-bottom:3px;
+  transition:background-size .22s var(--ease),color .15s var(--ease);
+}
+.nav-desktop a:hover{background-size:100% 2px}
+
+/* The audit/workflow cards tell a "this is live" story; the status dots should actually breathe.
+   Purely decorative, and flattened to a static dot under reduced-motion. */
+@keyframes amz-pulse{0%{box-shadow:0 0 0 0 rgb(82 183 107 / .45)}70%{box-shadow:0 0 0 7px rgb(82 183 107 / 0)}100%{box-shadow:0 0 0 0 rgb(82 183 107 / 0)}}
+.live-dot,.pulse{animation:amz-pulse 2.4s var(--ease-out) infinite}
 
 /* ===== Responsive ===== */
 @media(max-width:960px){

@@ -114,10 +114,12 @@ export function MarketingFooter() {
         <div>
           <b>Trust</b>
           <Link href="/security">Security</Link>
-          <Link href="/subprocessors">Subprocessors</Link>
+          <Link href="/legal">Legal &amp; Trust Center</Link>
           <Link href="/privacy">Privacy</Link>
-          <Link href="/terms">Terms</Link>
+          <Link href="/dpa">Data Processing</Link>
+          <Link href="/subprocessors">Subprocessors</Link>
           <Link href="/cookie-policy">Cookie Policy</Link>
+          <Link href="/terms">Terms</Link>
           <Link href="/acceptable-use">Acceptable Use</Link>
         </div>
         <div>
