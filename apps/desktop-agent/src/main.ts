@@ -72,11 +72,14 @@ function showWindow() {
   win.webContents.on("did-finish-load", publish);
 }
 
-// A tray icon drawn at runtime -- one dependency-free dot whose colour tracks the connection, so
-// the agent has a visible presence with no icon asset to ship or keep in sync.
+// A 22x22 PNG, inlined so there is no icon asset to ship or keep in sync. It has to be a raster
+// format: macOS nativeImage does not decode SVG, so createFromDataURL on an SVG returns an EMPTY
+// image and `new Tray(empty)` throws. That threw inside app.whenReady before the window was ever
+// created, leaving the process running with no window and no tray -- an app that looked like it
+// had launched and then done nothing at all.
+const TRAY_PNG = "iVBORw0KGgoAAAANSUhEUgAAABYAAAAWCAYAAADEtGw7AAAA00lEQVR4nN2UMQ7DIAxFfYIOEQdhyIGYWHOIXAL1DllYs7Fyl+ydWlv6kRAqKIqwVPVLbzH2jzEEon/WAwzRzCxMYDYQEJvvdifFiXkxmYkgI5aQc3kXkrgyB4w8YxkDLGIROetV8wUFT5i0ZJFzoKYrmVtCNz3T0jyipjtz+bLMz1fxiXFgqtY8arpdy4nnqlsx2pk32Ctzi5rQMpUDkOskWzNF3BWmJ65YN6jZqHGIasZESqMQqR2e2nUjUvpBRGq/9Gk+/BEqNfzZ/KahD/3v6QNNKFgNkj+aSgAAAABJRU5ErkJggg==";
 function trayImage() {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><circle cx="11" cy="11" r="6" fill="none" stroke="black" stroke-width="2"/><circle cx="11" cy="11" r="2.5" fill="black"/></svg>`;
-  const image = nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString("base64")}`);
+  const image = nativeImage.createFromBuffer(Buffer.from(TRAY_PNG, "base64"));
   image.setTemplateImage(true);
   return image;
 }
@@ -84,9 +87,22 @@ function trayImage() {
 app.whenReady().then(async () => {
   app.setName("AmazFlow Agent");
   if (process.platform === "darwin") app.dock?.hide();
-  tray = new Tray(trayImage());
-  await agent.restore();
+  // The window comes up first and unconditionally. Restoring the session probes macOS permissions,
+  // and a denied permission does not fail fast -- it blocks on a TCC prompt until the timeout -- so
+  // awaiting it here left the app invisible for seconds, with no dock icon to explain why.
   showWindow();
+  // The tray is a convenience; if it cannot be created the app must still be usable.
+  try {
+    tray = new Tray(trayImage());
+  } catch (error) {
+    console.error("tray unavailable:", error instanceof Error ? error.message : error);
+  }
+  publish();
+  try {
+    await agent.restore();
+  } catch (error) {
+    console.error("restore failed:", error instanceof Error ? error.message : error);
+  }
   publish();
 });
 

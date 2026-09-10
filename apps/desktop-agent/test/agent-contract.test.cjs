@@ -45,6 +45,12 @@ const checks = [
     !/write\([^)]*password/i.test(main)],
   ["polling survives the window being closed", main.includes("window-all-closed") && main.includes("preventDefault")],
   ["the renderer gets no Node access", main.includes("contextIsolation: true") && main.includes("nodeIntegration: false")],
+  // The renderer is a plain <script> in a context with no module loader and no Node. A single
+  // top-level import/export makes tsc emit CommonJS, and the `exports` reference then throws
+  // before any listener attaches -- the window still renders, so it looks fine while every
+  // control silently does nothing. Cheap to check, expensive to notice by hand.
+  ["the renderer is a plain script, not a CommonJS module",
+    !/Object\.defineProperty\(exports|^exports\.|(^|[^.\w])require\(/m.test(read("renderer.js"))],
   ["the agent advertises its type and capabilities", agent.includes('agentType: "DESKTOP_AGENT"') && agent.includes("capabilities")],
   ["the execution grant is presented on the terminal result", agent.includes("X-AmazFlow-Execution-Grant")],
 ];

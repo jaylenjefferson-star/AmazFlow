@@ -19,10 +19,12 @@ type AmazFlowBridge = {
   openPermission(which: "accessibility" | "screen"): Promise<unknown>;
   onState(handler: (snapshot: Snapshot) => void): void;
 };
-declare global {
-  interface Window { amazflow: AmazFlowBridge }
-}
-export {};
+// NOT a module. This file is loaded as a plain <script> in a renderer with nodeIntegration
+// disabled, so a single top-level import/export makes tsc emit CommonJS -- and the resulting
+// `exports` reference throws on line 2, aborting the script before any listener is attached. The
+// window then renders (static HTML) while every button silently does nothing. Augment the global
+// Window interface directly instead; in a script file that needs no `declare global`.
+interface Window { amazflow: AmazFlowBridge }
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (v: string) => v.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string);
