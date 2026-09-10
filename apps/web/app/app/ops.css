@@ -9,12 +9,13 @@
    Scoped entirely under .ops so it cannot leak into the marketing site or /console.
    ============================================================================================ */
 
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&display=swap");
+/* Inter is self-hosted via next/font in app/app/layout.tsx. Deliberately not an @import to
+   fonts.googleapis.com: that reached a third party on every operator page load. */
 
 /* ------------------------------------------------------------------- tokens: light -------- */
 
 .ops {
-  --font-ui: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-ui: var(--font-inter), ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
 
   /* surfaces, from furthest back to closest */
