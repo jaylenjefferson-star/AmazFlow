@@ -5,7 +5,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && cp manifest.json popup.html dist/",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node test/extension-contract.test.cjs"
+    "test": "node test/extension-contract.test.cjs",
+    "release": "pnpm build && pnpm test && bash scripts/package-zip.sh"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.306",

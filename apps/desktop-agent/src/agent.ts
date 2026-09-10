@@ -90,8 +90,31 @@ export class DesktopAgent {
 
   start() {
     if (!this.agent) return;
-    if (!this.pollTimer) this.pollTimer = setInterval(() => void this.tick(), POLL_MS);
-    if (!this.beatTimer) this.beatTimer = setInterval(() => void this.heartbeat().catch(() => undefined), HEARTBEAT_MS);
+    // Both timers surface their own failures. An unhandled rejection out of tick() used to leave
+    // the window stuck on "Working" on a step that had already ended, because runTask sets
+    // currentActivity up front and only clears it at the end; and a thrown heartbeat (offline,
+    // DNS, TLS) was swallowed entirely, so the UI kept insisting it was connected.
+    if (!this.pollTimer) {
+      this.pollTimer = setInterval(() => {
+        void this.tick().catch((error) => {
+          this.set({
+            state: "error",
+            currentActivity: null,
+            detail: `Stopped mid-step — ${error instanceof Error ? error.message : String(error)}`,
+          });
+        });
+      }, POLL_MS);
+    }
+    if (!this.beatTimer) {
+      this.beatTimer = setInterval(() => {
+        void this.heartbeat().catch((error) => {
+          this.set({
+            state: "error",
+            detail: `AmazFlow is not hearing from this app — ${error instanceof Error ? error.message : String(error)}`,
+          });
+        });
+      }, HEARTBEAT_MS);
+    }
     if (this.status.state === "paused") this.set({ state: "connected", detail: undefined });
   }
 
@@ -216,9 +239,38 @@ export class DesktopAgent {
     if (this.busy || !this.agent) return;
     this.busy = true;
     try {
-      const tasks: TaskClaim["task"][] = await fetch(`${API}/agent/tasks`, {
-        headers: { "X-AmazFlow-Agent-Token": this.agent.token },
-      }).then((r) => (r.ok ? r.json() : [])).catch(() => []);
+      // A non-OK poll is NOT "no work". A 401/403 means this agent's token was revoked or the
+      // grant model changed; collapsing that into an empty list left the app sitting on
+      // "Connected" forever while claiming nothing -- looking healthy and doing nothing.
+      let tasks: TaskClaim["task"][] = [];
+      try {
+        const response = await fetch(`${API}/agent/tasks`, {
+          headers: { "X-AmazFlow-Agent-Token": this.agent.token },
+        });
+        if (response.status === 401 || response.status === 403) {
+          this.set({
+            state: "error",
+            detail: "AmazFlow no longer recognises this app. Reconnect it to keep working.",
+          });
+          return;
+        }
+        if (!response.ok) {
+          this.set({
+            state: "error",
+            detail: `AmazFlow could not be reached (${response.status}). Retrying.`,
+          });
+          return;
+        }
+        tasks = await response.json();
+        // Recovered: clear a previous poll/heartbeat error rather than latching on it.
+        if (this.status.state === "error") this.set({ state: "connected", detail: undefined });
+      } catch (error) {
+        this.set({
+          state: "error",
+          detail: `No connection to AmazFlow — ${error instanceof Error ? error.message : String(error)}`,
+        });
+        return;
+      }
       // The server already restricts this list to this organization and to desktop work this build
       // advertised; this only guards against acting on an action a newer server introduced.
       const candidate = tasks.find((t) => (DESKTOP_ACTIONS as readonly string[]).includes(t.operation));
@@ -271,16 +323,33 @@ export class DesktopAgent {
       };
     }
 
-    await fetch(`${API}/agent/tools/record-step-result`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        grant: claim.grant,
-        stepId: claim.stepId,
-        status: outcome.ok ? "SUCCEEDED" : "FAILED",
-        note: `${claim.task.operation}${claim.destination ? ` on ${claim.destination}` : ""}${outcome.ok ? "" : ` — ${String(outcome.error)}`}`,
-      }),
-    }).catch(() => undefined);
+    // Evidence before the terminal result, so a failed result submission still leaves a durable
+    // record of what this Mac actually did. That only works if the write is checked: this used to
+    // end in `.catch(() => undefined)` and never inspect `res.ok`, so an expired or
+    // already-consumed grant looked exactly like success.
+    let evidenceRecorded = false;
+    let evidenceError: string | undefined;
+    try {
+      const evidenceResponse = await fetch(`${API}/agent/tools/record-step-result`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          grant: claim.grant,
+          stepId: claim.stepId,
+          status: outcome.ok ? "SUCCEEDED" : "FAILED",
+          note: `${claim.task.operation}${claim.destination ? ` on ${claim.destination}` : ""}${outcome.ok ? "" : ` — ${String(outcome.error)}`}`,
+        }),
+      });
+      evidenceRecorded = evidenceResponse.ok;
+      if (!evidenceResponse.ok) {
+        evidenceError = `AmazFlow did not record what this app did (${evidenceResponse.status})`;
+      }
+    } catch (error) {
+      evidenceError = error instanceof Error ? error.message : String(error);
+    }
+    if (!evidenceRecorded) {
+      console.warn("[AmazFlow] evidence write failed:", evidenceError);
+    }
 
     let reported = false;
     let reportError: string | undefined;

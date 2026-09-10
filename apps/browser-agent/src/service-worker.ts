@@ -256,16 +256,35 @@ async function runOnce(agent: AgentRecord) {
 
   // Evidence first, then the terminal result: if reporting the result fails, the run still holds a
   // durable record of what this browser did and where, instead of the step looking like it never ran.
-  await fetch(`${API}/agent/tools/record-step-result`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      grant: claim.grant,
-      stepId: claim.stepId,
-      status: result.ok ? "SUCCEEDED" : "FAILED",
-      note: `${task.operation}${selector ? ` on ${selector}` : ""} at ${evidence.url}${result.ok ? "" : ` — ${String(result.error)}`}`,
-    }),
-  }).catch(() => undefined);
+  //
+  // That guarantee only holds if the evidence write is actually checked. This used to end in
+  // `.catch(() => undefined)` and never look at `res.ok`, so an expired grant, an
+  // already-consumed grant, or a 404 on the run was indistinguishable from success -- the very
+  // failure mode the evidence record exists to catch, swallowed by the call that writes it.
+  const evidenceNote = `${task.operation}${selector ? ` on ${selector}` : ""} at ${evidence.url}${result.ok ? "" : ` — ${String(result.error)}`}`;
+  let evidenceRecorded = false;
+  let evidenceError: string | undefined;
+  try {
+    const evidenceResponse = await fetch(`${API}/agent/tools/record-step-result`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        grant: claim.grant,
+        stepId: claim.stepId,
+        status: result.ok ? "SUCCEEDED" : "FAILED",
+        note: evidenceNote,
+      }),
+    });
+    evidenceRecorded = evidenceResponse.ok;
+    if (!evidenceResponse.ok) {
+      evidenceError = `AmazFlow did not record what this browser did (${evidenceResponse.status})`;
+    }
+  } catch (error) {
+    evidenceError = error instanceof Error ? error.message : String(error);
+  }
+  if (!evidenceRecorded) {
+    console.warn("[AmazFlow] evidence write failed:", evidenceError);
+  }
 
   let reported = false;
   let reportError: string | undefined;
