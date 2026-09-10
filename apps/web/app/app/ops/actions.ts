@@ -228,6 +228,48 @@ export function useOpsActions() {
     [ops, run],
   );
 
+  /** name / status / plan. Slug is immutable server-side, so it is not offered here. */
+  const saveOrgProfile = useCallback(
+    (slug: string, patch: { name?: string; status?: string; plan?: string }) =>
+      run(
+        `orgprofile_${slug}`,
+        async () => {
+          const org = await ops.request<Organization>(
+            `/organizations/${encodeURIComponent(slug)}`,
+            { method: "PUT", body: JSON.stringify(patch) },
+          );
+          ops.applyOrganization(org);
+          return org;
+        },
+        "Organization updated",
+      ),
+    [ops, run],
+  );
+
+  const saveOrgSettings = useCallback(
+    (
+      slug: string,
+      patch: {
+        maxConcurrentRuns?: number;
+        allowedEmailDomains?: string[];
+        timezone?: string;
+      },
+    ) =>
+      run(
+        `orgsettings_${slug}`,
+        async () => {
+          const org = await ops.request<Organization>(
+            `/organizations/${encodeURIComponent(slug)}/settings`,
+            { method: "POST", body: JSON.stringify(patch) },
+          );
+          ops.applyOrganization(org);
+          return org;
+        },
+        "Settings saved",
+      ),
+    [ops, run],
+  );
+
   const setUserEnabled = useCallback(
     (tenantId: string, username: string, enabled: boolean) =>
       run(
@@ -369,7 +411,7 @@ export function useOpsActions() {
           ops.applyAgent(updated);
           return updated;
         },
-        "Chrome Agent revoked",
+        "Agent revoked",
       ),
     [ops, run],
   );
@@ -418,6 +460,8 @@ export function useOpsActions() {
     generateFromSop,
     createOrganization,
     saveBranding,
+    saveOrgProfile,
+    saveOrgSettings,
     setUserEnabled,
     setTicketStatus,
     addTicketNote,

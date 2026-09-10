@@ -30,6 +30,30 @@ import { EXCEPTION_STATUSES, isException, isLive } from "./terms";
 
 /* ================================================================================== types = */
 
+/**
+ * Per-organization settings the control plane actually reads.
+ *
+ * maxConcurrentRuns and the org's own status gate run creation; allowedEmailDomains gates who
+ * can be invited; timezone is what this console formats the org's timestamps in. The server
+ * fills defaults on read, so `settings` is only absent on an org that predates the feature.
+ */
+export type OrgSettings = {
+  maxConcurrentRuns: number;
+  allowedEmailDomains: string[];
+  timezone: string;
+};
+
+export const DEFAULT_ORG_SETTINGS: OrgSettings = {
+  maxConcurrentRuns: 0,
+  allowedEmailDomains: [],
+  timezone: "UTC",
+};
+
+export const orgSettingsOf = (org?: Organization | null): OrgSettings => ({
+  ...DEFAULT_ORG_SETTINGS,
+  ...(org?.settings ?? {}),
+});
+
 export type Organization = {
   id: string;
   name: string;
@@ -39,6 +63,7 @@ export type Organization = {
   createdAt: string;
   updatedAt?: string;
   branding?: { displayName?: string; logoUrl?: string; accent?: string; loginMessage?: string };
+  settings?: Partial<OrgSettings>;
 };
 
 export type Agent = {

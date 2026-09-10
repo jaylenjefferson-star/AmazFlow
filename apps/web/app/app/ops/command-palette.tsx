@@ -187,7 +187,7 @@ export function CommandPalette() {
     for (const agent of ops.agents) {
       list.push({
         id: `agent_${agent.id}`,
-        group: "Chrome Agents",
+        group: "Agents",
         glyph: "agents",
         title: agent.name,
         sub: `${ops.orgLabel(agent.tenantId)} · ${agent.status === "revoked" ? "revoked" : agent.lastSeenAt ? `last seen ${relativeTime(agent.lastSeenAt)}` : "never connected"}`,

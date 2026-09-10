@@ -469,3 +469,80 @@ export const COLLECTION_LABEL: Record<string, string> = {
 export function collectionLabel(key: string): string {
   return COLLECTION_LABEL[key] ?? humanize(key).toLowerCase();
 }
+
+
+/* ---------------------------------------------------------------- organizations ------------ */
+
+/** Must match ORG_STATUSES in the control plane; anything else is refused server-side. */
+export const ORG_STATUSES = ["active", "paused", "suspended"] as const;
+export const ORG_PLANS = ["design_partner", "pilot", "standard", "enterprise"] as const;
+
+export const ORG_STATUS_LABEL: Record<string, string> = {
+  active: "Active",
+  paused: "Paused",
+  suspended: "Suspended",
+};
+
+export const ORG_STATUS_TONE: Record<string, Tone> = {
+  active: "good",
+  paused: "waiting",
+  suspended: "bad",
+};
+
+/** What each status actually does, so an operator is never guessing before they change one. */
+export const ORG_STATUS_EFFECT: Record<string, string> = {
+  active: "Work runs normally.",
+  paused: "No new runs can start. Runs already in flight are left alone.",
+  suspended: "No new runs can start, and the customer is told to contact AmazFlow.",
+};
+
+export const ORG_PLAN_LABEL: Record<string, string> = {
+  design_partner: "Design partner",
+  pilot: "Pilot",
+  standard: "Standard",
+  enterprise: "Enterprise",
+};
+
+export function orgStatusLabel(status?: string): string {
+  if (!status) return "Unknown";
+  return ORG_STATUS_LABEL[status] ?? humanize(status);
+}
+
+export function orgPlanLabel(plan?: string): string {
+  if (!plan) return "—";
+  return ORG_PLAN_LABEL[plan] ?? humanize(plan);
+}
+
+/** "No limit" is the honest reading of 0, and the one an operator needs to see. */
+export function concurrencyLabel(limit: number): string {
+  return limit > 0 ? `${limit} at a time` : "No limit";
+}
+
+/**
+ * Time zones from the runtime's own database, matching how the control plane validates them.
+ * Falls back to a short list on a runtime without Intl.supportedValuesOf so the field is never
+ * empty and unusable.
+ */
+export function timezoneOptions(): string[] {
+  try {
+    const supported = (
+      Intl as unknown as { supportedValuesOf?: (key: string) => string[] }
+    ).supportedValuesOf?.("timeZone");
+    if (supported && supported.length) return supported;
+  } catch {
+    // Fall through to the short list.
+  }
+  return [
+    "UTC",
+    "America/Los_Angeles",
+    "America/Denver",
+    "America/Chicago",
+    "America/New_York",
+    "Europe/London",
+    "Europe/Amsterdam",
+    "Europe/Berlin",
+    "Asia/Singapore",
+    "Asia/Tokyo",
+    "Australia/Sydney",
+  ];
+}
