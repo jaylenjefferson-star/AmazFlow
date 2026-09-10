@@ -180,8 +180,13 @@ const VALID_STEP_TYPES = [
   "verify",
   "end",
 ];
+// Keep in step with `stepProviderSchema` in @amazflow/workflow-schema and with
+// VALID_PROVIDERS in the deployed template. "desktop" belongs here: the builder offers it,
+// the shared schema accepts it, and the Desktop Agent executes it -- omitting it rejected
+// every desktop workflow at save time with a message blaming the provider.
 const VALID_PROVIDERS = [
   "browser",
+  "desktop",
   "api",
   "spreadsheet",
   "email",
@@ -321,26 +326,64 @@ const interpolate = (value, context) => {
   }
   return value;
 };
+// DynamoDB caps a Scan/Query page at 1 MB and hands back LastEvaluatedKey for the rest.
+// Dropping that key does not read less data -- it silently reads the WRONG data: a by-id
+// lookup layered on top starts 404ing at random, and the expiry sweep stops seeing the
+// records it exists to expire. Both paths below now drain every page.
+//
+// PAGE_GUARD bounds a pathological table so a single invocation cannot spin forever; hitting
+// it is a real operational signal, not something to swallow.
+const PAGE_GUARD = 200;
 const scanType = async (type, a) => {
+  const items = [];
+  let cursor;
+  let pages = 0;
   if (a.role === "SUPER_ADMIN") {
     // Cross-tenant SUPER_ADMIN reads still Scan: there's no cross-tenant GSI yet.
     // Accepted tradeoff at current scale -- add a GSI if the operator's own views get slow.
-    const out = await db.send(new ScanCommand({ TableName: table }));
-    return (out.Items || [])
-      .filter((i) => i.sk?.S?.startsWith(type) && i.document?.S)
-      .map(parse);
+    do {
+      const out = await db.send(
+        new ScanCommand({ TableName: table, ExclusiveStartKey: cursor }),
+      );
+      for (const i of out.Items || []) {
+        if (i.sk?.S?.startsWith(type) && i.document?.S) items.push(parse(i));
+      }
+      cursor = out.LastEvaluatedKey;
+    } while (cursor && ++pages < PAGE_GUARD);
+  } else {
+    do {
+      const out = await db.send(
+        new QueryCommand({
+          TableName: table,
+          KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
+          ExpressionAttributeValues: {
+            ":pk": { S: `TENANT#${a.tenantId}` },
+            ":prefix": { S: type },
+          },
+          ExclusiveStartKey: cursor,
+        }),
+      );
+      for (const i of out.Items || []) {
+        if (i.document?.S) items.push(parse(i));
+      }
+      cursor = out.LastEvaluatedKey;
+    } while (cursor && ++pages < PAGE_GUARD);
   }
-  const out = await db.send(
-    new QueryCommand({
-      TableName: table,
-      KeyConditionExpression: "pk = :pk AND begins_with(sk, :prefix)",
-      ExpressionAttributeValues: {
-        ":pk": { S: `TENANT#${a.tenantId}` },
-        ":prefix": { S: type },
-      },
-    }),
-  );
-  return (out.Items || []).filter((i) => i.document?.S).map(parse);
+  if (cursor) {
+    // Truncation here means results are incomplete. Say so loudly rather than returning a
+    // plausible-looking partial list.
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "SCAN_TRUNCATED",
+        type,
+        pages,
+        message: "Paged read hit PAGE_GUARD; results are incomplete",
+      }),
+    );
+    emitApplicationMetric("ScanTruncated");
+  }
+  return items;
 };
 const save = async (type, doc) =>
   db.send(
@@ -803,6 +846,10 @@ const claimAgentTask = async (taskId, agentCtx) => {
   });
   run.updatedAt = now();
   await saveRunWithAudit(run, auditStartIdx);
+  // `display` is the contract both agents render: without it they show "A workflow" and
+  // "Making a change" instead of the real workflow and step names. The deployed template
+  // sends it; this copy had drifted and would have regressed every agent UI on cutover.
+  const stepIndex = (workflow.steps || []).findIndex((s) => s.id === task.stepId);
   return {
     task,
     grant,
@@ -814,6 +861,12 @@ const claimAgentTask = async (taskId, agentCtx) => {
     verify: step.verify || null,
     executionTarget: task.executionTarget || "browser_extension",
     destination: task.destination || null,
+    display: {
+      workflowName: workflow.name,
+      stepName: step.name,
+      stepNumber: stepIndex >= 0 ? stepIndex + 1 : null,
+      stepCount: (workflow.steps || []).length || null,
+    },
   };
 };
 // Identity and scope come entirely from the verified grant, never from anything the caller
@@ -919,22 +972,40 @@ const saveRunWithAudit = async (run, auditStartIdx) => {
       },
     },
   ];
-  newEntries.slice(0, 90).forEach((entry, i) => {
-    const seq = String((auditStartIdx || 0) + i).padStart(6, "0");
-    items.push({
-      Put: {
-        TableName: table,
-        Item: {
-          pk: { S: `TENANT#${run.tenantId}` },
-          sk: { S: `AUDIT#${run.id}#${seq}` },
-          tenantId: { S: run.tenantId },
-          document: { S: JSON.stringify({ ...entry, runId: run.id }) },
-          updatedAt: { S: now() },
+  // A TransactWriteItems call accepts at most 100 items. This used to `slice(0, 90)`, which
+  // meant a long run's audit rows past the 90th were dropped with no error and no metric --
+  // the queryable AUDIT# trail and the run document's own audit array then disagreed
+  // permanently, and the queryable one is what the evidence tooling reads. Chunk instead:
+  // the run document plus the first batch go in one transaction (so the run is never
+  // committed without its first audit rows), and the remainder follow in further batches.
+  const auditItem = (entry, i) => ({
+    Put: {
+      TableName: table,
+      Item: {
+        pk: { S: `TENANT#${run.tenantId}` },
+        sk: {
+          S: `AUDIT#${run.id}#${String((auditStartIdx || 0) + i).padStart(6, "0")}`,
         },
+        tenantId: { S: run.tenantId },
+        document: { S: JSON.stringify({ ...entry, runId: run.id }) },
+        updatedAt: { S: now() },
       },
-    });
+    },
   });
+
+  const FIRST_BATCH = 99; // 1 slot already taken by the run document
+  newEntries.slice(0, FIRST_BATCH).forEach((entry, i) => items.push(auditItem(entry, i)));
   await db.send(new TransactWriteItemsCommand({ TransactItems: items }));
+
+  for (let offset = FIRST_BATCH; offset < newEntries.length; offset += 100) {
+    await db.send(
+      new TransactWriteItemsCommand({
+        TransactItems: newEntries
+          .slice(offset, offset + 100)
+          .map((entry, i) => auditItem(entry, offset + i)),
+      }),
+    );
+  }
 };
 // Runs snapshot the workflow version they started with (workflowVersion) so that a
 // resumed run (after an approval, agent result, or confirmation) keeps executing the
@@ -1725,18 +1796,27 @@ const resumeAgentTask = async (taskId, result, a, grantToken, reportingAgent) =>
     reportedAt: now(),
     page: result.evidence || null,
   };
-  task.status = "COMPLETED";
-  task.resolvedAt = now();
-  await save("TASK", task);
-  if (useAgentCore())
-    return (await createProductionEngine(run)).resumeFromAgent(
-      workflow,
-      run,
-      task.stepId,
-      result,
-      evidence,
-    );
+  // Resume the run FIRST, then retire the task. The old order committed the task as
+  // COMPLETED up front, so a failed resume (transaction conflict, throttle, oversized run
+  // document) left the run stuck in WAITING_AGENT with a terminal task: the agent could not
+  // resubmit (409 "Task already resolved") and the sweep no longer matched it, because the
+  // sweep only considers PENDING/CLAIMED. The run was unrecoverable and nothing said so.
+  const retireTask = async () => {
+    task.status = "COMPLETED";
+    task.resolvedAt = now();
+    await save("TASK", task);
+  };
+  if (useAgentCore()) {
+    const resumed = await (
+      await createProductionEngine(run)
+    ).resumeFromAgent(workflow, run, task.stepId, result, evidence);
+    await retireTask();
+    return resumed;
+  }
+  // Guard before retiring: assertLegacyEnabled() throws when the rollback switch is off, and
+  // retiring first would consume the task on a request that then failed.
   assertLegacyEnabled();
+  await retireTask();
   const auditStartIdx = run.audit.length;
   run.context.lastAction = { result };
   run.stepResults = run.stepResults || {};

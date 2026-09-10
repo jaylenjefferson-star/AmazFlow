@@ -210,7 +210,7 @@ Resources:
           // anything through underneath -- a typo'd provider or a dangling step reference
           // would silently save). Returns null when valid, or a specific error string.
           const VALID_STEP_TYPES=['ai','action','condition','approval','verify','end'];
-          const VALID_PROVIDERS=['browser','api','spreadsheet','email','file','mock'];
+          const VALID_PROVIDERS=['browser','desktop','api','spreadsheet','email','file','mock'];
           const validateWorkflowShape=(draft)=>{
             if(!draft||typeof draft!=='object') return 'Workflow must be an object';
             if(!draft.id||!draft.tenantId||!draft.name||!draft.startAt) return 'Missing id, tenantId, name, or startAt';
@@ -259,15 +259,30 @@ Resources:
             if(value&&typeof value==='object'){const out={};for(const k of Object.keys(value)) out[k]=interpolate(value[k],context);return out;}
             return value;
           };
+          const PAGE_GUARD=200;
+          // DynamoDB caps a Scan/Query page at 1 MB and returns LastEvaluatedKey for the rest.
+          // Discarding that key does not read less -- it reads the WRONG thing: by-id lookups
+          // layered on top begin 404ing once the table exceeds one page, and the expiry sweep
+          // silently stops seeing the records it exists to expire. Drain every page.
           const scanType=async(type,a)=>{
+            const items=[];let cursor;let pages=0;
             if(a.role==='SUPER_ADMIN'){
               // Cross-tenant SUPER_ADMIN reads still Scan: there's no cross-tenant GSI yet.
               // Accepted tradeoff at current scale -- add a GSI if the operator's own views get slow.
-              const out=await db.send(new ScanCommand({TableName:table}));
-              return (out.Items||[]).filter(i=>i.sk?.S?.startsWith(type)&&i.document?.S).map(parse);
+              do{
+                const out=await db.send(new ScanCommand({TableName:table,ExclusiveStartKey:cursor}));
+                for(const i of (out.Items||[])){if(i.sk?.S?.startsWith(type)&&i.document?.S)items.push(parse(i));}
+                cursor=out.LastEvaluatedKey;
+              }while(cursor&&++pages<PAGE_GUARD);
+            }else{
+              do{
+                const out=await db.send(new QueryCommand({TableName:table,KeyConditionExpression:'pk = :pk AND begins_with(sk, :prefix)',ExpressionAttributeValues:{':pk':{S:`TENANT#${a.tenantId}`},':prefix':{S:type}},ExclusiveStartKey:cursor}));
+                for(const i of (out.Items||[])){if(i.document?.S)items.push(parse(i));}
+                cursor=out.LastEvaluatedKey;
+              }while(cursor&&++pages<PAGE_GUARD);
             }
-            const out=await db.send(new QueryCommand({TableName:table,KeyConditionExpression:'pk = :pk AND begins_with(sk, :prefix)',ExpressionAttributeValues:{':pk':{S:`TENANT#${a.tenantId}`},':prefix':{S:type}}}));
-            return (out.Items||[]).filter(i=>i.document?.S).map(parse);
+            if(cursor){console.error(JSON.stringify({level:'error',event:'SCAN_TRUNCATED',type,pages,message:'Paged read hit PAGE_GUARD; results are incomplete'}));}
+            return items;
           };
           const save=async(type,doc)=>db.send(new PutItemCommand({TableName:table,Item:{pk:{S:`TENANT#${doc.tenantId}`},sk:{S:`${type}#${doc.id}`},tenantId:{S:doc.tenantId},document:{S:JSON.stringify(doc)},updatedAt:{S:now()}}}));
           // Organizations (customer tenants) live in a shared PLATFORM partition rather than a
@@ -577,11 +592,17 @@ Resources:
           const saveRunWithAudit=async(run,auditStartIdx)=>{
             const newEntries=run.audit.slice(auditStartIdx||0);
             const items=[{Put:{TableName:table,Item:{pk:{S:`TENANT#${run.tenantId}`},sk:{S:`RUN#${run.id}`},tenantId:{S:run.tenantId},document:{S:JSON.stringify(run)},updatedAt:{S:now()}}}}];
-            newEntries.slice(0,90).forEach((entry,i)=>{
-              const seq=String((auditStartIdx||0)+i).padStart(6,'0');
-              items.push({Put:{TableName:table,Item:{pk:{S:`TENANT#${run.tenantId}`},sk:{S:`AUDIT#${run.id}#${seq}`},tenantId:{S:run.tenantId},document:{S:JSON.stringify({...entry,runId:run.id})},updatedAt:{S:now()}}}});
-            });
+            // A transaction accepts at most 100 items. This used to slice(0,90) and drop the
+            // rest with no error, leaving the queryable AUDIT# trail permanently out of step
+            // with the run document's own audit array -- and the queryable one is what the
+            // evidence tooling reads. Chunk instead of truncating.
+            const auditItem=(entry,i)=>({Put:{TableName:table,Item:{pk:{S:`TENANT#${run.tenantId}`},sk:{S:`AUDIT#${run.id}#${String((auditStartIdx||0)+i).padStart(6,'0')}`},tenantId:{S:run.tenantId},document:{S:JSON.stringify({...entry,runId:run.id})},updatedAt:{S:now()}}}});
+            const FIRST_BATCH=99;
+            newEntries.slice(0,FIRST_BATCH).forEach((entry,i)=>items.push(auditItem(entry,i)));
             await db.send(new TransactWriteItemsCommand({TransactItems:items}));
+            for(let offset=FIRST_BATCH;offset<newEntries.length;offset+=100){
+              await db.send(new TransactWriteItemsCommand({TransactItems:newEntries.slice(offset,offset+100).map((entry,i)=>auditItem(entry,offset+i))}));
+            }
           };
           // The one Gateway tool the Executor is allowed to call in this vertical slice. Auth is
           // the execution grant, not a JWT or agent token -- identity/scope comes entirely from
