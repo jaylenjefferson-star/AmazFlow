@@ -166,6 +166,20 @@ export class WorkflowEngine {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           const allowlistRejected = /outside.*allowlist/i.test(message);
+          const canRouteToReview = allowlistRejected && step.allowedValues?.map(String).includes("REVIEW");
+          if (canRouteToReview) {
+            const values = (run.context.values ??= {}) as Record<string, unknown>;
+            values[step.outputKey] = { value: "REVIEW", confidence: 0 };
+            this.event(
+              run,
+              "AI_ALLOWLIST_REJECTED",
+              `AmazFlow's AI returned a value outside what "${step.name}" allows -- routed to human review and no action was taken`,
+              step.id,
+              { operation: step.operation, fallback: "REVIEW" },
+            );
+            run.currentStepId = step.next;
+            continue;
+          }
           run.status = "FAILED";
           run.currentStepId = undefined;
           this.event(

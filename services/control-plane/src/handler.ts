@@ -1053,6 +1053,24 @@ const advance = async (workflow, run, auditStartIdx) => {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const allowlistRejected = /outside.*allowlist/i.test(message);
+        const canRouteToReview =
+          allowlistRejected &&
+          Array.isArray(step.allowedValues) &&
+          step.allowedValues.map(String).includes("REVIEW");
+        if (canRouteToReview) {
+          run.context.values[step.outputKey] = {
+            value: "REVIEW",
+            confidence: 0,
+          };
+          audit(
+            "AI_ALLOWLIST_REJECTED",
+            `AmazFlow's AI returned a value outside what "${step.name}" allows -- routed to human review and no action was taken`,
+            step.id,
+            { operation: step.operation, fallback: "REVIEW" },
+          );
+          next = step.next;
+          continue;
+        }
         run.status = "FAILED";
         audit(
           allowlistRejected ? "AI_ALLOWLIST_REJECTED" : "AI_FAILED",

@@ -90,7 +90,7 @@ test("waiting work times out through the shared state machine", async () => {
   assert.equal(timedOut.audit.at(-1)?.type, "RUN_TIMED_OUT");
 });
 
-test("an AI allowlist rejection persists a failed run and never reaches an action", async () => {
+test("an AI allowlist rejection routes to human review and never reaches an action", async () => {
   let saved: WorkflowRun | undefined;
   let task: AgentTask | undefined;
   const store: Store = {
@@ -107,10 +107,10 @@ test("an AI allowlist rejection persists a failed run and never reaches an actio
 
   const run = await engine.start(sampleWorkflow, { request: "Do something unsupported" });
 
-  assert.equal(run.status, "FAILED");
-  assert.equal(run.currentStepId, undefined);
-  assert.equal(saved?.status, "FAILED");
+  assert.equal(run.status, "WAITING_APPROVAL");
+  assert.equal(run.currentStepId, "approval");
+  assert.equal(saved?.status, "WAITING_APPROVAL");
   assert.equal(task, undefined, "no browser action may be queued");
-  assert.equal(run.audit.at(-1)?.type, "AI_ALLOWLIST_REJECTED");
-  assert.match(run.audit.at(-1)?.message ?? "", /no action was taken/i);
+  assert.ok(run.audit.some((event) => event.type === "AI_ALLOWLIST_REJECTED"));
+  assert.equal((run.context.values as Record<string, { value: string }>).decision.value, "REVIEW");
 });
