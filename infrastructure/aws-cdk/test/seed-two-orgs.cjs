@@ -52,12 +52,16 @@ const RUN_STATUSES = [
 
 // The six customer roles plus the internal role, each mapped to the group today's handler reads.
 // ORG_OWNER and ORG_ADMIN are customer administrators; the other four are not.
+// The mapping is design.md's own table (*Authorization: the permissions policy module*), not a guess.
+// WORKFLOW_BUILDER and APPROVER map to CLIENT_ADMIN, which matters concretely: APPROVER exists to
+// decide approvals, and POST /runs/{id}/approvals/{stepId} refuses a FRONTLINE caller -- mapping
+// APPROVER to FRONTLINE would have made the role unable to do the one thing it is for.
 const ROLES = [
   { role: "ORG_OWNER", group: "CLIENT_ADMIN" },
   { role: "ORG_ADMIN", group: "CLIENT_ADMIN" },
-  { role: "WORKFLOW_BUILDER", group: "FRONTLINE" },
+  { role: "WORKFLOW_BUILDER", group: "CLIENT_ADMIN" },
+  { role: "APPROVER", group: "CLIENT_ADMIN" },
   { role: "OPERATOR", group: "FRONTLINE" },
-  { role: "APPROVER", group: "FRONTLINE" },
   { role: "VIEWER", group: "FRONTLINE" },
 ];
 
@@ -110,6 +114,19 @@ function seedOrg({ tenantId, label }) {
   for (const { role, group } of ROLES) {
     const username = `${role.toLowerCase()}@${label}.example.com`;
     seedUser(username, { tenantId, role: group });
+    // The MEMBERSHIP# record is what carries the FINE role into the principal (design decision D-3).
+    // Seeding it explicitly rather than relying on the lazy backfill is what lets a probe address a
+    // specific one of the six roles: the backfill can only ever produce the group's default, so
+    // without this there would be no way to reach WORKFLOW_BUILDER, APPROVER or VIEWER at the API.
+    putDoc(`TENANT#${tenantId}`, `MEMBERSHIP#${username}`, {
+      orgId: tenantId,
+      username,
+      role,
+      teamIds: [],
+      status: "active",
+      createdAt: iso(-86400000),
+      updatedAt: iso(-86400000),
+    }, { tenantId: { S: tenantId } });
     principals[role] = { userId: username, username, tenantId, role, group };
   }
   // A deactivated member: present in the pool, disabled. Every authenticated route must refuse it.
@@ -269,7 +286,10 @@ function seedOrg({ tenantId, label }) {
     createdBy: principals.ORG_ADMIN.userId,
     createdAt: iso(-86400000),
   };
-  putTenant(tenantId, "CONNECTION", connection);
+  // BROWSERCONNECTION, not CONNECTION: the handler reads `BROWSERCONNECTION#${id}`, so the original
+  // prefix meant the seeded connection was never reachable by any route -- the fixture existed and
+  // the routes that use it could not see it.
+  putTenant(tenantId, "BROWSERCONNECTION", connection);
 
   const secret = {
     id: `secret_${label}`,

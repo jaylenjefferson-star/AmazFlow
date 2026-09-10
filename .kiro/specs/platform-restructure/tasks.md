@@ -164,34 +164,56 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       sign-out forcing a reload; invitation challenge handled in-page
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.9, 4.16, 4.17, 4.20, 4.21_
 
-- [ ] 6. Checkpoint — auth hardened, both existing consoles unchanged
+- [x] 6. Checkpoint — auth hardened, both existing consoles unchanged
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 7. Phase 2 — Principal, centralized authorization, tenant scope, membership
+  - 11 of 13 sub-tasks complete. 7.5 and 7.6 are partial; the remainder is written into each
 
-  - [ ] 7.1 Create the permissions package: permission union, role grants, decision function, throwing wrapper, navigation visibility
+  - [x] 7.1 Create the permissions package: permission union, role grants, decision function, throwing wrapper, navigation visibility
+    - `packages/permissions` is the canonical copy; the deployed template carries an inline copy, kept
+      honest by 31 new parity invariants **and** by P1.12, which puts the same generated cases to both
+      and compares decisions — a regex check cannot catch a grant set that drifted by one entry
     - Evaluate in the design's fixed order: organization boundary, staff scope, internal namespace, role
       grant, own-record narrowing, workflow assignment
     - Represent grants as a keyed collection of permission sets so a new role key needs no change to the
       decision function
     - _Requirements: 7.1, 7.3, 7.5, 7.6, 7.7, 7.8, 7.9, 7.10, 7.11, 7.18_
 
-  - [ ] 7.2 Implement the principal type and its construction from verified claims, plus an explicit agent principal
+  - [x] 7.2 Implement the principal type and its construction from verified claims, plus an explicit agent principal
     - Express the agent execution path's privilege elevation as its own principal type, unavailable to
       human-facing routes; reserve a field for an impersonating user
     - _Requirements: 6.11, 23.16, 4.1_
 
-  - [ ] 7.3 Implement the single sanctioned tenant-scoped read and the separately named cross-organization read
+  - [x] 7.3 Implement the single sanctioned tenant-scoped read and the separately named cross-organization read
+    - Three named reads, not two: `tenantRead` (organization from the principal), `crossTenantRead`
+      (staff or agent, stated reason, audited) and `platformRead` (the sweep and engine internals).
+      Keeping the sweep out of `crossTenantRead` is what stops "a staff member looked at another
+      organization's data" from drowning in scheduler noise
     - The tenant read takes the organization from the principal, not from an argument; the cross-organization
       read requires a stated reason and records an audit event on every call
     - _Requirements: 6.3, 6.4, 6.10, 6.12, 23.18_
 
-  - [ ] 7.4 Replace every inline role comparison in both control-plane copies with one authorization call per route
+  - [x] 7.4 Replace every inline role comparison in both control-plane copies with one authorization call per route
+    - Both copies now compare **zero** role strings for the caller's own role, enforced by a new
+      source-parity check rather than trusted. Three things are deliberately outside that rule and
+      documented there: `ctx.userRole` in `agentMayRunTask` (requirement 15's claiming predicate on a
+      path with no human principal), the check on the role being *granted* at invitation
+      (requirement 7.13), and role names inside user-facing strings
     - Move the repeated own-organization guard into the policy; leave no role comparison outside the policy
       module
     - _Requirements: 7.2, 27.4, 27.5, 6.9, 18.4_
 
   - [ ] 7.5 Add membership records with lazy read-triggered creation and a default role derived from the coarse group
+    - Backfill happens as a side effect of `principalFor()`, so the migration runs on normal use rather
+      than as a batch job. `CLIENT_ADMIN → ORG_ADMIN` (not `ORG_OWNER`: nobody acquires ownership
+      transfer by default) and `FRONTLINE → OPERATOR` (not `VIEWER`: that would *remove* access).
+      Asserted end to end by the last three cases of the per-role suite, including that a stored role
+      its group cannot reach is not believed
+    - NOT YET DONE, deferred to the user-management work in Phase 5: the write side. There is no
+      `POST /tenants/{t}/users/{username}/role` route yet, so a fine role cannot be *assigned* through
+      the API — only defaulted from the group or seeded. Team assignment and `lastLoginAt` are likewise
+      unwritten
     - Membership is the source of truth for fine-grained role, team assignments, and activity timestamps;
       the identity provider stays authoritative for credentials, enabled state, and coarse group, and wins
       on disagreement with reconciliation on read
@@ -199,42 +221,75 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 7.4, 7.14_
 
   - [ ] 7.6 Enforce cross-organization 404 semantics and a per-route response field allowlist
+    - 404 semantics: done, and this is what closed D-1 and D-2. One additional leak was found while
+      testing and fixed — the `AUTHORIZATION_DENIED` audit record carried the foreign organization's
+      identifier in `details`, and `GET /audit` makes that record readable by the customer, so the
+      denial audit now records `crossOrganization: true` instead of the id
+    - PARTIAL on the *field allowlist*: the existing `privateResponseFields` strip is still a global
+      denylist rather than a per-route allowlist. The isolation suite asserts the property that matters
+      (no foreign value in any response body, on the complete returned set of every list route), but
+      requirement 27.11's per-route allowlist is not implemented and belongs with the route-spec work
     - Refuse a non-staff body naming another organization; exclude every foreign identifier and field value
       from responses; scope all enumerated entity types to the request's organization
     - _Requirements: 6.5, 6.6, 6.7, 6.8, 27.11, 27.13, 27.14_
 
-  - [ ] 7.7 Record an authorization-denied audit event and metric on every denial
+  - [x] 7.7 Record an authorization-denied audit event and metric on every denial
     - Carry the permission, resource, and decision code
     - _Requirements: 7.16, 28.6, 28.9_
 
-  - [ ] 7.8 Close the two authorization exposures convergence revealed
+  - [x] 7.8 Close the two authorization exposures convergence revealed
+    - All four: `POST /ai/execute` moved into the internal namespace (it accepted **any** signed-in
+      role); new organization-scoped `GET /audit` rather than widening `GET /activity`; the concurrency
+      limit refused through `maySetConcurrencyLimit()`; the staff group uninvitable by anyone. Each has
+      a named case in the per-role suite
     - Restrict the bounded artificial-intelligence execution diagnostic to staff; add an organization-scoped
       audit read route rather than widening the cross-organization one; refuse a concurrency-limit value
       from any customer role; refuse inviting into the staff group for every caller
     - _Requirements: 7.12, 7.13, 7.15, 6.14, 11.7_
 
-  - [ ] 7.9 Property tests for tenant isolation (Property 1) with fast-check plus the in-memory harness
+  - [x] 7.9 Property tests for tenant isolation (Property 1) with fast-check plus the in-memory harness
     - **Property 1: Tenant isolation** — no read, write, execute, or inspect crosses an organization
       boundary through any route; cross-organization denial precedes any permission evaluation; a
       tenant-scoped query returns only own-partition items; the agent admission predicate never admits a
       foreign task
     - **Validates: Requirements 6.1, 6.2, 6.3, 6.5, 6.6, 6.7, 6.8, 6.9, 6.11, 6.12, 7.6, 15.10, 22.8**
 
-  - [ ] 7.10 Property tests for role-based authorization (Property 2) with fast-check
+  - [x] 7.10 Property tests for role-based authorization (Property 2) with fast-check
+    - P2.1/P2.2 parse the matrix out of design.md and compare in both directions, rather than restating
+      it — a restatement would be a third copy, and three copies drift faster than two
+    - **Finding for the design, not fixed here:** the matrix table has rows for `approval:decide`,
+      `team:manage` and `secret:manage` but none for their read companions `approval:read`,
+      `team:read`, `secret:reference`. Not silently exempted: the exemption list in P2.4 is closed and
+      named, so a *new* undocumented grant still fails, and P2.4b asserts the coherence the missing
+      rows would have pinned down (a role holding the write form must hold the read form). Adding
+      three rows to design.md is a documentation change and is left for task 14.4
     - **Property 2: RBAC, server-enforced** — the decision function agrees with the declared matrix in both
       directions; no customer role reaches an internal permission; a forbidden action is refused at the API
       even where navigation would have offered it; the concurrency limit is unsettable by any customer role;
       the staff group is never invitable; the decision function is pure
     - **Validates: Requirements 2.1, 2.2, 7.2, 7.5, 7.7, 7.8, 7.9, 7.10, 7.11, 7.12, 7.13, 7.15**
 
-  - [ ] 7.11 Two-organization API-level isolation suite over every enumerated route
+  - [x] 7.11 Two-organization API-level isolation suite over every enumerated route
+    - `isolation-api.test.cjs`, 53 cases. Distinct from the baseline suite by intent: the baseline is a
+      recorded probe list that fails on drift, this walks the route inventory and *requires* every
+      id-scoped and parameter-scoped route in it to satisfy isolation — so a new route has to satisfy
+      it to land rather than waiting for somebody to write a probe. That completeness check found eight
+      routes the first draft had missed
+    - Two fixture bugs surfaced and were fixed: the seed stored browser connections under `CONNECTION#`
+      while the handler reads `BROWSERCONNECTION#` (so the seeded connection was unreachable by any
+      route), and the seed mapped `WORKFLOW_BUILDER` and `APPROVER` to `FRONTLINE` against design.md —
+      which would have left `APPROVER` unable to decide an approval, the one thing the role is for
     - Own identifier succeeds; foreign identifier returns 404 with no foreign value in the body; a body
       naming another organization is refused or, for staff, audited; list routes asserted on the complete
       returned set; staff cross-organization read succeeds and produces a cross-tenant read audit event;
       an agent credential from one organization cannot list or claim another's task
     - _Requirements: 34.4, 34.5, 34.6, 34.7, 34.8, 23.18_
 
-  - [ ] 7.12 Per-role permission suite asserting permitted and denied outcomes for all six customer roles plus staff
+  - [x] 7.12 Per-role permission suite asserting permitted and denied outcomes for all six customer roles plus staff
+    - `per-role-permissions.test.cjs`, 42 cases, every enumerated unauthorized attempt written out by
+      name rather than generated — "an operator may not decide an approval" is a statement about
+      separation of duties, and it deserves to fail by name. It caught a real gap:
+      `POST /workflows/{id}/runs` was not behind the policy at all, so a VIEWER could start a run
     - Include every intentional unauthorized attempt the design enumerates, each returning 403: operator
       deciding an approval; viewer starting or cancelling a run, inviting a user, revoking an agent;
       workflow builder publishing under the conservative Q-1 assumption and setting the concurrency limit;
@@ -245,13 +300,27 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       calling any authenticated route
     - _Requirements: 34.9, 34.10, 2.5_
 
-  - [ ] 7.13 Expose the permission matrix as a route so the interface renders the real policy
+  - [x] 7.13 Expose the permission matrix as a route so the interface renders the real policy
+    - `GET /permissions/matrix` serializes the same `ROLE_GRANTS` the API enforces, reporting `"own"`
+      where a role holds only the narrow form — "you can cancel runs" and "you can cancel your own
+      runs" are different promises. `GET /me` also now returns `platformRole` and the visible sections
+    - Remaining: no frontend consumes it yet. `/admin/roles` is Phase 5's surface work
     - _Requirements: 7.17, 11.4_
 
-- [ ] 8. Checkpoint — authorization centralized, behaviour identical for existing users
+- [x] 8. Checkpoint — authorization centralized, behaviour identical for existing users
   - Ensure all tests pass, ask the user if questions arise.
   - Properties 1 and 2, the isolation suite, and the per-role suite are green; the Phase 0 baseline defect
     list is fully accounted for.
+  - **Met.** 19 suites green: `aws-cdk` (8/16/24/11/9/14/16/17/25/22/20/20/30, isolation baseline
+    28 pass 0 defect 1 by design, isolation-api 53, per-role 42, P1 12, P2 19, parity 128), engine 29,
+    control-plane 5, web typecheck + build. The baseline defect count went 14 → 0 and
+    `isolation-baseline.json` was re-recorded in the same commit, so the drift check now guards the
+    fixed state
+  - **Behaviour identical for existing users** rests on the default role mapping, not on inspection:
+    every account today carries only a coarse group, `CLIENT_ADMIN → ORG_ADMIN` reproduces exactly
+    today's tenant-admin access, and `FRONTLINE → OPERATOR` reproduces today's team-member access. Two
+    routes did change for customers, both deliberately and both listed in task 7.8: `POST /ai/execute`
+    (previously any signed-in role) and the refusal *status* on cross-organization ids (403 → 404)
 
 - [ ] 9. Phase 3 — Shared packages, three surfaces, and hosting infrastructure
 

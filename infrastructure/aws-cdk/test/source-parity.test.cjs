@@ -123,7 +123,11 @@ const invariants = [
   ["the allowed origin list must include the base URL's own origin", /Allowed origins must include the base URL origin/, /Allowed origins must include the base URL origin/],
   ["the allowed origin list is bounded", /at most 20 origins/, /at most 20 origins/],
   ["the managed profile identifier never leaves the server", /const \{managedProfileId,\.\.\.safe\}=connection/, /const \{ managedProfileId, \.\.\.safe \} = connection/],
-  ["browser connections are admin-only", /Only tenant admins view browser connections/, /Only tenant admins view browser connections/],
+  // Phase 2 turned this message-based guard into a permission. The invariant follows it rather than
+  // being deleted: what matters is that the restriction still exists in both copies, not that it is
+  // still phrased as prose.
+  ["browser connections are admin-only", /authorizeIn\(asPrincipal\(a\),'connection:read'/, /authorizeIn\(asPrincipal\(a\), "connection:read"/],
+  ["managing a browser connection needs the manage permission", /authorizeIn\(asPrincipal\(a\),'connection:manage'/, /authorizeIn\(asPrincipal\(a\), "connection:manage"/],
   ["a revoked connection cannot start a login session", /This connection has been revoked/, /This connection has been revoked/],
   ["an unconfigured managed browser is reported plainly", /Managed browser is not configured/, /Managed browser is not configured/],
   ["revoking a browser connection is audited", /BROWSER_CONNECTION_REVOKED/, /BROWSER_CONNECTION_REVOKED/],
@@ -187,6 +191,9 @@ const invariants = [
   ["the staff group is never invitable", /INVITABLE_ROLES=\['CLIENT_ADMIN','FRONTLINE'\]/, /INVITABLE_ROLES = \["CLIENT_ADMIN", "FRONTLINE"\]/],
   ["the permission matrix is exposed as a route", /GET \/permissions\/matrix/, /GET \/permissions\/matrix/],
   ["navigation is derived from the same policy the API enforces", /const visibleSections=/, /export function visibleSections/],
+  ["own-record list narrowing is driven by the permission, not by the group", /!can\(p,'run:read_all',\{orgId:p\.orgId\}\)\.allow/, /!can\(p, "run:read_all", \{ orgId: p\.orgId \}\)\.allow/],
+  ["the audit actor label comes from the policy rather than a role comparison", /const actorLabelFor=/, /const actorLabelFor = /],
+  ["a list route does not decide its own scope", /const tenantOrStaffRead=/, /const tenantOrStaffRead = /],
 ];
 
 let pass = 0, fail = 0;
@@ -284,6 +291,55 @@ console.log("\nGATEWAY ROUTE COVERAGE\n");
       `  FAIL  the routes use ${notAllowed.join(", ")} but CORS permits only ${allowMethods.join(", ")};\n` +
         "        a browser's preflight is refused before the request is made",
     );
+  }
+}
+
+// ------------------------------------------------------- no role comparison outside the policy ---
+//
+// Task 7.4's standing rule, enforced rather than trusted. Every authorization decision comes from the
+// permissions policy, so a role string compared anywhere in a handler is by definition a second
+// policy -- and a second policy is how the first one becomes wrong. The permissions module itself is
+// exempt: comparing a role is precisely its job.
+console.log("\nNO ROLE COMPARISON OUTSIDE THE POLICY\n");
+{
+  // Scoped to the CALLER's own role, which is what the rule is about. Three things deliberately fall
+  // outside it, and each is a different kind of not-an-authorization-decision:
+  //
+  //   * `ctx.userRole` in agentMayRunTask -- the AGENT CREDENTIAL's coarse role. That is requirement
+  //     15's capability-aware claiming predicate, the isolating control on a path that has no human
+  //     principal at all. It is not the permission policy and must not be routed through it.
+  //   * `inviteBody.role === "SUPER_ADMIN"` -- a check on the role being GRANTED, not the role
+  //     holding it. Requirement 7.13 asks for exactly this refusal, for every caller.
+  //   * a role name inside a user-facing string ("Invited X as a team admin").
+  //
+  // Hence `\.role` preceded by a principal-ish receiver: that is the caller, and the caller's role is
+  // the policy's business alone.
+  const ROLE_COMPARISON =
+    /\b(?:a|p|principal|session|auth|ctx)\.role\s*(?:!==|===)\s*['"](?:SUPER_ADMIN|CLIENT_ADMIN|FRONTLINE|ORG_OWNER|ORG_ADMIN|WORKFLOW_BUILDER|OPERATOR|APPROVER|VIEWER|STAFF_ADMIN)['"]|['"](?:SUPER_ADMIN|CLIENT_ADMIN|FRONTLINE)['"]\s*(?:!==|===)\s*\b(?:a|p|principal|session)\.role\b/g;
+  const handlerOnly = [
+    ["amazflow-dev.yaml", deployed],
+    ["services/control-plane/src/handler.ts", read("services/control-plane/src/handler.ts")],
+    ["services/control-plane/src/browser-connections.ts", read("services/control-plane/src/browser-connections.ts")],
+  ];
+  for (const [name, source] of handlerOnly) {
+    // The policy block is inlined into the deployed template, so its own comparisons live in the same
+    // file. Strip the block before checking, using the markers that delimit it.
+    const body =
+      name === "amazflow-dev.yaml"
+        ? source.slice(source.indexOf("const parse=i=>JSON.parse"))
+        : source;
+    const found = [...body.matchAll(ROLE_COMPARISON)].map((match) => match[0]);
+    if (found.length === 0) {
+      pass++;
+      console.log(`  PASS  ${name} compares no role string`);
+    } else {
+      fail++;
+      console.log(
+        `  FAIL  ${name} still compares a role string ${found.length} time(s): ${[...new Set(found)].join(", ")}\n` +
+          "        Every authorization decision must come from the permissions policy. Use\n" +
+          "        authorizeIn/guardIn with a permission, or a named predicate from the policy module.",
+      );
+    }
   }
 }
 

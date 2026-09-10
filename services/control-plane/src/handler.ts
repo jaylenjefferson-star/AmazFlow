@@ -560,6 +560,20 @@ const agentPrincipalFor = (agentCtx) => ({
 // Normalizes the legacy auth object ({ userId, email, tenantId, role: <coarse group> }) into a
 // principal, so the tenancy fix could land at every call site without first rewriting the signature
 // of every function that takes `a`. The scoping is what leaked, not the parameter shape.
+// A list route wants "everything this principal may see": own partition for a customer, every
+// organization for staff. One helper, so no route decides that for itself.
+const tenantOrStaffRead = async (type, p) =>
+  p.isStaff
+    ? crossTenantRead(type, p, `staff listing ${type} across organizations`)
+    : tenantRead(type, p);
+// Cosmetic, but still a role comparison outside the policy -- and nine copies of it is nine chances
+// to describe the same principal differently in the audit trail.
+const actorLabelFor = (p) =>
+  p.isStaff
+    ? "AmazFlow super admin"
+    : can(p, "user:invite", { orgId: p.orgId }).allow
+      ? "Team admin"
+      : "Team member";
 const asPrincipal = (p) =>
   p && p.kind
     ? p
@@ -684,7 +698,11 @@ const authorizeIn = async (p, permission, resource) => {
       details: {
         permission,
         decisionCode: decision.code,
-        resourceOrgId: resource.orgId || null,
+        crossOrganization: decision.code === "WRONG_ORG",
+        // NOT resource.orgId on a WRONG_ORG denial: that value IS the other organization's
+        // identifier, and this record is readable by the customer through GET /audit. Writing it
+        // here would put the leak straight back into the audit trail (requirement 6.7).
+        resourceOrgId: decision.code === "WRONG_ORG" ? null : resource.orgId || null,
         resourceOwnerUserId: resource.ownerUserId || null,
         principalRole: p.role,
       },
@@ -1485,8 +1503,7 @@ const revokeAgent = async (agentId, a) => {
   await save("AGENT", agent);
   await logActivity(agent.tenantId, {
     actor: a.userId,
-    actorLabel:
-      a.role === "SUPER_ADMIN" ? "AmazFlow super admin" : "Team admin",
+    actorLabel: actorLabelFor(asPrincipal(a)),
     action: "AGENT_REVOKED",
     summary: `Revoked agent "${agent.name}"`,
   });
@@ -2437,7 +2454,7 @@ const resumeApproval = async (runId, stepId, approved, a) => {
   const step = workflow.steps.find((s) => s.id === stepId);
   if (!step || step.type !== "approval")
     throw { status: 400, message: "Step is not an approval step" };
-  if (a.role !== "SUPER_ADMIN" && !(step.roles || []).includes(a.role))
+  if (!asPrincipal(a).isStaff && !(step.roles || []).includes(asPrincipal(a).group))
     throw {
       status: 403,
       message: "Your role is not authorized to decide this approval",
@@ -2469,11 +2486,10 @@ const confirmActionGate = async (runId, stepId, a) => {
   if (!run) throw { status: 404, message: "Run not found" };
   if (run.status !== "AWAITING_CONFIRMATION" || run.currentStepId !== stepId)
     throw { status: 409, message: "Run is not waiting for this confirmation" };
-  if (a.role === "FRONTLINE")
-    throw {
-      status: 403,
-      message: "Only tenant admins confirm protected actions",
-    };
+  await authorizeIn(asPrincipal(a), "run:confirm", {
+    orgId: run.tenantId,
+    ownerUserId: run.createdBy,
+  });
   const workflow = await getWorkflowVersion(
     run.tenantId,
     run.workflowId,
@@ -2817,7 +2833,7 @@ const inviteTenantUser = async (tenantId, body, a) => {
 
   await logActivity(tenantId, {
     actor: a.userId,
-    actorLabel: a.role === "SUPER_ADMIN" ? "AmazFlow super admin" : "Team admin",
+    actorLabel: actorLabelFor(asPrincipal(a)),
     action: "TEAM_MEMBER_INVITED",
     summary: `Invited ${email} as ${role === "CLIENT_ADMIN" ? "a team admin" : "a team member"}`,
     details: { email, role },
@@ -4053,12 +4069,7 @@ const createTicket = async (a, body) => {
   await save("TICKET", ticket);
   await logActivity(a.tenantId, {
     actor: a.userId,
-    actorLabel:
-      a.role === "SUPER_ADMIN"
-        ? "AmazFlow super admin"
-        : a.role === "CLIENT_ADMIN"
-          ? "Team admin"
-          : "Team member",
+    actorLabel: actorLabelFor(asPrincipal(a)),
     action: "SUPPORT_TICKET_CREATED",
     summary: `Opened support ticket "${subject}"`,
   });
@@ -4090,7 +4101,7 @@ const updateTicket = async (ticketId, a, body) => {
         at: now(),
         by: a.userId,
         text: String(body.note).slice(0, 2000),
-        internal: a.role === "SUPER_ADMIN" && !!body.internal,
+        internal: asPrincipal(a).isStaff && !!body.internal,
       },
     ];
   }
@@ -4099,8 +4110,7 @@ const updateTicket = async (ticketId, a, body) => {
   if (body.status)
     await logActivity(ticket.tenantId, {
       actor: a.userId,
-      actorLabel:
-        a.role === "SUPER_ADMIN" ? "AmazFlow super admin" : "Team admin",
+      actorLabel: actorLabelFor(asPrincipal(a)),
       action: "SUPPORT_TICKET_STATUS",
       summary: `Ticket "${ticket.subject}" set to ${ticket.status}`,
     });
@@ -4145,23 +4155,13 @@ const publicBrowserConnection = (connection) => {
   return safe;
 };
 const listBrowserConnections = async (a) => {
-  if (a.role === "FRONTLINE")
-    throw {
-      status: 403,
-      message: "Only tenant admins view browser connections",
-    };
+  await authorizeIn(asPrincipal(a), "connection:read", { orgId: a.tenantId });
   return (await scanType("BROWSERCONNECTION#", a)).map(publicBrowserConnection);
 };
 const createBrowserConnection = async (a, body) => {
-  if (a.role === "FRONTLINE")
-    throw {
-      status: 403,
-      message: "Only tenant admins create browser connections",
-    };
+  await authorizeIn(asPrincipal(a), "connection:manage", { orgId: a.tenantId });
   const tenantId =
-    a.role === "SUPER_ADMIN" && body.tenantId
-      ? String(body.tenantId)
-      : a.tenantId;
+    asPrincipal(a).isStaff && body.tenantId ? String(body.tenantId) : a.tenantId;
   let valid;
   try {
     valid = validateBrowserConnectionInput(body);
@@ -4182,9 +4182,7 @@ const createBrowserConnection = async (a, body) => {
 };
 const requireBrowserConnection = async (a, id) => {
   const tenantId =
-    a.role === "SUPER_ADMIN" && a.requestedTenantId
-      ? a.requestedTenantId
-      : a.tenantId;
+    asPrincipal(a).isStaff && a.requestedTenantId ? a.requestedTenantId : a.tenantId;
   let connection = await getBrowserConnection(tenantId, id);
   if (!connection && isStaffGroup(a.role))
     // Already tenant-partitioned for a customer (getBrowserConnection keys on the caller's own
@@ -4201,11 +4199,7 @@ const requireBrowserConnection = async (a, id) => {
   return connection;
 };
 const startBrowserLogin = async (a, id) => {
-  if (a.role === "FRONTLINE")
-    throw {
-      status: 403,
-      message: "Only tenant admins authenticate browser connections",
-    };
+  await authorizeIn(asPrincipal(a), "connection:manage", { orgId: a.tenantId });
   if (!browserManager)
     throw { status: 503, message: "Managed browser is not configured" };
   const connection = await requireBrowserConnection(a, id);
@@ -4239,11 +4233,7 @@ const startBrowserLogin = async (a, id) => {
   };
 };
 const completeBrowserLogin = async (a, id, body) => {
-  if (a.role === "FRONTLINE")
-    throw {
-      status: 403,
-      message: "Only tenant admins authenticate browser connections",
-    };
+  await authorizeIn(asPrincipal(a), "connection:manage", { orgId: a.tenantId });
   if (!browserManager)
     throw { status: 503, message: "Managed browser is not configured" };
   const connection = await requireBrowserConnection(a, id);
@@ -4283,19 +4273,14 @@ const completeBrowserLogin = async (a, id, body) => {
   ]);
   await logActivity(connection.tenantId, {
     actor: a.userId,
-    actorLabel:
-      a.role === "SUPER_ADMIN" ? "AmazFlow super admin" : "Team admin",
+    actorLabel: actorLabelFor(asPrincipal(a)),
     action: "BROWSER_CONNECTION_AUTHENTICATED",
     summary: `Authenticated browser connection "${connection.name}"`,
   });
   return publicBrowserConnection(connection);
 };
 const revokeBrowserConnection = async (a, id) => {
-  if (a.role === "FRONTLINE")
-    throw {
-      status: 403,
-      message: "Only tenant admins revoke browser connections",
-    };
+  await authorizeIn(asPrincipal(a), "connection:manage", { orgId: a.tenantId });
   const connection = await requireBrowserConnection(a, id);
   if (connection.managedProfileId && browserManager)
     await browserManager.deleteProfile(connection.managedProfileId);
@@ -4305,8 +4290,7 @@ const revokeBrowserConnection = async (a, id) => {
   await save("BROWSERCONNECTION", connection);
   await logActivity(connection.tenantId, {
     actor: a.userId,
-    actorLabel:
-      a.role === "SUPER_ADMIN" ? "AmazFlow super admin" : "Team admin",
+    actorLabel: actorLabelFor(asPrincipal(a)),
     action: "BROWSER_CONNECTION_REVOKED",
     summary: `Revoked browser connection "${connection.name}"`,
   });
@@ -4556,10 +4540,10 @@ exports.handler = async (e) => {
       );
     }
     if (route === "POST /workflows") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error: "Only AmazFlow super admins configure workflows",
-        });
+      {
+        const denied = await guardIn(p, "internal:workflow_author", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "Only AmazFlow super admins configure workflows", code: "FORBIDDEN" });
+      }
       const body = JSON.parse(e.body || "{}");
       const shapeError = validateWorkflowShape(body);
       if (shapeError) return reply(400, { error: shapeError });
@@ -4596,10 +4580,10 @@ exports.handler = async (e) => {
       return reply(200, await listWorkflowVersions(workflow.tenantId, id));
     }
     if (route === "GET /organizations") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error: "Only AmazFlow administrators view organizations",
-        });
+      {
+        const denied = await guardIn(p, "internal:organization_manage", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "Only AmazFlow administrators view organizations", code: "FORBIDDEN" });
+      }
       const orgs = await listOrganizations();
       return reply(
         200,
@@ -4609,10 +4593,10 @@ exports.handler = async (e) => {
       );
     }
     if (route === "POST /organizations") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error: "Only AmazFlow administrators create organizations",
-        });
+      {
+        const denied = await guardIn(p, "internal:organization_manage", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "Only AmazFlow administrators create organizations", code: "FORBIDDEN" });
+      }
       const body = JSON.parse(e.body || "{}");
       const name = String(body.name || "").trim();
       if (!name) return reply(400, { error: "A name is required" });
@@ -4654,10 +4638,10 @@ exports.handler = async (e) => {
       return reply(200, { ...org, settings: orgSettings(org) });
     }
     if (route === "PUT /organizations/{slug}") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error: "Only AmazFlow administrators change an organization profile",
-        });
+      {
+        const denied = await guardIn(p, "internal:organization_manage", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "Only AmazFlow administrators change an organization profile", code: "FORBIDDEN" });
+      }
       const slug = e.pathParameters?.slug;
       const org = await getOrganization(slug);
       if (!org) return reply(404, { error: "Organization not found" });
@@ -4690,10 +4674,6 @@ exports.handler = async (e) => {
     }
     if (route === "POST /organizations/{slug}/settings") {
       const slug = e.pathParameters?.slug;
-      if (a.role === "FRONTLINE")
-        return reply(403, {
-          error: "Only administrators change organization settings",
-        });
       {
         const denied = await guardIn(p, "org:settings", { orgId: slug });
         if (denied) return denied;
@@ -4726,10 +4706,7 @@ exports.handler = async (e) => {
       );
       await logActivity(slug, {
         actor: a.userId,
-        actorLabel:
-          a.role === "SUPER_ADMIN"
-            ? "AmazFlow super admin"
-            : "Customer administrator",
+        actorLabel: asPrincipal(a).isStaff ? "AmazFlow super admin" : "Customer administrator",
         action: "ORG_SETTINGS_CHANGED",
         summary: changed.length
           ? `Changed ${changed.join(", ")}`
@@ -4739,10 +4716,10 @@ exports.handler = async (e) => {
       return reply(200, { ...next, settings });
     }
     if (route === "POST /workflows/generate") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error: "Only AmazFlow super admins generate workflows",
-        });
+      {
+        const denied = await guardIn(p, "internal:workflow_author", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "Only AmazFlow super admins generate workflows", code: "FORBIDDEN" });
+      }
       const body = JSON.parse(e.body || "{}");
       if (!body.sop || typeof body.sop !== "string")
         return reply(400, { error: "A sop description is required" });
@@ -4761,8 +4738,10 @@ exports.handler = async (e) => {
       }
     }
     if (route === "GET /leads") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, { error: "Only AmazFlow super admins view leads" });
+      {
+        const denied = await guardIn(p, "internal:lead_read", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "Only AmazFlow super admins view leads", code: "FORBIDDEN" });
+      }
       const items = await scanType("LEAD#", a);
       return reply(
         200,
@@ -4772,8 +4751,8 @@ exports.handler = async (e) => {
       );
     }
     if (route === "GET /runs") {
-      let items = await scanType("RUN#", a);
-      if (a.role === "FRONTLINE")
+      let items = await tenantOrStaffRead("RUN#", p);
+      if (!can(p, "run:read_all", { orgId: p.orgId }).allow)
         items = items.filter((r) => r.createdBy === a.userId);
       return reply(
         200,
@@ -4794,19 +4773,25 @@ exports.handler = async (e) => {
       const workflows = await scanType("WORKFLOW#", a);
       const workflow = workflows.find((w) => w.id === id);
       if (!workflow) return reply(404, { error: "Workflow not found" });
-      if (
-        a.role !== "SUPER_ADMIN" &&
-        !(workflow.assignedRoles || []).includes(a.role)
-      )
-        return reply(403, {
-          error: "This workflow is not assigned to your role",
-        });
+      // Assignment is now step 6 of can(), applied by the workflow:run guard below. This copy
+      // compared the COARSE group against assignedRoles, which a fine role cannot satisfy.
       if (workflow.status !== "active")
         return reply(409, {
           error: "This workflow is not published for execution",
         });
       // Organization-level gates, checked before anything else because being paused is not a
       // problem an operator can fix by plugging in an agent.
+      // Starting a run is a permission, and it carries the engine's assignment rule with it: step 6
+      // of can() refuses a role the workflow is not assigned to, which is the same check the engine
+      // already made -- now made once, before any organization or preflight gate spends work on a
+      // request that was never going to be allowed.
+      {
+        const denied = await guardIn(p, "workflow:run", {
+          orgId: workflow.tenantId,
+          assignedRoles: Array.isArray(workflow.assignedRoles) ? workflow.assignedRoles : undefined,
+        });
+        if (denied) return denied;
+      }
       const runOrg = await getOrganization(workflow.tenantId);
       if (runOrg && runOrg.status && runOrg.status !== "active")
         return reply(409, {
@@ -4870,12 +4855,7 @@ exports.handler = async (e) => {
       }
       await logActivity(a.tenantId, {
         actor: a.userId,
-        actorLabel:
-          a.role === "SUPER_ADMIN"
-            ? "AmazFlow super admin"
-            : a.role === "CLIENT_ADMIN"
-              ? "Team admin"
-              : "Team member",
+        actorLabel: actorLabelFor(asPrincipal(a)),
         action: "SESSIONS_REVOKED_SELF",
         summary: "Signed out of all devices",
       });
@@ -4885,11 +4865,19 @@ exports.handler = async (e) => {
     // route above because this one IS privileged, is audited against the target's organization
     // rather than the actor's, and is the operational answer to "that laptop was stolen".
     if (route === "POST /tenants/{tenantId}/users/{username}/sessions/revoke") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error: "Only AmazFlow administrators revoke another user's sessions",
-          code: "STAFF_ONLY",
-        });
+      {
+        // Own organization, not the path parameter: an internal route is staff-only regardless of
+        // which organization is named, so evaluating against the argument would answer 403 for the
+        // caller's own organization and 404 for another's -- a difference that tells the caller
+        // something about the argument. Staff cross-organization use is audited as
+        // SESSIONS_REVOKED_BY_STAFF against the target organization.
+        const denied = await guardIn(p, "internal:session_revoke", { orgId: a.tenantId });
+        if (denied)
+          return reply(denied.statusCode, {
+            error: "Only AmazFlow administrators revoke another user's sessions",
+            code: "STAFF_ONLY",
+          });
+      }
       const tenantId = e.pathParameters?.tenantId;
       const username = e.pathParameters?.username;
       // Resolved through the tenant's own member list, so a username from another organization is
@@ -4921,11 +4909,15 @@ exports.handler = async (e) => {
       return reply(200, { ok: true, username, revoked: "all_sessions" });
     }
     if (route === "POST /runs/{id}/executor/invoke") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error:
-            "Only AmazFlow administrators can invoke the Executor directly (diagnostic route)",
-        });
+      {
+        const denied = await guardIn(p, "internal:executor_diagnostic", { orgId: a.tenantId });
+        if (denied)
+          return reply(denied.statusCode, {
+            error:
+              "Only AmazFlow administrators can invoke the Executor directly (diagnostic route)",
+            code: "FORBIDDEN",
+          });
+      }
       try {
         const allRuns = await scanType("RUN#", a);
         const run = allRuns.find((r) => r.id === e.pathParameters?.id);
@@ -4965,8 +4957,10 @@ exports.handler = async (e) => {
       }
     }
     if (route === "GET /agents") {
-      if (a.role === "FRONTLINE")
-        return reply(403, { error: "Only tenant admins view agents" });
+      {
+        const denied = await guardIn(p, "agent:read", { orgId: a.tenantId });
+        if (denied) return denied;
+      }
       const items = await scanType("AGENT#", a);
       return reply(
         200,
@@ -4978,13 +4972,14 @@ exports.handler = async (e) => {
       );
     }
     if (route === "POST /agent-authorizations") {
-      if (a.role === "FRONTLINE")
-        return reply(403, { error: "Only tenant admins create agents" });
+      {
+        const denied = await guardIn(p, "agent:authorize", { orgId: a.tenantId });
+        if (denied) return denied;
+      }
       const body = JSON.parse(e.body || "{}");
       const name = String(body.name || "").trim();
       if (!name) return reply(400, { error: "A name is required" });
-      const targetTenantId =
-        a.role === "SUPER_ADMIN" && body.tenantId ? body.tenantId : a.tenantId;
+      const targetTenantId = p.isStaff && body.tenantId ? body.tenantId : a.tenantId;
       const result = await createAgentAndCode(
         targetTenantId,
         name,
@@ -5003,16 +4998,17 @@ exports.handler = async (e) => {
       );
       await logActivity(targetTenantId, {
         actor: a.userId,
-        actorLabel:
-          a.role === "SUPER_ADMIN" ? "AmazFlow super admin" : "Team admin",
+        actorLabel: actorLabelFor(asPrincipal(a)),
         action: "AGENT_CREATED",
         summary: `Authorized a new agent "${name}"`,
       });
       return reply(201, result);
     }
     if (route === "POST /agents/{id}/revoke") {
-      if (a.role === "FRONTLINE")
-        return reply(403, { error: "Only tenant admins revoke agents" });
+      {
+        const denied = await guardIn(p, "agent:revoke", { orgId: a.tenantId });
+        if (denied) return denied;
+      }
       try {
         const agent = await revokeAgent(e.pathParameters?.id, a);
         return reply(200, agent);
@@ -5022,8 +5018,10 @@ exports.handler = async (e) => {
       }
     }
     if (route === "GET /agent-tasks") {
-      if (a.role === "FRONTLINE")
-        return reply(403, { error: "Only tenant admins view agent tasks" });
+      {
+        const denied = await guardIn(p, "task:read", { orgId: a.tenantId });
+        if (denied) return denied;
+      }
       const items = await scanType("TASK#", a);
       return reply(
         200,
@@ -5031,8 +5029,10 @@ exports.handler = async (e) => {
       );
     }
     if (route === "POST /agent-tasks/{id}/result") {
-      if (a.role === "FRONTLINE")
-        return reply(403, { error: "Only tenant admins resolve agent tasks" });
+      {
+        const denied = await guardIn(p, "task:resolve", { orgId: a.tenantId });
+        if (denied) return denied;
+      }
       try {
         const body = JSON.parse(e.body || "{}");
         const run = await resumeAgentTask(e.pathParameters?.id, body, a);
@@ -5043,8 +5043,10 @@ exports.handler = async (e) => {
       }
     }
     if (route === "POST /runs/{id}/approvals/{stepId}") {
-      if (a.role === "FRONTLINE")
-        return reply(403, { error: "Only tenant admins decide approvals" });
+      {
+        const denied = await guardIn(p, "approval:decide", { orgId: a.tenantId });
+        if (denied) return denied;
+      }
       try {
         const body = JSON.parse(e.body || "{}");
         const run = await resumeApproval(
@@ -5158,8 +5160,7 @@ exports.handler = async (e) => {
       const targetUser = users.find((u) => u.username === username);
       await logActivity(tenantId, {
         actor: a.userId,
-        actorLabel:
-          a.role === "SUPER_ADMIN" ? "AmazFlow super admin" : "Team admin",
+        actorLabel: actorLabelFor(asPrincipal(a)),
         action: "TEAM_MEMBER_STATUS",
         summary: `${body.enabled ? "Reactivated" : "Deactivated"} ${targetUser ? targetUser.email : username}`,
       });
@@ -5186,11 +5187,10 @@ exports.handler = async (e) => {
       return reply(200, org);
     }
     if (route === "GET /copilot/actions") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error:
-            "AmazFlow Copilot is only available to AmazFlow administrators",
-        });
+      {
+        const denied = await guardIn(p, "internal:copilot", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "AmazFlow Copilot is only available to AmazFlow administrators", code: "FORBIDDEN" });
+      }
       let items = await scanType("COPILOTACTION#", { role: "SUPER_ADMIN" });
       const status = e.queryStringParameters?.status;
       if (status) items = items.filter((x) => x.status === status);
@@ -5202,19 +5202,17 @@ exports.handler = async (e) => {
       );
     }
     if (route === "GET /copilot/conversation") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error:
-            "AmazFlow Copilot is only available to AmazFlow administrators",
-        });
+      {
+        const denied = await guardIn(p, "internal:copilot", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "AmazFlow Copilot is only available to AmazFlow administrators", code: "FORBIDDEN" });
+      }
       return reply(200, await loadCopilotConversation(a.userId));
     }
     if (route === "POST /copilot/messages") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error:
-            "AmazFlow Copilot is only available to AmazFlow administrators",
-        });
+      {
+        const denied = await guardIn(p, "internal:copilot", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "AmazFlow Copilot is only available to AmazFlow administrators", code: "FORBIDDEN" });
+      }
       const body = JSON.parse(e.body || "{}");
       const message = String(body.message || "").trim();
       if (!message) return reply(400, { error: "A message is required" });
@@ -5236,11 +5234,10 @@ exports.handler = async (e) => {
       }
     }
     if (route === "POST /copilot/actions/{id}/apply") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error:
-            "AmazFlow Copilot is only available to AmazFlow administrators",
-        });
+      {
+        const denied = await guardIn(p, "internal:copilot", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "AmazFlow Copilot is only available to AmazFlow administrators", code: "FORBIDDEN" });
+      }
       try {
         const action = await applyCopilotAction(e.pathParameters?.id, a);
         return reply(200, action);
@@ -5250,11 +5247,10 @@ exports.handler = async (e) => {
       }
     }
     if (route === "POST /copilot/actions/{id}/discard") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error:
-            "AmazFlow Copilot is only available to AmazFlow administrators",
-        });
+      {
+        const denied = await guardIn(p, "internal:copilot", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "AmazFlow Copilot is only available to AmazFlow administrators", code: "FORBIDDEN" });
+      }
       try {
         const action = await discardCopilotAction(e.pathParameters?.id);
         return reply(200, action);
@@ -5297,10 +5293,10 @@ exports.handler = async (e) => {
       );
     }
     if (route === "GET /settings") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error: "Only AmazFlow administrators view platform settings",
-        });
+      {
+        const denied = await guardIn(p, "internal:platform_settings", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "Only AmazFlow administrators view platform settings", code: "FORBIDDEN" });
+      }
       const settings = await getSettings();
       return reply(200, {
         ...settings,
@@ -5309,10 +5305,10 @@ exports.handler = async (e) => {
       });
     }
     if (route === "POST /settings") {
-      if (a.role !== "SUPER_ADMIN")
-        return reply(403, {
-          error: "Only AmazFlow administrators change platform settings",
-        });
+      {
+        const denied = await guardIn(p, "internal:platform_settings", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "Only AmazFlow administrators change platform settings", code: "FORBIDDEN" });
+      }
       try {
         const body = JSON.parse(e.body || "{}");
         const next = await saveSettings(body);
@@ -5338,8 +5334,8 @@ exports.handler = async (e) => {
       }
     }
     if (route === "GET /support/tickets") {
-      let items = await scanType("TICKET#", a);
-      if (a.role === "FRONTLINE")
+      let items = await tenantOrStaffRead("TICKET#", p);
+      if (!can(p, "run:read_all", { orgId: p.orgId }).allow)
         items = items.filter((t) => t.createdBy === a.userId);
       return reply(
         200,
