@@ -5,7 +5,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node test/critical-path.test.cjs && node test/org-settings.test.cjs && node test/onboarding.test.cjs && node test/source-parity.test.cjs && node --test test/provider-parity.test.cjs",
+    "test": "pnpm run test:inventory && pnpm run test:guardrails && pnpm run test:behaviour && pnpm run test:parity",
+    "test:inventory": "node test/route-inventory.test.cjs",
+    "test:guardrails": "node test/guardrail-state-machine.test.cjs && node test/guardrail-grants.test.cjs && node test/guardrail-leases.test.cjs && node test/guardrail-verification.test.cjs && node test/guardrail-capabilities.test.cjs && node test/guardrail-heartbeat-audit.test.cjs && node test/guardrail-concurrency-retry.test.cjs",
+    "test:behaviour": "node test/critical-path.test.cjs && node test/org-settings.test.cjs && node test/onboarding.test.cjs && node test/isolation-baseline.test.cjs",
+    "test:parity": "node test/source-parity.test.cjs && node --test test/provider-parity.test.cjs",
     "synth": "cdk synth"
   },
   "dependencies": {

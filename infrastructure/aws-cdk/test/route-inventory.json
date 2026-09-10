@@ -1,0 +1,484 @@
+{
+  "generatedBy": "infrastructure/aws-cdk/test/extract-routes.cjs (task 1.1) + hand classification (task 1.2)",
+  "routes": [
+    {
+      "route": "DELETE /connections/browser/{id}",
+      "copies": [
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "GET /activity",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /agent-tasks",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /agent/tasks",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "agent-token",
+      "orgScope": "agent-token-authenticated"
+    },
+    {
+      "route": "GET /agents",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /connections/browser",
+      "copies": [
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /copilot/actions",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /copilot/conversation",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /health",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "unauthenticated",
+      "orgScope": "unauthenticated"
+    },
+    {
+      "route": "GET /leads",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /me",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /organizations",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /organizations/{slug}",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "GET /organizations/{slug}/branding",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "unauthenticated",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "GET /runs",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /settings",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /support/tickets",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /tenants/{tenantId}/summary",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "GET /tenants/{tenantId}/users",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "GET /workflows",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /workflows/{id}/preflight",
+      "copies": [
+        "deployed"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "GET /workflows/{id}/versions",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /agent-authorizations",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "POST /agent-authorizations/{code}/exchange",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "one-time-code",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /agent-tasks/{id}/result",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /agent/heartbeat",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "agent-token",
+      "orgScope": "agent-token-authenticated"
+    },
+    {
+      "route": "POST /agent/tasks/{id}/claim",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "agent-token",
+      "orgScope": "agent-token-authenticated"
+    },
+    {
+      "route": "POST /agent/tasks/{id}/result",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "agent-token",
+      "orgScope": "agent-token-authenticated"
+    },
+    {
+      "route": "POST /agent/tools/record-step-result",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "execution-grant",
+      "orgScope": "agent-token-authenticated"
+    },
+    {
+      "route": "POST /agents/{id}/revoke",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /ai/execute",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "POST /connections/browser",
+      "copies": [
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "POST /connections/browser/{id}/login-session",
+      "copies": [
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /connections/browser/{id}/login-session/complete",
+      "copies": [
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /copilot/actions/{id}/apply",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /copilot/actions/{id}/discard",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /copilot/messages",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "POST /leads",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "unauthenticated",
+      "orgScope": "unauthenticated"
+    },
+    {
+      "route": "POST /organizations",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "POST /organizations/{slug}/branding",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "POST /organizations/{slug}/settings",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "POST /runs/{id}/approvals/{stepId}",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /runs/{id}/cancel",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /runs/{id}/confirmations/{stepId}/confirm",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /runs/{id}/executor/invoke",
+      "copies": [
+        "deployed"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /settings",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "POST /support/tickets",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "POST /support/tickets/{id}/status",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /tenants/{tenantId}/users",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "POST /tenants/{tenantId}/users/{username}/status",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "POST /workflows",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "POST /workflows/generate",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "POST /workflows/{id}/runs",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "PUT /organizations/{slug}",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    }
+  ]
+}

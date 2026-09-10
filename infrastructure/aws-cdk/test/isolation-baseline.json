@@ -1,0 +1,383 @@
+{
+  "probes": [
+    {
+      "id": "ISO-01",
+      "name": "Org A admin cancelling Org B's run",
+      "requirement": "34.4",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-02",
+      "name": "Org A admin deciding an approval on Org B's run",
+      "requirement": "34.4",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-03",
+      "name": "Org A admin confirming a protected action on Org B's run",
+      "requirement": "34.4",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-04",
+      "name": "Org A admin revoking Org B's agent",
+      "requirement": "34.4",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-05",
+      "name": "Org A admin resolving Org B's agent task",
+      "requirement": "34.4",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-06",
+      "name": "Org A admin changing the status of Org B's support ticket",
+      "requirement": "34.4",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-07",
+      "name": "Org A admin reading Org B's workflow version history",
+      "requirement": "34.4",
+      "outcome": "PASS"
+    },
+    {
+      "id": "ISO-08",
+      "name": "Org A admin running preflight on Org B's workflow",
+      "requirement": "34.4",
+      "outcome": "PASS"
+    },
+    {
+      "id": "ISO-09",
+      "name": "Org A admin starting a run of Org B's workflow",
+      "requirement": "34.4",
+      "outcome": "PASS"
+    },
+    {
+      "id": "ISO-10",
+      "name": "Org A admin reading Org B's organization record",
+      "requirement": "34.4",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-11",
+      "name": "Org A admin changing Org B's organization settings",
+      "requirement": "34.4",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-12",
+      "name": "Org A admin changing Org B's branding",
+      "requirement": "34.4",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-13",
+      "name": "Org A admin reading Org B's tenant summary",
+      "requirement": "34.4",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-14",
+      "name": "Org A admin listing Org B's team members",
+      "requirement": "34.4",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-15",
+      "name": "Org A admin inviting a user into Org B",
+      "requirement": "34.5",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-16",
+      "name": "Org A admin disabling a member of Org B",
+      "requirement": "34.5",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-17",
+      "name": "GET /workflows returns nothing belonging to another organization",
+      "requirement": "34.6",
+      "outcome": "PASS"
+    },
+    {
+      "id": "ISO-18",
+      "name": "GET /runs returns nothing belonging to another organization",
+      "requirement": "34.6",
+      "outcome": "PASS"
+    },
+    {
+      "id": "ISO-19",
+      "name": "GET /agents returns nothing belonging to another organization",
+      "requirement": "34.6",
+      "outcome": "PASS"
+    },
+    {
+      "id": "ISO-20",
+      "name": "GET /agent-tasks returns nothing belonging to another organization",
+      "requirement": "34.6",
+      "outcome": "PASS"
+    },
+    {
+      "id": "ISO-21",
+      "name": "GET /support/tickets returns nothing belonging to another organization",
+      "requirement": "34.6",
+      "outcome": "PASS"
+    },
+    {
+      "id": "ISO-22",
+      "name": "an Org A agent credential lists only Org A tasks",
+      "requirement": "34.8",
+      "outcome": "PASS"
+    },
+    {
+      "id": "ISO-23",
+      "name": "an Org A agent credential cannot claim an Org B task by id",
+      "requirement": "34.8",
+      "outcome": "PASS"
+    },
+    {
+      "id": "ISO-24",
+      "name": "a staff principal reading another organization's record succeeds",
+      "requirement": "34.7",
+      "outcome": "PASS"
+    },
+    {
+      "id": "ISO-25",
+      "name": "a staff cross-organization read produces a cross-tenant read audit event",
+      "requirement": "34.7",
+      "outcome": "DEFECT"
+    },
+    {
+      "id": "ISO-26",
+      "name": "a staff cross-organization write is recorded as an audit event",
+      "requirement": "34.5",
+      "outcome": "PASS"
+    },
+    {
+      "id": "ISO-27",
+      "name": "a customer admin cannot redirect an agent authorization into another organization",
+      "requirement": "34.5",
+      "outcome": "PASS"
+    },
+    {
+      "id": "ISO-28",
+      "name": "organization branding is readable without authentication",
+      "requirement": "6.6",
+      "outcome": "BY_DESIGN"
+    },
+    {
+      "id": "ISO-29",
+      "name": "a deactivated member is refused on an authenticated route",
+      "requirement": "34.10",
+      "outcome": "DEFECT"
+    }
+  ],
+  "details": [
+    {
+      "id": "ISO-01",
+      "name": "Org A admin cancelling Org B's run",
+      "requirement": "34.4",
+      "outcome": "DEFECT",
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Run belongs to another tenant\"}"
+    },
+    {
+      "id": "ISO-02",
+      "name": "Org A admin deciding an approval on Org B's run",
+      "requirement": "34.4",
+      "outcome": "DEFECT",
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Run belongs to another tenant\"}"
+    },
+    {
+      "id": "ISO-03",
+      "name": "Org A admin confirming a protected action on Org B's run",
+      "requirement": "34.4",
+      "outcome": "DEFECT",
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Run belongs to another tenant\"}"
+    },
+    {
+      "id": "ISO-04",
+      "name": "Org A admin revoking Org B's agent",
+      "requirement": "34.4",
+      "outcome": "DEFECT",
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Agent belongs to another tenant\"}"
+    },
+    {
+      "id": "ISO-05",
+      "name": "Org A admin resolving Org B's agent task",
+      "requirement": "34.4",
+      "outcome": "DEFECT",
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Task belongs to another tenant\"}"
+    },
+    {
+      "id": "ISO-06",
+      "name": "Org A admin changing the status of Org B's support ticket",
+      "requirement": "34.4",
+      "outcome": "DEFECT",
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"Ticket belongs to another tenant\"}"
+    },
+    {
+      "id": "ISO-07",
+      "name": "Org A admin reading Org B's workflow version history",
+      "requirement": "34.4",
+      "outcome": "PASS",
+      "detail": "404, no Org B data in body"
+    },
+    {
+      "id": "ISO-08",
+      "name": "Org A admin running preflight on Org B's workflow",
+      "requirement": "34.4",
+      "outcome": "PASS",
+      "detail": "404, no Org B data in body"
+    },
+    {
+      "id": "ISO-09",
+      "name": "Org A admin starting a run of Org B's workflow",
+      "requirement": "34.4",
+      "outcome": "PASS",
+      "detail": "404, no Org B data in body"
+    },
+    {
+      "id": "ISO-10",
+      "name": "Org A admin reading Org B's organization record",
+      "requirement": "34.4",
+      "outcome": "DEFECT",
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only read your own organization\"}"
+    },
+    {
+      "id": "ISO-11",
+      "name": "Org A admin changing Org B's organization settings",
+      "requirement": "34.4",
+      "outcome": "DEFECT",
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only change your own organization\"}"
+    },
+    {
+      "id": "ISO-12",
+      "name": "Org A admin changing Org B's branding",
+      "requirement": "34.4",
+      "outcome": "DEFECT",
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only manage your own organization branding\"}"
+    },
+    {
+      "id": "ISO-13",
+      "name": "Org A admin reading Org B's tenant summary",
+      "requirement": "34.4",
+      "outcome": "DEFECT",
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only view your own tenant\"}"
+    },
+    {
+      "id": "ISO-14",
+      "name": "Org A admin listing Org B's team members",
+      "requirement": "34.4",
+      "outcome": "DEFECT",
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only view your own tenant\"}"
+    },
+    {
+      "id": "ISO-15",
+      "name": "Org A admin inviting a user into Org B",
+      "requirement": "34.5",
+      "outcome": "DEFECT",
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only invite into your own organization\"}"
+    },
+    {
+      "id": "ISO-16",
+      "name": "Org A admin disabling a member of Org B",
+      "requirement": "34.5",
+      "outcome": "DEFECT",
+      "detail": "status 403 (expected 404); body carries no Org B data but the status confirms the record exists: {\"error\":\"You can only manage your own tenant\"}"
+    },
+    {
+      "id": "ISO-17",
+      "name": "GET /workflows returns nothing belonging to another organization",
+      "requirement": "34.6",
+      "outcome": "PASS",
+      "detail": "3 item(s), all Org A"
+    },
+    {
+      "id": "ISO-18",
+      "name": "GET /runs returns nothing belonging to another organization",
+      "requirement": "34.6",
+      "outcome": "PASS",
+      "detail": "9 item(s), all Org A"
+    },
+    {
+      "id": "ISO-19",
+      "name": "GET /agents returns nothing belonging to another organization",
+      "requirement": "34.6",
+      "outcome": "PASS",
+      "detail": "2 item(s), all Org A"
+    },
+    {
+      "id": "ISO-20",
+      "name": "GET /agent-tasks returns nothing belonging to another organization",
+      "requirement": "34.6",
+      "outcome": "PASS",
+      "detail": "2 item(s), all Org A"
+    },
+    {
+      "id": "ISO-21",
+      "name": "GET /support/tickets returns nothing belonging to another organization",
+      "requirement": "34.6",
+      "outcome": "PASS",
+      "detail": "1 item(s), all Org A"
+    },
+    {
+      "id": "ISO-22",
+      "name": "an Org A agent credential lists only Org A tasks",
+      "requirement": "34.8",
+      "outcome": "PASS",
+      "detail": "1 task(s), all Org A"
+    },
+    {
+      "id": "ISO-23",
+      "name": "an Org A agent credential cannot claim an Org B task by id",
+      "requirement": "34.8",
+      "outcome": "PASS",
+      "detail": "404, no Org B data"
+    },
+    {
+      "id": "ISO-24",
+      "name": "a staff principal reading another organization's record succeeds",
+      "requirement": "34.7",
+      "outcome": "PASS",
+      "detail": "staff read succeeds, as intended"
+    },
+    {
+      "id": "ISO-25",
+      "name": "a staff cross-organization read produces a cross-tenant read audit event",
+      "requirement": "34.7",
+      "outcome": "DEFECT",
+      "detail": "a staff principal read another organization's record and no cross-tenant read audit event was recorded"
+    },
+    {
+      "id": "ISO-26",
+      "name": "a staff cross-organization write is recorded as an audit event",
+      "requirement": "34.5",
+      "outcome": "PASS",
+      "detail": "the write landed in Org B and was audited there"
+    },
+    {
+      "id": "ISO-27",
+      "name": "a customer admin cannot redirect an agent authorization into another organization",
+      "requirement": "34.5",
+      "outcome": "PASS",
+      "detail": "the body's tenantId was ignored; the agent landed in the caller's own organization"
+    },
+    {
+      "id": "ISO-28",
+      "name": "organization branding is readable without authentication",
+      "requirement": "6.6",
+      "outcome": "BY_DESIGN",
+      "detail": "name and branding are served unauthenticated for any slug, so a sign-in page can brand itself before a session exists. No run, user or execution data is exposed. Recorded so the decision is visible rather than assumed."
+    },
+    {
+      "id": "ISO-29",
+      "name": "a deactivated member is refused on an authenticated route",
+      "requirement": "34.10",
+      "outcome": "DEFECT",
+      "detail": "a member disabled in the user pool still reached the route and received 200. Authorization is derived entirely from the session's own claims; no route re-checks membership state."
+    }
+  ]
+}

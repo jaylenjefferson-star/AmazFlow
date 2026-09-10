@@ -24,63 +24,63 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
 
 ## Tasks
 
-- [ ] 1. Phase 0 — Route inventory and baseline isolation audit (tests only, no behaviour change)
+- [x] 1. Phase 0 — Route inventory and baseline isolation audit (tests only, no behaviour change)
 
-  - [ ] 1.1 Extract the control-plane route table into a committed fixture and gate the build on it
+  - [x] 1.1 Extract the control-plane route table into a committed fixture and gate the build on it
     - Mechanically extract every `e.routeKey` from the deployed template's inline handler and from
       `services/control-plane/src/handler.ts` into a checked-in fixture
     - Fail the build when a route exists in either handler that is absent from the fixture
     - _Requirements: 6.15, 27.1_
 
-  - [ ] 1.2 Classify every enumerated route by authentication mode and organization-scoping mode
+  - [x] 1.2 Classify every enumerated route by authentication mode and organization-scoping mode
     - Annotate each fixture entry as session-scoped, parameter-scoped, entity-identifier-scoped,
       unauthenticated, or agent-token-authenticated
     - _Requirements: 6.16, 27.1, 27.2, 27.3_
 
-  - [ ] 1.3 Build the two-organization seed fixture for the credential-free in-memory harness
+  - [x] 1.3 Build the two-organization seed fixture for the credential-free in-memory harness
     - Extend `test/harness.cjs` usage with Org A and Org B, each carrying users in all six customer roles
       plus staff, workflows, runs in every persisted status, tasks, approvals, agents of both types,
       connections, secrets, notifications, and audit records
     - _Requirements: 34.1, 34.2, 34.3_
 
-  - [ ] 1.4 Write the baseline two-organization isolation suite against today's code and record its results
+  - [x] 1.4 Write the baseline two-organization isolation suite against today's code and record its results
     - Run the suite against unmodified handlers; commit the pass/fail baseline as a numbered defect list
     - Do not fix anything in this task — this is the audit artifact Phase 2 is measured against
     - _Requirements: 6.6, 6.7, 34.4, 34.6_
 
-- [ ] 2. Preservation guardrails — pin existing execution semantics so a regression fails CI
+- [x] 2. Preservation guardrails — pin existing execution semantics so a regression fails CI
 
-  - [ ] 2.1 Guardrail tests for the engine state machine and every resume path
+  - [x] 2.1 Guardrail tests for the engine state machine and every resume path
     - Assert each `resumeFrom*` guard, terminal-status immutability, and that no transition occurs outside
       the declared transition table
     - _Requirements: 31.1, 31.18_
 
-  - [ ] 2.2 Guardrail tests for execution grants
+  - [x] 2.2 Guardrail tests for execution grants
     - Assert every bound field (run, org, workflow, workflow version, step, task, agent, agent type,
       execution target, action type, destination, confirmation state) is re-checked against server-loaded
       records; assert scope mismatch, expiry, and per-tool single use are each refused
     - _Requirements: 31.4, 31.5, 31.6, 31.7, 31.8, 31.18_
 
-  - [ ] 2.3 Guardrail tests for single-winner task leases and the scheduled sweep
+  - [x] 2.3 Guardrail tests for single-winner task leases and the scheduled sweep
     - Assert one winner under contention, takeover of an expired lease, and reclamation of stalled leases
     - _Requirements: 31.9, 31.10, 31.11, 31.18_
 
-  - [ ] 2.4 Guardrail test for independent verification
+  - [x] 2.4 Guardrail test for independent verification
     - Assert a self-declared agent success that fails the step's verification contract records
       `VERIFICATION_FAILED` and does not advance the run
     - _Requirements: 31.2, 31.3, 31.18_
 
-  - [ ] 2.5 Guardrail tests for capability-aware claiming and surface derivation
+  - [x] 2.5 Guardrail tests for capability-aware claiming and surface derivation
     - Assert the admission predicate's five conditions, that a desktop agent is never offered a browser
       step and vice versa, and that required surfaces are derived from a workflow's steps
     - _Requirements: 31.12, 31.18, 15.10, 15.12_
 
-  - [ ] 2.6 Guardrail tests for heartbeat-derived status, evidence, and audit append-only ordering
+  - [x] 2.6 Guardrail tests for heartbeat-derived status, evidence, and audit append-only ordering
     - Assert heartbeat interval acceptance, status derived from heartbeat recency, the full per-step
       evidence shape, and that run audit entries are appended in non-decreasing time order
     - _Requirements: 31.13, 31.14, 31.17, 28.12, 31.18_
 
-  - [ ] 2.7 Guardrail tests for the positive live-run status set and no-retry-on-uncertain-side-effect
+  - [x] 2.7 Guardrail tests for the positive live-run status set and no-retry-on-uncertain-side-effect
     - Assert an unrecognized run status is excluded from the concurrency count (fails open) and that a run
       marked unsafe to retry is never automatically retried
     - _Requirements: 31.15, 31.16, 8.11, 31.18_

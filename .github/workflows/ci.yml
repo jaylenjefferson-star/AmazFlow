@@ -29,11 +29,30 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # The control plane first: it is the artifact that reaches production, and its suite
-      # includes the source-parity and provider-parity checks that catch the canonical source
-      # and the deployed template drifting apart.
-      - name: Control plane (critical path, source parity, provider parity)
-        run: pnpm --filter @amazflow/aws-cdk test
+      # The route inventory gates everything else: a route added to either control-plane copy
+      # without being recorded in the committed fixture fails here, which is what keeps the
+      # isolation, authorization and parity work enumerable rather than best-effort.
+      - name: Control-plane route inventory
+        run: pnpm --filter @amazflow/aws-cdk test:inventory
+
+      # Preservation guardrails: the execution semantics the restructure must not weaken --
+      # the state machine and its resume paths, execution grant binding and single use, single-
+      # winner task leases and the sweep, independent verification, capability-aware claiming,
+      # heartbeat-derived status and evidence, and the live-run set failing open. These run
+      # before the behavioural suites so a regression is reported as a broken guarantee rather
+      # than as an unrelated test failure further down.
+      - name: Preservation guardrails
+        run: pnpm --filter @amazflow/aws-cdk test:guardrails
+
+      # The control plane's behavioural suites: it is the artifact that reaches production.
+      # Includes the baseline two-organization isolation audit, which fails on drift from the
+      # committed baseline in either direction.
+      - name: Control plane (critical path, onboarding, org settings, isolation baseline)
+        run: pnpm --filter @amazflow/aws-cdk test:behaviour
+
+      # Parity last: these catch the canonical source and the deployed template drifting apart.
+      - name: Control-plane parity (source and provider)
+        run: pnpm --filter @amazflow/aws-cdk test:parity
 
       - name: Engine and schema
         run: |
