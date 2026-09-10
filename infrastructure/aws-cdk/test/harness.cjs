@@ -16,6 +16,97 @@ class DeleteItemCommand extends Cmd {}
 
 class CondFail extends Error { constructor() { super("cond"); this.name = "ConditionalCheckFailedException"; } }
 
+/* ------------------------------------------------------------------ in-memory user pool ----- */
+
+class ListUsersCommand extends Cmd {}
+class ListUsersInGroupCommand extends Cmd {}
+class AdminEnableUserCommand extends Cmd {}
+class AdminDisableUserCommand extends Cmd {}
+class AdminCreateUserCommand extends Cmd {}
+class AdminAddUserToGroupCommand extends Cmd {}
+class AdminGetUserCommand extends Cmd {}
+
+class UsernameExists extends Error { constructor() { super("User already exists"); this.name = "UsernameExistsException"; } }
+class UserNotFound extends Error { constructor() { super("User does not exist"); this.name = "UserNotFoundException"; } }
+
+/** username -> { Username, Attributes[], Enabled, UserStatus, UserCreateDate } */
+const users = new Map();
+/** group name -> Set<username> */
+const groups = new Map();
+/** Set on the harness to make the next AdminAddUserToGroup fail, for the partial-failure test. */
+const cognitoFaults = { failNextAddToGroup: false };
+
+const attrList = (obj) => Object.entries(obj).map(([Name, Value]) => ({ Name, Value }));
+
+const cognito = {
+  async send(cmd) {
+    if (cmd instanceof AdminCreateUserCommand) {
+      const username = cmd.input.Username;
+      if (users.has(username)) throw new UsernameExists();
+      const record = {
+        Username: username,
+        Attributes: cmd.input.UserAttributes || [],
+        Enabled: true,
+        UserStatus: "FORCE_CHANGE_PASSWORD",
+        UserCreateDate: new Date(),
+      };
+      users.set(username, record);
+      return { User: record };
+    }
+    if (cmd instanceof AdminAddUserToGroupCommand) {
+      if (cognitoFaults.failNextAddToGroup) {
+        cognitoFaults.failNextAddToGroup = false;
+        throw new Error("harness: simulated AdminAddUserToGroup failure");
+      }
+      const { Username, GroupName } = cmd.input;
+      if (!users.has(Username)) throw new UserNotFound();
+      if (!groups.has(GroupName)) groups.set(GroupName, new Set());
+      groups.get(GroupName).add(Username);
+      return {};
+    }
+    if (cmd instanceof ListUsersCommand) {
+      return { Users: [...users.values()] };
+    }
+    if (cmd instanceof ListUsersInGroupCommand) {
+      const members = groups.get(cmd.input.GroupName) || new Set();
+      return { Users: [...members].map((u) => users.get(u)).filter(Boolean) };
+    }
+    if (cmd instanceof AdminGetUserCommand) {
+      const found = users.get(cmd.input.Username);
+      if (!found) throw new UserNotFound();
+      return found;
+    }
+    if (cmd instanceof AdminEnableUserCommand || cmd instanceof AdminDisableUserCommand) {
+      const found = users.get(cmd.input.Username);
+      if (!found) throw new UserNotFound();
+      found.Enabled = cmd instanceof AdminEnableUserCommand;
+      return {};
+    }
+    throw new Error("harness: unsupported cognito command " + cmd.constructor.name);
+  },
+};
+
+/** Seed a pool member directly, for tests that need an existing team rather than an invitation. */
+const seedUser = (username, { tenantId, role, enabled = true, status = "CONFIRMED" }) => {
+  users.set(username, {
+    Username: username,
+    Attributes: attrList({ email: username, "custom:tenant_id": tenantId }),
+    Enabled: enabled,
+    UserStatus: status,
+    UserCreateDate: new Date(),
+  });
+  if (role) {
+    if (!groups.has(role)) groups.set(role, new Set());
+    groups.get(role).add(username);
+  }
+};
+
+const resetPool = () => {
+  users.clear();
+  groups.clear();
+  cognitoFaults.failNextAddToGroup = false;
+};
+
 function evalCondition(expr, existing, values) {
   if (!expr) return true;
   // Only the two forms this codebase uses.
@@ -74,8 +165,16 @@ const stubs = {
   "@aws-sdk/client-bedrock-runtime": { BedrockRuntimeClient: class { async send() { throw new Error("no bedrock in harness"); } }, ConverseCommand: Cmd },
   "@aws-sdk/client-sesv2": { SESv2Client: class { async send() { return {}; } }, SendEmailCommand: Cmd },
   "@aws-sdk/client-cognito-identity-provider": {
-    CognitoIdentityProviderClient: class { async send() { return { Users: [] }; } },
-    ListUsersCommand: Cmd, ListUsersInGroupCommand: Cmd, AdminEnableUserCommand: Cmd, AdminDisableUserCommand: Cmd,
+    // A working in-memory user pool rather than a stub that always answers "no users".
+    // Invitations are the one flow whose whole job is to mutate the pool, so a stub that cannot
+    // hold a user could only ever assert that the handler did not crash.
+    CognitoIdentityProviderClient: class {
+      async send(cmd) {
+        return cognito.send(cmd);
+      }
+    },
+    ListUsersCommand, ListUsersInGroupCommand, AdminEnableUserCommand, AdminDisableUserCommand,
+    AdminCreateUserCommand, AdminAddUserToGroupCommand, AdminGetUserCommand,
   },
   "@aws-sdk/client-bedrock-agentcore": { BedrockAgentCoreClient: class { async send() { throw new Error("no agentcore in harness"); } }, InvokeHarnessCommand: Cmd },
 };
@@ -92,4 +191,4 @@ process.env.DATA_BOUNDARY = "harness";
 process.env.EXECUTION_GRANT_SECRET = "harness-secret-not-a-real-key";
 process.env.BEDROCK_MODEL_ID = "harness-model";
 
-module.exports = { store, key, db, crypto };
+module.exports = { store, key, db, crypto, users, groups, seedUser, resetPool, cognitoFaults };

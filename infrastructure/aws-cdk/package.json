@@ -5,7 +5,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node test/critical-path.test.cjs && node test/org-settings.test.cjs && node test/source-parity.test.cjs && node --test test/provider-parity.test.cjs",
+    "test": "node test/critical-path.test.cjs && node test/org-settings.test.cjs && node test/onboarding.test.cjs && node test/source-parity.test.cjs && node --test test/provider-parity.test.cjs",
     "synth": "cdk synth"
   },
   "dependencies": {

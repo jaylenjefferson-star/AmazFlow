@@ -195,7 +195,18 @@ export type UserRecord = {
   email: string;
   role: string;
   enabled: boolean;
+  /**
+   * Cognito's own account state. `FORCE_CHANGE_PASSWORD` is an invitation nobody has accepted
+   * yet; `CONFIRMED` is a working account. Without this the console cannot tell "invited last
+   * week and ignored it" from "signed in this morning".
+   */
+  userStatus?: string | null;
+  createdAt?: string | null;
 };
+
+/** An invitation that has been sent but not yet accepted. */
+export const isPendingInvite = (user: UserRecord) =>
+  user.userStatus === "FORCE_CHANGE_PASSWORD";
 
 export type TenantSummary = {
   totalRunsCompleted: number;

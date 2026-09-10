@@ -31,6 +31,8 @@ const {
   ListUsersInGroupCommand,
   AdminEnableUserCommand,
   AdminDisableUserCommand,
+  AdminCreateUserCommand,
+  AdminAddUserToGroupCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
 const db = new DynamoDBClient({});
 const bedrock = new BedrockRuntimeClient({});
@@ -2174,12 +2176,131 @@ const listTenantUsers = async (tenantId) => {
           email: attrs.email || u.Username,
           role: roleByUsername[u.Username],
           enabled: !!u.Enabled,
+          // userStatus distinguishes an invitation nobody has accepted yet
+          // (FORCE_CHANGE_PASSWORD) from a working account (CONFIRMED). Without it the console
+          // cannot tell "invited last week and ignored it" from "signed in this morning".
+          userStatus: u.UserStatus || null,
+          createdAt: u.UserCreateDate ? new Date(u.UserCreateDate).toISOString() : null,
         });
     }
     token = out.PaginationToken;
   } while (token);
   return users;
 };
+
+// Invite a person into a tenant. This is the step that used to be done by hand in the AWS
+// console: create the Cognito user, stamp the tenant claim, put them in a role group.
+//
+// Ordering matters and is not interchangeable. The user is created first, then added to a group.
+// A user who exists but has no group cannot sign in -- sessionFromAuthResult refuses a session
+// without one of the three role groups -- so a failure between the two calls leaves someone who
+// cannot get in, rather than someone in the wrong tenant with access. That is the safe direction
+// to fail, and this reports it plainly instead of pretending the invitation succeeded.
+const INVITABLE_ROLES = ["CLIENT_ADMIN", "FRONTLINE"];
+const inviteTenantUser = async (tenantId, body, a) => {
+  const email = String(body.email || "")
+    .trim()
+    .toLowerCase();
+  if (!email) throw { status: 400, message: "An email address is required" };
+  // Same shape Cognito itself accepts for a username-as-email pool. Deliberately not a full RFC
+  // validator: the authoritative check is Cognito's, this only stops the obviously wrong before
+  // spending a call.
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
+    throw { status: 400, message: `"${email}" is not a valid email address` };
+  const role = String(body.role || "FRONTLINE").trim();
+  if (!INVITABLE_ROLES.includes(role))
+    throw { status: 400, message: `role must be one of ${INVITABLE_ROLES.join(", ")}` };
+
+  // An organization's allowed-domain list is the access boundary its admin agreed to. Checked
+  // here rather than in the console so it holds for any caller.
+  const org = await getOrganization(tenantId);
+  const allowed = orgSettings(org).allowedEmailDomains;
+  if (allowed.length) {
+    const domain = email.slice(email.lastIndexOf("@") + 1);
+    if (!allowed.includes(domain))
+      throw {
+        status: 422,
+        message: `${email} is outside this organization's allowed email domains (${allowed.join(", ")})`,
+        allowedEmailDomains: allowed,
+      };
+  }
+
+  const existing = (await listTenantUsers(tenantId)).find((u) => u.email === email);
+  if (existing)
+    throw { status: 409, message: `${email} is already a member of this organization` };
+
+  let created;
+  try {
+    created = await cognito.send(
+      new AdminCreateUserCommand({
+        UserPoolId: process.env.USER_POOL_ID,
+        Username: email,
+        // Cognito emails the temporary password. /login already handles the
+        // NEW_PASSWORD_REQUIRED challenge in-page, so the invitee never sees a raw Cognito
+        // screen and never needs a separate acceptance route.
+        DesiredDeliveryMediums: ["EMAIL"],
+        UserAttributes: [
+          { Name: "email", Value: email },
+          // Marked verified because we sent the invitation to this address: requiring the
+          // invitee to also verify it would add a step that proves nothing extra.
+          { Name: "email_verified", Value: "true" },
+          { Name: "custom:tenant_id", Value: tenantId },
+          // Their real sign-up date, in Unix seconds. Nothing else records this, and the
+          // support messenger reads it as the account age.
+          { Name: "custom:created_at", Value: String(Math.floor(Date.now() / 1000)) },
+        ],
+      }),
+    );
+  } catch (err) {
+    if (err && err.name === "UsernameExistsException")
+      throw {
+        status: 409,
+        message: `${email} already has an AmazFlow account. Ask AmazFlow to move them to this organization.`,
+      };
+    if (err && err.name === "InvalidParameterException")
+      throw { status: 400, message: err.message || "Cognito rejected that email address" };
+    throw err;
+  }
+
+  const username = created?.User?.Username || email;
+  try {
+    await cognito.send(
+      new AdminAddUserToGroupCommand({
+        UserPoolId: process.env.USER_POOL_ID,
+        Username: username,
+        GroupName: role,
+      }),
+    );
+  } catch (err) {
+    console.error("invite: user created but group assignment failed", {
+      tenantId,
+      username,
+      role,
+      error: err && err.message,
+    });
+    throw {
+      status: 502,
+      message: `${email} was created but could not be given the ${role} role, so they cannot sign in yet. Retry the invitation.`,
+    };
+  }
+
+  await logActivity(tenantId, {
+    actor: a.userId,
+    actorLabel: a.role === "SUPER_ADMIN" ? "AmazFlow super admin" : "Team admin",
+    action: "TEAM_MEMBER_INVITED",
+    summary: `Invited ${email} as ${role === "CLIENT_ADMIN" ? "a team admin" : "a team member"}`,
+    details: { email, role },
+  });
+  return {
+    username,
+    email,
+    role,
+    enabled: true,
+    userStatus: created?.User?.UserStatus || "FORCE_CHANGE_PASSWORD",
+    invited: true,
+  };
+};
+
 const tenantSummary = async (tenantId) => {
   const scopeArgs = { role: "CLIENT_ADMIN", tenantId };
   const [workflows, runs] = await Promise.all([
@@ -4280,6 +4401,40 @@ exports.handler = async (e) => {
       if (a.role !== "SUPER_ADMIN" && tenantId !== a.tenantId)
         return reply(403, { error: "You can only view your own tenant" });
       return reply(200, await listTenantUsers(tenantId));
+    }
+    if (route === "POST /tenants/{tenantId}/users") {
+      if (a.role === "FRONTLINE")
+        return reply(403, { error: "Only tenant admins invite team members" });
+      const tenantId = e.pathParameters?.tenantId;
+      if (a.role !== "SUPER_ADMIN" && tenantId !== a.tenantId)
+        return reply(403, { error: "You can only invite into your own organization" });
+      const inviteBody = JSON.parse(e.body || "{}");
+      // A customer admin must not be able to mint AmazFlow staff. INVITABLE_ROLES already
+      // excludes SUPER_ADMIN for every caller, so this is defence in depth rather than the only
+      // check, but the message is worth being specific about.
+      if (String(inviteBody.role || "").trim() === "SUPER_ADMIN")
+        return reply(403, {
+          error: "AmazFlow staff accounts are not created through this route",
+        });
+      // An organization that cannot run work should not be growing its team either.
+      const inviteOrg = await getOrganization(tenantId);
+      if (inviteOrg && inviteOrg.status === "suspended")
+        return reply(409, {
+          error: "This organization is suspended. Contact AmazFlow before adding people.",
+        });
+      try {
+        const invited = await inviteTenantUser(tenantId, inviteBody, a);
+        return reply(201, invited);
+      } catch (err) {
+        if (err && err.status)
+          return reply(err.status, {
+            error: err.message,
+            ...(err.allowedEmailDomains
+              ? { allowedEmailDomains: err.allowedEmailDomains }
+              : {}),
+          });
+        throw err;
+      }
     }
     if (route === "POST /tenants/{tenantId}/users/{username}/status") {
       if (a.role === "FRONTLINE")
