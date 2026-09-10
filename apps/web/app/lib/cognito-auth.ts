@@ -179,6 +179,27 @@ export function loadSession(): Session | null {
   }
 }
 
+/**
+ * Reads the stored session without judging expiry and without clearing anything.
+ *
+ * loadSession() deletes an expired session, which is correct for an access gate and wrong for a
+ * passive reader. An id token past its 60 minutes is usually still refreshable, so a bystander
+ * that called loadSession() purely to find out who this browser belongs to -- on a marketing
+ * page, say, where nothing afterwards would refresh it -- would delete a perfectly good session
+ * and sign the person out. Anything that only needs the identity uses this instead.
+ */
+export function peekSession(): Session | null {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as Session;
+    if (!parsed.idToken || !parsed.email || !parsed.role || !parsed.sub) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 // The console/app entry points call this instead of the plain loadSession() sync check: it
 // gives an expired-but-refreshable session (id/access token past its 60-minute validity, but
 // the 7-day refresh token still good) a chance to silently renew before falling back to a full

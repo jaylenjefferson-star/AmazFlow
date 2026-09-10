@@ -760,7 +760,7 @@ function FlowMap({ workflow, onFocus }: { workflow: WorkflowDefinition; onFocus:
 
   return (
     <div className="wf-flowmap">
-      <p className="product-eyebrow">THE PATH A RUN TAKES</p>
+      <p className="wf-eyebrow">THE PATH A RUN TAKES</p>
       <ol className="wf-flowlist">
         {order.map(({ step, depth, via }) => (
           <li key={step.id} style={{ marginLeft: Math.min(depth, 6) * 14 }}>
@@ -1020,7 +1020,7 @@ export function WorkflowBuilder({
 
       {/* ── What it needs, and what's wrong with it ───────────────────────────────────── */}
       <div className="wf-requirements">
-        <p className="product-eyebrow">REQUIRED TO RUN</p>
+        <p className="wf-eyebrow">REQUIRED TO RUN</p>
         {targets.length === 0 ? (
           <small>Every step runs inside AmazFlow. Nothing needs to be installed.</small>
         ) : (

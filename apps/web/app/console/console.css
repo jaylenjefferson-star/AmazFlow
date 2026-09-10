@@ -1,5 +1,6 @@
 /* Customer console — reuses marketing.css design tokens (:root vars from styles.css).
-   Never import product.css here: that stylesheet is styled for the denser operator UI. */
+   Never import workflow-builder.css here: it is scoped under .ops and themed for the denser
+   operator console, which this deliberately is not. */
 
 .console-app { min-height: 100vh; background: var(--cream); color: var(--ink); font-family: var(--font-body); }
 .console-app *:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
@@ -197,3 +198,49 @@
 .console-toggle.on::after { transform: translateX(18px); }
 .console-inline-confirm { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
 .console-team-footer { margin-top: 22px; color: var(--muted); font-size: 13px; }
+
+
+/* ---------------------------------------------------------------- support: chat vs ticket --- */
+
+/* Live chat is offered ahead of the ticket form. The form is not demoted -- it captures run and
+   workflow ids a chat cannot -- so the two are presented as a choice rather than a hierarchy. */
+.support-chat-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  padding: 16px 18px;
+  background: var(--paper);
+}
+.support-chat-card b { display: block; font-size: 15px; }
+.support-chat-card small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+  max-width: 42ch;
+}
+.support-chat-card button { flex-shrink: 0; }
+
+.support-or {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0 18px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.support-or::before,
+.support-or::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}

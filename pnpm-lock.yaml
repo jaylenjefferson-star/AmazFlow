@@ -44,6 +44,9 @@ importers:
       '@amazflow/workflow-schema':
         specifier: workspace:*
         version: link:../../packages/workflow-schema
+      '@intercom/messenger-js-sdk':
+        specifier: ^0.0.20
+        version: 0.0.20
       next:
         specifier: ^15.2.0
         version: 15.5.25(@types/node@22.20.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -829,6 +832,9 @@ packages:
     engines: {node: '>=20.9.0'}
     cpu: [x64]
     os: [win32]
+
+  '@intercom/messenger-js-sdk@0.0.20':
+    resolution: {integrity: sha512-99ixqRcsX4ZL+HnH3xxpQewKqdN9/mtptsnxk5vDd31TQG4x1o0gvp6aNPJm5iX3SPSJldQhA/uqW66NV1LO1w==}
 
   '@isaacs/cliui@8.0.2':
     resolution: {integrity: sha512-O8jcjabXaleOG9DQ0+ARXWZBTfnP4WNAqzuiJK7ll44AmxGKv/J2M4TPjxjY3znBCfvBXFzucm1twdyFybFqEA==}
@@ -2986,6 +2992,8 @@ snapshots:
 
   '@img/sharp-win32-x64@0.35.4':
     optional: true
+
+  '@intercom/messenger-js-sdk@0.0.20': {}
 
   '@isaacs/cliui@8.0.2':
     dependencies:
