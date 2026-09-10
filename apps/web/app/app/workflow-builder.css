@@ -1,0 +1,476 @@
+/* ============================================================================================
+   Workflow builder styles
+   ============================================================================================
+   These rules were previously the tail of product.css, a stylesheet written for a customer
+   console that has since been rewritten against console.css. That left the builder inheriting
+   a token set (--p-ink, --p-paper, --p-line, --p-muted, --p-coral, --p-mint) declared only on
+   .product-app -- a class no component renders any more. Every one of those custom properties
+   therefore resolved to nothing inside the operations console, so backgrounds fell back to
+   `initial` (transparent), border-colors to `currentColor`, and the ~30 rules that carried a
+   hardcoded cream literal painted a light card inside a dark shell.
+
+   Now the builder draws entirely from the ops.css token set, which is defined for both light
+   and dark. There are no colour literals below this comment. Adding one would reintroduce the
+   bug, because a literal cannot respond to the theme.
+
+   Scoped under .ops, matching the rest of the console.
+   ============================================================================================ */
+
+.ops .wf-builder { display: grid; gap: 14px; }
+.ops .wf-meta { display: flex; gap: 12px; flex-wrap: wrap; }
+
+/* ------------------------------------------------------------------------ fields ---------- */
+
+.ops .wf-field {
+  display: grid;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+.ops .wf-field.wf-grow { flex: 1; min-width: 180px; }
+.ops .wf-field.wf-full { width: 100%; }
+
+.ops .wf-field input,
+.ops .wf-field select,
+.ops .wf-field textarea {
+  font: 13px/1.4 var(--font-ui);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px 10px;
+}
+.ops .wf-field input:focus-visible,
+.ops .wf-field select:focus-visible,
+.ops .wf-field textarea:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+  border-color: var(--focus);
+}
+.ops .wf-field textarea {
+  min-height: 70px;
+  resize: vertical;
+  font: 11px/1.5 var(--font-mono);
+}
+
+/* Native checkboxes and radios take the brand accent instead of the UA blue, and follow the
+   theme rather than staying light on a dark card. */
+.ops .wf-builder input[type="checkbox"],
+.ops .wf-builder input[type="radio"] { accent-color: var(--accent); }
+
+/* ------------------------------------------------------------------------- steps ---------- */
+
+.ops .wf-steps {
+  display: grid;
+  gap: 10px;
+  max-height: 520px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.ops .wf-step {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+}
+.ops .wf-step-head { display: flex; align-items: center; gap: 8px; }
+
+.ops .wf-step-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  background: var(--good-soft);
+  color: var(--good);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.ops .wf-step-name {
+  flex: 1;
+  font-weight: 800;
+  font-size: 13px;
+  color: var(--text);
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.ops .wf-step-name:hover,
+.ops .wf-step-name:focus {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+.ops .wf-step-head select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.ops .wf-step-ops { display: flex; gap: 4px; }
+.ops .wf-step-ops button {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 7px;
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.ops .wf-step-ops button:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.ops .wf-step-id {
+  display: block;
+  color: var(--text-3);
+  margin: 4px 0 10px;
+  font: 10px var(--font-mono);
+}
+.ops .wf-step-body { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.ops .wf-step-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--text-2);
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 6px 0 10px;
+}
+
+.ops .wf-start-badge {
+  background: var(--good-soft);
+  color: var(--good);
+  border-radius: 99px;
+  padding: 2px 8px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* A step that blocks the save, and the step the operator is currently pointed at. */
+.ops .wf-step-error { border-color: var(--bad-line); background: var(--bad-soft); }
+.ops .wf-step-focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.ops .wf-add-step {
+  border: 1px dashed var(--line-strong);
+  border-radius: 12px;
+  background: transparent;
+  padding: 12px;
+  color: var(--text-2);
+  font-weight: 700;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  cursor: pointer;
+}
+.ops .wf-add-step:hover { color: var(--text); border-color: var(--text-3); }
+
+/* -------------------------------------------------------------- problems and hints -------- */
+
+/* Problems are attached to the step that caused them, so the operator reads the cause in
+   place rather than matching a summary line back to a card by eye. */
+.ops .wf-step-issues { margin: 0 0 10px; padding-left: 18px; display: grid; gap: 3px; }
+.ops .wf-step-issues li { font-size: 11.5px; line-height: 1.45; }
+.ops .wf-issue-error { color: var(--bad); }
+.ops .wf-issue-warn { color: var(--waiting); }
+
+.ops .wf-problems {
+  margin-top: 12px;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.ops .wf-problems b { display: block; margin-bottom: 5px; font-size: 12px; }
+.ops .wf-problems ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.ops .wf-problems-error { background: var(--bad-soft); border: 1px solid var(--bad-line); color: var(--bad); }
+.ops .wf-problems-warn { background: var(--waiting-soft); border: 1px solid var(--waiting-line); color: var(--waiting); }
+.ops .wf-problems-ok {
+  background: var(--good-soft);
+  border: 1px solid var(--good-line);
+  color: var(--good);
+  margin: 12px 0 0;
+}
+.ops .wf-problems .wf-linkish { color: inherit; font-weight: 500; }
+
+.ops .wf-hint {
+  font-style: normal;
+  font-weight: 400;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-3);
+  margin-top: 1px;
+}
+.ops .wf-hint-good { color: var(--good); }
+.ops .wf-required { color: var(--accent); }
+.ops .wf-mono { font-family: var(--font-mono) !important; font-size: 12px !important; }
+
+.ops .wf-linkish {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.ops .wf-linkish:disabled { color: var(--text-3); text-decoration: none; cursor: default; }
+
+/* ------------------------------------------------------- execution-surface badges --------- */
+
+/* Which application actually carries out a step, readable at a glance rather than inferred. */
+.ops .wf-target-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font: 700 9.5px/1.6 var(--font-ui);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.ops .wf-target-browser { background: var(--running-soft); color: var(--running); border: 1px solid var(--running-line); }
+.ops .wf-target-desktop { background: var(--ai-soft); color: var(--ai); border: 1px solid var(--ai-line); }
+
+/* ------------------------------------------------------------------ requirements ---------- */
+
+.ops .wf-requirements {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 14px 0;
+}
+.ops .wf-req-list { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.ops .wf-req-list small { color: var(--text-2); font-size: 11px; flex: 1 1 240px; }
+.ops .wf-req-problems {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: var(--bad);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.ops .wf-trigger { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 6px; }
+.ops .wf-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  margin: 0;
+}
+.ops .wf-inline input[type="number"] { width: 74px; }
+.ops .wf-trigger-note { display: block; color: var(--text-2); font-size: 11px; margin-top: 6px; }
+
+/* ------------------------------------------------------- structured action inputs --------- */
+
+.ops .wf-extra-keys { display: flex; flex-wrap: wrap; gap: 6px; }
+.ops .wf-extra-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-3);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 3px 7px;
+  font-size: 11px;
+  font-weight: 400;
+}
+.ops .wf-extra-key code { font-size: 10.5px; color: var(--text); font-family: var(--font-mono); }
+.ops .wf-extra-key span {
+  color: var(--text-2);
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ops .wf-extra-key button {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 10px;
+  padding: 0;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.ops .wf-extra-key button:hover { color: var(--bad); }
+
+/* Allowed answers as chips rather than a comma-separated string. */
+.ops .wf-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ops .wf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  padding: 3px 9px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ops .wf-chip-review { background: var(--good-soft); border-color: var(--good-line); color: var(--good); }
+.ops .wf-chip button {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 10px;
+  padding: 0;
+  line-height: 1;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+.ops .wf-chip button:hover { color: var(--bad); }
+.ops .wf-chip-add input {
+  border: 1px dashed var(--line-strong) !important;
+  border-radius: 99px !important;
+  padding: 4px 10px !important;
+  font-size: 11.5px !important;
+  min-width: 130px;
+}
+
+.ops .wf-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.ops .wf-inline-check { flex-direction: row !important; align-items: center; gap: 8px; }
+.ops .wf-inline-check input { width: auto; }
+.ops .wf-inline-check span { font-size: 12px; font-weight: 600; color: var(--text); }
+
+/* ---------------------------------------------------------------------- JSON escape ------- */
+
+.ops .wf-json-toggle {
+  justify-self: start;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 800;
+  font-size: 11px;
+  text-decoration: underline;
+  padding: 0;
+  cursor: pointer;
+}
+.ops .wf-json-panel { display: grid; gap: 8px; }
+.ops .wf-json-panel textarea { min-height: 220px; }
+.ops .wf-json-error { color: var(--bad); font-size: 11px; margin: 0; }
+
+/* ------------------------------------------------------- delete confirmation -------------- */
+
+/* Inline on the card it affects, because a modal detaches the question from its subject. */
+.ops .wf-confirm {
+  border: 1px solid var(--bad-line);
+  background: var(--bad-soft);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.ops .wf-confirm b { font-size: 12.5px; color: var(--bad); }
+.ops .wf-confirm p { margin: 4px 0 0; font-size: 11.5px; color: var(--bad); line-height: 1.45; }
+.ops .wf-confirm-actions { display: flex; gap: 8px; margin-top: 10px; }
+.ops .wf-confirm-actions button {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: 9px;
+  padding: 6px 11px;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.ops .wf-confirm-danger {
+  background: var(--bad) !important;
+  border-color: var(--bad) !important;
+  color: var(--text-inverse) !important;
+}
+
+/* ------------------------------------------------------------------------ flow map -------- */
+
+/* The path a run actually takes, as opposed to the order the cards happen to sit in. */
+.ops .wf-flowmap {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+}
+.ops .wf-flowmap .wf-eyebrow { margin: 0 0 8px; }
+.ops .wf-flowlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.ops .wf-flowstep {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 5px 6px;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+.ops .wf-flowstep:hover { background: var(--surface-3); }
+.ops .wf-flowvia {
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-radius: 99px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+.ops .wf-flowicon { width: 20px; display: grid; place-items: center; color: var(--text-3); flex-shrink: 0; }
+.ops .wf-flowname {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ops .wf-flowtype { font-size: 10.5px; color: var(--text-2); margin-left: auto; white-space: nowrap; }
+.ops .wf-flow-orphans {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--line-strong);
+}
+.ops .wf-flow-orphans small { color: var(--waiting); font-size: 11px; }
+
+/* --------------------------------------------------------------------------- eyebrow ------ */
+
+/* Was .product-eyebrow, inherited from the deleted stylesheet. */
+.ops .wf-eyebrow {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 0 0 8px;
+}

@@ -36,14 +36,13 @@ import { StudioView } from "./ops/views/studio";
 import { SupportView } from "./ops/views/support";
 import { UsersView } from "./ops/views/users";
 import { WorkflowDetailView, WorkflowsView } from "./ops/views/workflows";
-// ops.css is the console design system. product.css stays because the shared workflow builder
-// still carries its own wf-* styles there.
+// ops.css is the console design system; workflow-builder.css styles the builder against the
+// same tokens, so it themes with the console instead of against it.
 import "./ops.css";
-import "./product.css";
+import "./workflow-builder.css";
 
 export default function ControlConsole() {
   const [session, setSession] = useState<Session | null>();
-  const [theme, setTheme] = useState<"light" | "dark">("light");
 
   useEffect(() => guardBFCacheRestore(), []);
 
@@ -63,16 +62,11 @@ export default function ControlConsole() {
     });
   }, []);
 
-  // Resolve the stored theme before the shell mounts so the boot screen matches.
-  useEffect(() => {
-    const stored = window.localStorage.getItem("amazflow_ops_theme");
-    if (stored === "light" || stored === "dark") setTheme(stored);
-    else if (window.matchMedia?.("(prefers-color-scheme: dark)").matches) setTheme("dark");
-  }, []);
-
+  // No data-theme on the boot screen: <html> already carries it, applied before first paint,
+  // so this renders in the right theme without resolving it a second time here.
   if (!session) {
     return (
-      <main className="ops" data-theme={theme}>
+      <main className="ops">
         <div className="ops-boot">
           <div className="ops-boot-card">
             <span className="ops-logo" aria-hidden="true">

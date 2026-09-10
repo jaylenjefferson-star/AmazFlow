@@ -85,7 +85,12 @@
 
 /* -------------------------------------------------------------------- tokens: dark -------- */
 
-.ops[data-theme="dark"] {
+/* Two selectors for one token set. html[data-theme] is what the pre-paint bootstrap script in
+   app/app/layout.tsx sets, so the theme is correct before anything is drawn; .ops[data-theme]
+   is what React renders once the nav context has hydrated. They always agree -- the second is
+   kept so the console still themes correctly if it is ever mounted without that layout. */
+.ops[data-theme="dark"],
+html[data-theme="dark"] .ops {
   --bg: #0b0c0f;
   --surface: #121419;
   --surface-2: #16181d;
@@ -146,7 +151,22 @@
   font-variant-numeric: tabular-nums;
   font-feature-settings: "cv05" 1, "ss03" 1;
   min-height: 100vh;
+
+  /* Tells the browser which way its own widgets should lean: <select> popups, scrollbars,
+     spinners, autofill and the caret. Without this the console rendered a light popup list
+     off a dark control, which is the most common way a dark theme looks broken. */
+  color-scheme: light;
 }
+
+.ops[data-theme="dark"],
+html[data-theme="dark"] .ops { color-scheme: dark; }
+
+/* The page frame behind the console. styles.css paints body with the marketing cream, which
+   showed through on scroll bounce and for the width of the scrollbar gutter, and flashed cream
+   before the console mounted. Keyed off <html> so it is right from the first paint. */
+html[data-theme="dark"] { color-scheme: dark; }
+html[data-theme="dark"] body { background: #0b0c0f; }
+html[data-theme="light"] body { background: #f7f8f9; }
 
 .ops *,
 .ops *::before,
@@ -779,7 +799,8 @@
   color: #fff;
 }
 
-.ops[data-theme="dark"] .ops-btn[data-variant="accent"] { color: #26100b; }
+.ops[data-theme="dark"] .ops-btn[data-variant="accent"],
+html[data-theme="dark"] .ops-btn[data-variant="accent"] { color: #26100b; }
 
 .ops-btn[data-variant="accent"]:hover:not(:disabled) {
   background: var(--accent-hover);
@@ -1337,7 +1358,8 @@ button.ops-metric:hover { background: var(--surface-2); }
   box-shadow: 0 1px 2px rgb(17 20 24 / 0.06);
 }
 
-.ops[data-theme="dark"] .ops-view[aria-pressed="true"] {
+.ops[data-theme="dark"] .ops-view[aria-pressed="true"],
+html[data-theme="dark"] .ops-view[aria-pressed="true"] {
   box-shadow: none;
   background: var(--surface-3);
   border: 1px solid var(--line-strong);

@@ -52,8 +52,16 @@ export function useNav() {
 
 const THEME_KEY = "amazflow_ops_theme";
 
+/**
+ * The theme already resolved onto <html> by the bootstrap script in app/app/layout.tsx, which
+ * runs before first paint. Reading it back keeps one source of truth instead of re-deriving the
+ * answer here and risking the two disagreeing. The storage and media-query branches are the
+ * fallback for the case where the script could not run at all.
+ */
 function initialTheme(): Theme {
   if (typeof window === "undefined") return "light";
+  const applied = document.documentElement.getAttribute("data-theme");
+  if (applied === "light" || applied === "dark") return applied;
   const stored = window.localStorage.getItem(THEME_KEY);
   if (stored === "light" || stored === "dark") return stored;
   return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -112,6 +120,10 @@ export function NavProvider({ children }: { children: ReactNode }) {
       toggleTheme: () =>
         setTheme((current) => {
           const next = current === "dark" ? "light" : "dark";
+          // <html> carries the theme the stylesheets key off, so it has to move with the state.
+          // Written here rather than in an effect so that mounting -- when this state is still
+          // at its pre-resolution default -- cannot clobber what the bootstrap script decided.
+          document.documentElement.setAttribute("data-theme", next);
           try {
             window.localStorage.setItem(THEME_KEY, next);
           } catch {

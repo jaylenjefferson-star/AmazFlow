@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { LogoMark } from "../../site-components";
 import { API, type Session, resolveSession } from "../../lib/cognito-auth";
+import { openSupportChat } from "../../lib/intercom";
 import "../../auth.css";
 import "../console.css";
 
@@ -121,6 +122,12 @@ export default function SupportTicketPage() {
             <button className="console-btn console-btn-quiet" onClick={() => setStatus("idle")}>
               Submit another
             </button>
+            <button
+              className="console-btn console-btn-quiet"
+              onClick={() => openSupportChat(`About ticket ${ticketId}: `)}
+            >
+              Chat about it
+            </button>
           </div>
         </div>
       </div>
@@ -138,9 +145,31 @@ export default function SupportTicketPage() {
         </a>
 
         <h2>Get help from our team</h2>
-        <p className="auth-lede" style={{ marginBottom: 24 }}>
-          Describe the issue you're experiencing and we'll get back to you within one business day.
+        <p className="auth-lede" style={{ marginBottom: 20 }}>
+          Chat with us for anything quick. Use the form below when the problem is tied to a
+          specific run or workflow, so the details arrive with it.
         </p>
+
+        {/* Live chat first, because most questions are answered faster in a conversation than in
+            a ticket. The form stays because it captures run and workflow ids that a chat message
+            cannot, and those are what make an issue diagnosable. */}
+        <div className="support-chat-card">
+          <div>
+            <b>Chat with support</b>
+            <small>Usually answered the same day. Your workspace details come through with it.</small>
+          </div>
+          <button
+            type="button"
+            className="console-btn console-btn-primary"
+            onClick={() => openSupportChat()}
+          >
+            Start a chat
+          </button>
+        </div>
+
+        <div className="support-or">
+          <span>or file a ticket</span>
+        </div>
 
         {error && (
           <div className="auth-error" style={{ marginBottom: 16 }}>
