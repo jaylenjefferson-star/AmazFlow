@@ -8,8 +8,8 @@
     "build": "tsc -p tsconfig.json && mkdir -p dist/renderer && cp src/renderer/index.html dist/renderer/",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "pnpm build && electron .",
-    "package:mac": "pnpm build && electron-builder --mac --dir",
-    "dist:mac": "pnpm build && electron-builder --mac",
+    "package:mac": "bash scripts/package-mac.sh",
+    "dist:mac": "bash scripts/package-mac.sh",
     "test": "node test/agent-contract.test.cjs"
   },
   "devDependencies": {
