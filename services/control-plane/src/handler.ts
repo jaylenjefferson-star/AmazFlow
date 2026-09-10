@@ -2237,6 +2237,120 @@ const validateBranding = (body) => {
   return out;
 };
 
+// ---------- Organization profile and settings ----------
+// Deliberately small. Every field below is read by something: status and maxConcurrentRuns gate
+// run creation, allowedEmailDomains gates who can be invited, timezone is what the operator
+// console formats an org's timestamps in. A setting that is stored and never read is worse than
+// a missing one, because the console then reports a control that does nothing.
+
+// Counted as "in flight" for the concurrency limit. Deliberately a positive list: a run status
+// added later is then not counted, so an unrecognised status fails open and lets work start,
+// rather than failing closed and blocking a customer for a vocabulary gap.
+const LIVE_RUN_STATUSES = [
+  "RUNNING",
+  "WAITING_AGENT",
+  "WAITING_APPROVAL",
+  "AWAITING_CONFIRMATION",
+];
+const ORG_STATUSES = ["active", "paused", "suspended"];
+const ORG_PLANS = ["design_partner", "pilot", "standard", "enterprise"];
+const DEFAULT_ORG_SETTINGS = {
+  maxConcurrentRuns: 0,
+  allowedEmailDomains: [],
+  timezone: "UTC",
+};
+const orgSettings = (org) => ({
+  ...DEFAULT_ORG_SETTINGS,
+  ...(org && org.settings ? org.settings : {}),
+});
+
+// name/status/plan. Slug is immutable: it IS the tenant id, carried in every Cognito claim and
+// every partition key, so renaming it would orphan the tenant's data.
+const validateOrgProfile = (body) => {
+  const out = {};
+  if ("name" in body) {
+    const v = String(body.name || "").trim();
+    if (!v) throw { status: 400, message: "A name is required" };
+    out.name = v.slice(0, 120);
+  }
+  if ("status" in body) {
+    const v = String(body.status || "").trim();
+    if (!ORG_STATUSES.includes(v))
+      throw {
+        status: 400,
+        message: `status must be one of ${ORG_STATUSES.join(", ")}`,
+      };
+    out.status = v;
+  }
+  if ("plan" in body) {
+    const v = String(body.plan || "").trim();
+    if (!ORG_PLANS.includes(v))
+      throw {
+        status: 400,
+        message: `plan must be one of ${ORG_PLANS.join(", ")}`,
+      };
+    out.plan = v;
+  }
+  if ("slug" in body)
+    throw {
+      status: 400,
+      message:
+        "An organization slug cannot be changed: it is the tenant identifier",
+    };
+  return out;
+};
+
+const validateOrgSettings = (body) => {
+  const out = {};
+  if ("maxConcurrentRuns" in body) {
+    const v = Number(body.maxConcurrentRuns);
+    if (!Number.isInteger(v) || v < 0 || v > 1000)
+      throw {
+        status: 400,
+        message:
+          "maxConcurrentRuns must be a whole number between 0 and 1000 (0 means no limit)",
+      };
+    out.maxConcurrentRuns = v;
+  }
+  if ("allowedEmailDomains" in body) {
+    const raw = Array.isArray(body.allowedEmailDomains)
+      ? body.allowedEmailDomains
+      : [];
+    if (raw.length > 20)
+      throw { status: 400, message: "At most 20 email domains" };
+    const seen = [];
+    for (const entry of raw) {
+      // Stored bare and lowercased so comparison at invite time is a plain equality check
+      // rather than a parse. Accepts "@acme.com" and "ACME.com" as the same thing.
+      const d = String(entry || "")
+        .trim()
+        .toLowerCase()
+        .replace(/^@+/, "");
+      if (!d) continue;
+      if (
+        !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(
+          d,
+        )
+      )
+        throw { status: 400, message: `"${entry}" is not a valid email domain` };
+      if (!seen.includes(d)) seen.push(d);
+    }
+    out.allowedEmailDomains = seen;
+  }
+  if ("timezone" in body) {
+    const v = String(body.timezone || "").trim() || "UTC";
+    // Validated against the runtime's own tz database rather than a hardcoded list, so it
+    // cannot drift and cannot be used to smuggle arbitrary text into the console.
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: v });
+    } catch (err) {
+      throw { status: 400, message: `"${v}" is not a recognized time zone` };
+    }
+    out.timezone = v;
+  }
+  return out;
+};
+
 // ---------- Activity log ----------
 // Separate from a run's own audit[] (what an execution did). This records what an
 // ADMIN -- human or via Copilot -- did to the configuration itself, so every
@@ -3831,6 +3945,99 @@ exports.handler = async (e) => {
       });
       return reply(201, org);
     }
+    if (route === "GET /organizations/{slug}") {
+      const slug = e.pathParameters?.slug;
+      if (a.role !== "SUPER_ADMIN" && slug !== a.tenantId)
+        return reply(403, { error: "You can only read your own organization" });
+      const org = await getOrganization(slug);
+      if (!org) return reply(404, { error: "Organization not found" });
+      return reply(200, { ...org, settings: orgSettings(org) });
+    }
+    if (route === "PUT /organizations/{slug}") {
+      if (a.role !== "SUPER_ADMIN")
+        return reply(403, {
+          error: "Only AmazFlow administrators change an organization profile",
+        });
+      const slug = e.pathParameters?.slug;
+      const org = await getOrganization(slug);
+      if (!org) return reply(404, { error: "Organization not found" });
+      let patch;
+      try {
+        patch = validateOrgProfile(JSON.parse(e.body || "{}"));
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+      if (Object.keys(patch).length === 0)
+        return reply(400, { error: "Nothing to change" });
+      const before = { name: org.name, status: org.status, plan: org.plan };
+      const next = { ...org, ...patch, updatedAt: now() };
+      await saveOrganization(next);
+      const changed = Object.keys(patch).filter((k) => before[k] !== patch[k]);
+      await logActivity(slug, {
+        actor: a.userId,
+        actorLabel: "AmazFlow super admin",
+        action: "ORG_UPDATED",
+        summary: changed.length
+          ? `Changed ${changed.join(", ")} on "${next.name}"`
+          : `Saved "${next.name}"`,
+        details: {
+          before,
+          after: { name: next.name, status: next.status, plan: next.plan },
+        },
+      });
+      return reply(200, { ...next, settings: orgSettings(next) });
+    }
+    if (route === "POST /organizations/{slug}/settings") {
+      const slug = e.pathParameters?.slug;
+      if (a.role === "FRONTLINE")
+        return reply(403, {
+          error: "Only administrators change organization settings",
+        });
+      if (a.role !== "SUPER_ADMIN" && slug !== a.tenantId)
+        return reply(403, {
+          error: "You can only change your own organization",
+        });
+      const org = await getOrganization(slug);
+      if (!org) return reply(404, { error: "Organization not found" });
+      const body = JSON.parse(e.body || "{}");
+      // A customer admin owns presentation, not their own execution ceiling: letting a
+      // CLIENT_ADMIN raise maxConcurrentRuns would make the limit advisory.
+      if (a.role !== "SUPER_ADMIN" && "maxConcurrentRuns" in body)
+        return reply(403, {
+          error:
+            "Only AmazFlow administrators change the concurrent run limit",
+        });
+      let patch;
+      try {
+        patch = validateOrgSettings(body);
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+      if (Object.keys(patch).length === 0)
+        return reply(400, { error: "Nothing to change" });
+      const before = orgSettings(org);
+      const settings = { ...before, ...patch };
+      const next = { ...org, settings, updatedAt: now() };
+      await saveOrganization(next);
+      const changed = Object.keys(patch).filter(
+        (k) => JSON.stringify(before[k]) !== JSON.stringify(settings[k]),
+      );
+      await logActivity(slug, {
+        actor: a.userId,
+        actorLabel:
+          a.role === "SUPER_ADMIN"
+            ? "AmazFlow super admin"
+            : "Customer administrator",
+        action: "ORG_SETTINGS_CHANGED",
+        summary: changed.length
+          ? `Changed ${changed.join(", ")}`
+          : "Saved organization settings",
+        details: { before, after: settings },
+      });
+      return reply(200, { ...next, settings });
+    }
     if (route === "POST /workflows/generate") {
       if (a.role !== "SUPER_ADMIN")
         return reply(403, {
@@ -3891,6 +4098,31 @@ exports.handler = async (e) => {
         return reply(409, {
           error: "This workflow is not published for execution",
         });
+      // Organization-level gates, checked before anything else because being paused is not a
+      // problem an operator can fix by plugging in an agent.
+      const runOrg = await getOrganization(workflow.tenantId);
+      if (runOrg && runOrg.status && runOrg.status !== "active")
+        return reply(409, {
+          error:
+            runOrg.status === "suspended"
+              ? "This organization is suspended. Contact AmazFlow to restore execution."
+              : "This organization is paused, so no new work can start.",
+          organizationStatus: runOrg.status,
+        });
+      const runLimit = orgSettings(runOrg).maxConcurrentRuns;
+      if (runLimit > 0) {
+        const liveNow = (await scanType("RUN#", { role: "SUPER_ADMIN" })).filter(
+          (r) =>
+            r.tenantId === workflow.tenantId &&
+            LIVE_RUN_STATUSES.includes(r.status),
+        ).length;
+        if (liveNow >= runLimit)
+          return reply(429, {
+            error: `This organization already has ${liveNow} of ${runLimit} runs in flight. Wait for one to finish, or ask AmazFlow to raise the limit.`,
+            limit: runLimit,
+            inFlight: liveNow,
+          });
+      }
       const body = JSON.parse(e.body || "{}");
       if ("description" in body && !String(body.description || "").trim())
         return reply(400, {

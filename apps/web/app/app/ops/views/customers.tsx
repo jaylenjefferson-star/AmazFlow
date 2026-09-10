@@ -12,7 +12,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { WorkflowDefinition, WorkflowRun } from "@amazflow/workflow-schema";
-import { runsByDay, useOps, type Organization, type UserRecord } from "../data";
+import {
+  orgSettingsOf,
+  runsByDay,
+  useOps,
+  type Organization,
+  type UserRecord,
+} from "../data";
 import { useDetailCrumb, useNav } from "../nav";
 import { PageHead } from "../shell";
 import { useOpsActions } from "../actions";
@@ -49,7 +55,15 @@ import {
 import {
   CONNECTION_STATUS_LABEL,
   CONNECTION_STATUS_TONE,
+  ORG_PLANS,
+  ORG_STATUSES,
+  ORG_STATUS_EFFECT,
+  ORG_STATUS_TONE,
   ROLE_SHORT,
+  concurrencyLabel,
+  orgPlanLabel,
+  orgStatusLabel,
+  timezoneOptions,
   TICKET_STATUS_LABEL,
   TICKET_STATUS_TONE,
   WORKFLOW_STATUS_LABEL,
@@ -138,7 +152,26 @@ export function CustomersView() {
       header: "Plan",
       width: 140,
       sort: (a, b) => a.plan.localeCompare(b.plan),
-      render: (org) => <Pill tone="muted">{org.plan.replace(/_/g, " ")}</Pill>,
+      render: (org) => <Pill tone="muted">{orgPlanLabel(org.plan)}</Pill>,
+    },
+    {
+      // A paused or suspended organization cannot start work, which is the kind of thing that
+      // should be visible while scanning the list rather than only after opening the customer.
+      key: "status",
+      header: "Execution",
+      width: 128,
+      sort: (a, b) => String(a.status).localeCompare(String(b.status)),
+      render: (org) => {
+        const limit = orgSettingsOf(org).maxConcurrentRuns;
+        return (
+          <CellStack
+            top={
+              <Pill tone={ORG_STATUS_TONE[org.status] ?? "muted"}>{orgStatusLabel(org.status)}</Pill>
+            }
+            bottom={limit > 0 ? concurrencyLabel(limit) : undefined}
+          />
+        );
+      },
     },
     {
       key: "workflows",
@@ -440,8 +473,10 @@ export function OrgDetailView({ slug }: { slug: string }) {
             <Pill tone={health.tone} dot>
               {health.label}
             </Pill>
-            <Pill tone={org.status === "active" ? "good" : "muted"}>{org.status}</Pill>
-            <Pill tone="muted">{org.plan.replace(/_/g, " ")}</Pill>
+            <Pill tone={ORG_STATUS_TONE[org.status] ?? "muted"} title={ORG_STATUS_EFFECT[org.status]}>
+              {orgStatusLabel(org.status)}
+            </Pill>
+            <Pill tone="muted">{orgPlanLabel(org.plan)}</Pill>
           </>
         }
         sub={
@@ -1007,10 +1042,10 @@ function OrgConnections({ tenantId }: { tenantId: string }) {
         )}
       </Panel>
 
-      <Panel title="Chrome Agents" sub={`${agents.length}`}>
+      <Panel title="Agents" sub={`${agents.length}`}>
         {agents.length === 0 ? (
           <p className="ops-small ops-muted">
-            No Chrome Agent authorized. This customer relies entirely on AmazFlow Browser.
+            No agent authorized. This customer relies entirely on AmazFlow Browser.
           </p>
         ) : (
           <div className="ops-col ops-gap-sm">
@@ -1233,6 +1268,207 @@ function OrgUsage({
 
 /* --------------------------------------------------------------------------- configuration --- */
 
+/**
+ * Name, status and plan. Status is the one control here with teeth: the control plane refuses to
+ * start a run for an organization that is not active, so the effect of each choice is spelled out
+ * rather than left to be discovered by pausing a live customer.
+ */
+function OrgProfilePanel({ org }: { org: Organization }) {
+  const actions = useOpsActions();
+  const [name, setName] = useState(org.name);
+  const [status, setStatus] = useState(org.status);
+  const [plan, setPlan] = useState(org.plan);
+
+  useEffect(() => {
+    setName(org.name);
+    setStatus(org.status);
+    setPlan(org.plan);
+  }, [org.name, org.status, org.plan]);
+
+  const busy = actions.busy === `orgprofile_${org.slug}`;
+  const trimmed = name.trim();
+  const dirty = trimmed !== org.name || status !== org.status || plan !== org.plan;
+  const valid = trimmed.length > 0;
+
+  return (
+    <Panel
+      title="Profile"
+      sub="Name, commercial plan, and whether this organization may run work"
+      actions={
+        <Btn
+          variant="primary"
+          size="sm"
+          disabled={!dirty || !valid || busy}
+          onClick={() =>
+            actions.saveOrgProfile(org.slug, {
+              ...(trimmed !== org.name ? { name: trimmed } : {}),
+              ...(status !== org.status ? { status } : {}),
+              ...(plan !== org.plan ? { plan } : {}),
+            })
+          }
+        >
+          {busy ? "Saving…" : "Save profile"}
+        </Btn>
+      }
+    >
+      <div className="ops-grid" data-cols="2">
+        <Field
+          label="Organization name"
+          hint="Shown throughout this console and on the customer's sign-in page."
+          error={valid ? undefined : "A name is required"}
+        >
+          <input
+            className="ops-input"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </Field>
+        <Field label="Plan" hint="Recorded for reporting. It does not itself impose limits.">
+          <Select
+            value={plan}
+            onChange={setPlan}
+            label="Plan"
+            options={ORG_PLANS.map((option) => ({ value: option, label: orgPlanLabel(option) }))}
+          />
+        </Field>
+        <Field label="Execution status" hint={ORG_STATUS_EFFECT[status]}>
+          <Select
+            value={status}
+            onChange={setStatus}
+            label="Execution status"
+            options={ORG_STATUSES.map((option) => ({
+              value: option,
+              label: orgStatusLabel(option),
+            }))}
+          />
+        </Field>
+        <Field label="Currently">
+          <div style={{ paddingTop: 6 }}>
+            <Pill tone={ORG_STATUS_TONE[org.status] ?? "muted"}>{orgStatusLabel(org.status)}</Pill>
+          </div>
+        </Field>
+      </div>
+
+      {status !== org.status && status !== "active" && (
+        <Alert tone="waiting" title={`Saving this will stop new runs for ${org.name}`}>
+          {ORG_STATUS_EFFECT[status]} Anything already in flight keeps going, and nothing is
+          deleted. Set it back to Active to resume.
+        </Alert>
+      )}
+    </Panel>
+  );
+}
+
+/**
+ * The execution ceiling and who may be invited. Both are read by the control plane -- the run
+ * limit at run creation, the domain list when a team member is invited -- so what this panel
+ * says is what actually happens.
+ */
+function OrgExecutionPanel({ org }: { org: Organization }) {
+  const actions = useOpsActions();
+  const saved = orgSettingsOf(org);
+  const [limit, setLimit] = useState(String(saved.maxConcurrentRuns));
+  const [timezone, setTimezone] = useState(saved.timezone);
+  const [domains, setDomains] = useState(saved.allowedEmailDomains.join(", "));
+
+  useEffect(() => {
+    setLimit(String(saved.maxConcurrentRuns));
+    setTimezone(saved.timezone);
+    setDomains(saved.allowedEmailDomains.join(", "));
+  }, [saved.maxConcurrentRuns, saved.timezone, saved.allowedEmailDomains.join(",")]);
+
+  const busy = actions.busy === `orgsettings_${org.slug}`;
+  const parsedLimit = Number(limit);
+  const limitValid = Number.isInteger(parsedLimit) && parsedLimit >= 0 && parsedLimit <= 1000;
+  const parsedDomains = domains
+    .split(/[,\s]+/)
+    .map((entry) => entry.trim().toLowerCase().replace(/^@+/, ""))
+    .filter(Boolean);
+  const badDomain = parsedDomains.find(
+    (entry) => !/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(entry),
+  );
+
+  const dirty =
+    parsedLimit !== saved.maxConcurrentRuns ||
+    timezone !== saved.timezone ||
+    parsedDomains.join(",") !== saved.allowedEmailDomains.join(",");
+  const valid = limitValid && !badDomain;
+
+  return (
+    <Panel
+      title="Execution and access"
+      sub="Enforced by the control plane, not advisory"
+      actions={
+        <Btn
+          variant="primary"
+          size="sm"
+          disabled={!dirty || !valid || busy}
+          onClick={() =>
+            actions.saveOrgSettings(org.slug, {
+              ...(parsedLimit !== saved.maxConcurrentRuns
+                ? { maxConcurrentRuns: parsedLimit }
+                : {}),
+              ...(timezone !== saved.timezone ? { timezone } : {}),
+              ...(parsedDomains.join(",") !== saved.allowedEmailDomains.join(",")
+                ? { allowedEmailDomains: parsedDomains }
+                : {}),
+            })
+          }
+        >
+          {busy ? "Saving…" : "Save settings"}
+        </Btn>
+      }
+    >
+      <div className="ops-grid" data-cols="2">
+        <Field
+          label="Concurrent runs"
+          hint={
+            parsedLimit > 0
+              ? `A run that would be the ${parsedLimit + 1}th in flight is refused until one finishes.`
+              : "0 means no limit. Every run is allowed to start."
+          }
+          error={limitValid ? undefined : "A whole number from 0 to 1000"}
+        >
+          <input
+            className="ops-input"
+            inputMode="numeric"
+            value={limit}
+            onChange={(event) => setLimit(event.target.value)}
+          />
+        </Field>
+        <Field label="Time zone" hint="How this organization's timestamps are shown.">
+          <Select
+            value={timezone}
+            onChange={setTimezone}
+            label="Time zone"
+            options={timezoneOptions().map((zone) => ({ value: zone, label: zone }))}
+          />
+        </Field>
+        <Field
+          label="Allowed email domains"
+          hint="Comma separated. Leave empty to allow any address. Checked when a team member is invited."
+          error={badDomain ? `"${badDomain}" is not a valid domain` : undefined}
+        >
+          <input
+            className="ops-input"
+            value={domains}
+            placeholder="acme.com, acme.co.uk"
+            onChange={(event) => setDomains(event.target.value)}
+          />
+        </Field>
+        <Field label="In force now">
+          <div className="ops-kv-hint" style={{ marginTop: 6 }}>
+            {concurrencyLabel(saved.maxConcurrentRuns)} · {saved.timezone} ·{" "}
+            {saved.allowedEmailDomains.length
+              ? `${saved.allowedEmailDomains.length} domain${saved.allowedEmailDomains.length === 1 ? "" : "s"}`
+              : "any email domain"}
+          </div>
+        </Field>
+      </div>
+    </Panel>
+  );
+}
+
 function OrgConfig({
   org,
   agents,
@@ -1254,14 +1490,18 @@ function OrgConfig({
 
   return (
     <div className="ops-col">
-      <Panel title="Identity">
+      <OrgProfilePanel org={org} />
+      <OrgExecutionPanel org={org} />
+
+      <Panel title="Identity" sub="Fixed for the life of the organization">
         <KeyValue
           rows={[
-            { label: "Name", value: org.name },
-            { label: "Slug", value: <IdChip value={org.slug} /> },
+            {
+              label: "Tenant identifier",
+              value: <IdChip value={org.slug} />,
+              hint: "Carried in every sign-in claim and every stored record. It cannot be changed.",
+            },
             { label: "Organization id", value: <IdChip value={org.id} /> },
-            { label: "Status", value: <Pill tone={org.status === "active" ? "good" : "muted"}>{org.status}</Pill> },
-            { label: "Plan", value: org.plan.replace(/_/g, " ") },
             { label: "Created", value: absoluteTime(org.createdAt) },
             { label: "Last updated", value: org.updatedAt ? absoluteTime(org.updatedAt) : "—" },
           ]}
@@ -1324,7 +1564,7 @@ function OrgConfig({
         </div>
       </Panel>
 
-      <Panel title="Chrome Agents" sub={`${agents.length}`}>
+      <Panel title="Agents" sub={`${agents.length}`}>
         {agents.length === 0 ? (
           <p className="ops-small ops-muted">None authorized.</p>
         ) : (
@@ -1350,12 +1590,17 @@ function OrgConfig({
         )}
       </Panel>
 
-      <Panel title="Feature controls">
-        <Alert tone="neutral" title="No feature-flag system exists yet">
-          There is no per-organization flag store on the control plane. The levers that genuinely
-          work today are: a workflow&apos;s <b>status</b> (draft/paused blocks new runs), its{" "}
-          <b>assigned roles</b>, connection <b>revocation</b>, Chrome Agent <b>revocation</b>, and
-          disabling individual <b>users</b>. Each is available on the relevant tab.
+      <Panel title="What actually takes effect">
+        <Alert tone="neutral" title="Every control on this page is read by the control plane">
+          The organization&apos;s <b>execution status</b> and <b>concurrent run limit</b> are checked
+          when a run is created, and the <b>allowed email domains</b> when a team member is invited.
+          Alongside those: a workflow&apos;s <b>status</b> (draft or paused blocks new runs) and its{" "}
+          <b>assigned roles</b>, connection <b>revocation</b>, agent <b>revocation</b>, and disabling
+          individual <b>users</b> — each on the relevant tab.
+          <br />
+          <br />
+          There is still no general per-organization feature-flag store, and <b>plan</b> is recorded
+          for reporting only: it imposes nothing on its own. Set the run limit if you need a ceiling.
         </Alert>
       </Panel>
 

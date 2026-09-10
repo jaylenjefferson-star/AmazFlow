@@ -42,6 +42,23 @@ const invariants = [
   ["the result is rechecked against the reporting agent's surface", /executionTarget:task\.executionTarget/, /executionTarget: task\.executionTarget/],
   ["evidence attributes the result to an agent and grant", /evidence:\s*\{[\s\S]{0,400}grantId/, /grantId: grantPayload \? grantPayload\.grantId : null/],
   ["AI allowlist rejection fails closed with an audit event", /AI_ALLOWLIST_REJECTED/, /AI_ALLOWLIST_REJECTED/],
+
+  // Organization profile and settings. These matter to parity specifically because they are
+  // enforcement points: a copy that carried the settings routes but not the run-creation gates
+  // would accept "paused" and keep executing, which is the failure mode the whole feature exists
+  // to prevent.
+  ["the org profile route is exposed", /PUT \/organizations\/\{slug\}/, /PUT \/organizations\/\{slug\}/],
+  ["the org settings route is exposed", /POST \/organizations\/\{slug\}\/settings/, /POST \/organizations\/\{slug\}\/settings/],
+  ["a single org is readable by its own admin", /GET \/organizations\/\{slug\}'/, /GET \/organizations\/\{slug\}"/],
+  ["org status is a closed set", /ORG_STATUSES=\['active','paused','suspended'\]/, /ORG_STATUSES = \[\s*"active",\s*"paused",\s*"suspended",?\s*\]/],
+  ["a non-active org cannot start a run", /runOrg\.status!=='active'/, /runOrg\.status !== "active"/],
+  ["the concurrency limit is enforced at run creation", /liveNow>=runLimit/, /liveNow >= runLimit/],
+  ["in-flight is a positive status list, so unknown statuses fail open", /LIVE_RUN_STATUSES=\[/, /LIVE_RUN_STATUSES = \[/],
+  ["the run limit is counted per organization", /r\.tenantId===workflow\.tenantId&&LIVE_RUN_STATUSES/, /r\.tenantId === workflow\.tenantId &&\s*LIVE_RUN_STATUSES/],
+  ["the tenant identifier cannot be renamed", /An organization slug cannot be changed/, /An organization slug cannot be changed/],
+  ["a customer admin cannot raise their own run limit", /Only AmazFlow administrators change the concurrent run limit/, /Only AmazFlow administrators change the concurrent run limit/],
+  ["org changes are audited", /ORG_SETTINGS_CHANGED/, /ORG_SETTINGS_CHANGED/],
+  ["email domains are normalised before storage", /replace\(\/\^@\+\/,''\)/, /replace\(\/\^@\+\/, ""\)/],
 ];
 
 let pass = 0, fail = 0;

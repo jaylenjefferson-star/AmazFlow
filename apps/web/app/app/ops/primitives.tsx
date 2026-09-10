@@ -252,17 +252,26 @@ export function Select({
 export function Field({
   label,
   hint,
+  error,
   children,
 }: {
   label: string;
   hint?: string;
+  /** Shown in place of the hint, and marks the control invalid for assistive technology. */
+  error?: string;
   children: ReactNode;
 }) {
   return (
-    <label className="ops-field">
+    <label className="ops-field" data-invalid={error ? "true" : undefined}>
       <span className="ops-field-label">{label}</span>
       {children}
-      {hint && <span className="ops-field-hint">{hint}</span>}
+      {error ? (
+        <span className="ops-field-error" role="alert">
+          {error}
+        </span>
+      ) : (
+        hint && <span className="ops-field-hint">{hint}</span>
+      )}
     </label>
   );
 }
@@ -676,7 +685,7 @@ export function Tabs({
 
 /* ============================================================================== key/value = */
 
-export type KVRow = { label: string; value: ReactNode; hide?: boolean };
+export type KVRow = { label: string; value: ReactNode; hint?: string; hide?: boolean };
 
 export function KeyValue({ rows }: { rows: KVRow[] }) {
   const visible = rows.filter((row) => !row.hide);
@@ -685,7 +694,10 @@ export function KeyValue({ rows }: { rows: KVRow[] }) {
       {visible.map((row) => (
         <div key={row.label} style={{ display: "contents" }}>
           <dt>{row.label}</dt>
-          <dd>{row.value ?? <span className="ops-kv-empty">—</span>}</dd>
+          <dd>
+            {row.value ?? <span className="ops-kv-empty">—</span>}
+            {row.hint && <span className="ops-kv-hint">{row.hint}</span>}
+          </dd>
         </div>
       ))}
     </dl>

@@ -3,6 +3,10 @@
 import { useEffect, useState } from "react";
 import { LogoMark } from "../../site-components";
 import { API, type Session, resolveSession } from "../../lib/cognito-auth";
+// This page is built from the auth card primitives (auth-standalone, auth-card, auth-field,
+// auth-submit) but only ever imported console.css, so every one of those eight classes resolved
+// to nothing and the form rendered unstyled. /console/support imports both for the same reason.
+import "../../auth.css";
 import "../console.css";
 
 type Organization = {
@@ -13,10 +17,29 @@ type Organization = {
   branding?: {
     displayName?: string;
     logoUrl?: string;
-    primaryColor?: string;
+    // The stored field is `accent`. This type said `primaryColor` while the code read and wrote
+    // `accent`, so the declaration described a field that has never existed.
+    accent?: string;
     loginMessage?: string;
   };
+  settings?: {
+    maxConcurrentRuns?: number;
+    allowedEmailDomains?: string[];
+    timezone?: string;
+  };
 };
+
+const TIMEZONES = (() => {
+  try {
+    const supported = (
+      Intl as unknown as { supportedValuesOf?: (key: string) => string[] }
+    ).supportedValuesOf?.("timeZone");
+    if (supported && supported.length) return supported;
+  } catch {
+    // Fall through.
+  }
+  return ["UTC", "America/Los_Angeles", "America/New_York", "Europe/London", "Asia/Tokyo"];
+})();
 
 export default function SettingsPage() {
   const [session, setSession] = useState<Session | null>();
@@ -30,6 +53,8 @@ export default function SettingsPage() {
   const [logoUrl, setLogoUrl] = useState("");
   const [primaryColor, setPrimaryColor] = useState("");
   const [loginMessage, setLoginMessage] = useState("");
+  const [timezone, setTimezone] = useState("UTC");
+  const [savedTimezone, setSavedTimezone] = useState("UTC");
 
   useEffect(() => {
     resolveSession().then((restored) => {
@@ -54,7 +79,9 @@ export default function SettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API}/organizations/${encodeURIComponent(currentSession.tenantId)}/branding`, {
+      // The full organization rather than the public branding subset, so this page can show the
+      // limits actually in force alongside what the customer is allowed to change.
+      const response = await fetch(`${API}/organizations/${encodeURIComponent(currentSession.tenantId)}`, {
         headers: { Authorization: `Bearer ${currentSession.idToken}` },
       });
       const body = await response.json().catch(() => ({}));
@@ -65,6 +92,9 @@ export default function SettingsPage() {
       setLogoUrl(body.branding?.logoUrl || "");
       setPrimaryColor(body.branding?.accent || "#ff765c");
       setLoginMessage(body.branding?.loginMessage || "");
+      const zone = body.settings?.timezone || "UTC";
+      setTimezone(zone);
+      setSavedTimezone(zone);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -96,8 +126,29 @@ export default function SettingsPage() {
 
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error ?? "Failed to save settings");
+      let latest = body;
 
-      setOrg(body);
+      // Branding and settings are separate routes because they carry different authority: a
+      // customer admin owns their presentation, but not their own execution limits.
+      if (timezone !== savedTimezone) {
+        const zoneResponse = await fetch(
+          `${API}/organizations/${encodeURIComponent(session.tenantId)}/settings`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              Authorization: `Bearer ${session.idToken}`,
+            },
+            body: JSON.stringify({ timezone }),
+          },
+        );
+        const zoneBody = await zoneResponse.json().catch(() => ({}));
+        if (!zoneResponse.ok) throw new Error(zoneBody.error ?? "Failed to save the time zone");
+        latest = zoneBody;
+        setSavedTimezone(timezone);
+      }
+
+      setOrg(latest);
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
     } catch (err) {
@@ -232,6 +283,53 @@ export default function SettingsPage() {
           />
           <small style={{ color: "var(--muted)", fontSize: 12, marginTop: 4, display: "block" }}>
             Shown to your team on the sign-in page
+          </small>
+        </div>
+
+        <div className="support-or" style={{ margin: "26px 0 18px" }}>
+          <span>workspace</span>
+        </div>
+
+        <div className="auth-field">
+          <label htmlFor="timezone">Time zone</label>
+          <select
+            id="timezone"
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+            disabled={saving}
+          >
+            {TIMEZONES.map((zone) => (
+              <option key={zone} value={zone}>
+                {zone}
+              </option>
+            ))}
+          </select>
+          <small style={{ color: "var(--muted)", fontSize: 12, marginTop: 4, display: "block" }}>
+            How dates and times are shown for your workspace
+          </small>
+        </div>
+
+        {/* Read-only on purpose: these are set by AmazFlow, and the control plane refuses a change
+            from a customer admin. Showing them without an input is more honest than hiding them
+            and leaving a limit to be discovered when a run is refused. */}
+        <div className="support-chat-card" style={{ display: "block", marginTop: 4 }}>
+          <b>Set by AmazFlow</b>
+          <small style={{ maxWidth: "none" }}>
+            Runs at a time:{" "}
+            <strong>
+              {org?.settings?.maxConcurrentRuns
+                ? `${org.settings.maxConcurrentRuns} at a time`
+                : "No limit"}
+            </strong>
+            {" · "}
+            Sign-in domains:{" "}
+            <strong>
+              {org?.settings?.allowedEmailDomains?.length
+                ? org.settings.allowedEmailDomains.join(", ")
+                : "Any"}
+            </strong>
+            <br />
+            Ask your AmazFlow contact if either of these needs to change.
           </small>
         </div>
 

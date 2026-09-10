@@ -44,9 +44,18 @@ const db = {
     }
     if (cmd instanceof ScanCommand) return { Items: [...store.values()] };
     if (cmd instanceof QueryCommand) {
-      const v = cmd.input.ExpressionAttributeValues;
-      const pk = v[":pk"].S, prefix = v[":prefix"].S;
-      return { Items: [...store.values()].filter((i) => i.pk.S === pk && i.sk.S.startsWith(prefix)) };
+      // Two key-condition shapes are in use: the prefix scan (begins_with) that the list
+      // helpers issue, and the exact-key lookup that getOrganization and getWorkflowVersion
+      // issue. Reading :prefix unconditionally used to throw on the second form, so any handler
+      // path that fetched a single item by key failed here as a 500 rather than being tested.
+      const v = cmd.input.ExpressionAttributeValues || {};
+      const pk = v[":pk"] && v[":pk"].S;
+      const all = [...store.values()].filter((i) => i.pk.S === pk);
+      if (v[":sk"]) return { Items: all.filter((i) => i.sk.S === v[":sk"].S) };
+      if (v[":prefix"]) return { Items: all.filter((i) => i.sk.S.startsWith(v[":prefix"].S)) };
+      throw new Error(
+        "harness: unsupported KeyConditionExpression " + (cmd.input.KeyConditionExpression || "(none)"),
+      );
     }
     if (cmd instanceof TransactWriteItemsCommand) {
       for (const t of cmd.input.TransactItems) { if (t.Put) put(t.Put); }

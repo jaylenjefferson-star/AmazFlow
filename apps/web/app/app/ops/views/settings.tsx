@@ -262,8 +262,14 @@ export function SettingsView() {
               </p>
               <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, lineHeight: 1.85 }}>
                 <li>
-                  <b>Feature flags</b> — no flag store exists. Use workflow status, assigned roles,
-                  and revocation as the real levers.
+                  <b>Feature flags</b> — no general flag store exists. The real per-organization
+                  levers live on an organization&apos;s Config tab: execution status, concurrent run
+                  limit, and allowed email domains. Workflow status, assigned roles, and revocation
+                  are the rest.
+                </li>
+                <li>
+                  <b>Plan-based limits</b> — a plan is recorded for reporting and enforces nothing.
+                  Set an organization&apos;s run limit directly if it needs a ceiling.
                 </li>
                 <li>
                   <b>Billing</b> — no invoices, rate cards, seats, or metered spend are recorded.
