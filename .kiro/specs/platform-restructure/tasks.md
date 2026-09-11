@@ -813,7 +813,7 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
     envelope and the agent snapshot now have their own contracts in both copies, each pinned by a
     source-parity invariant so a narrower one cannot return on one side only
 
-- [ ] 14. Phase 5 — Workflows, the single status model, and the builder
+- [x] 14. Phase 5 — Workflows, the single status model, and the builder
 
   - [x] 14.1 Extend the workflow status set without renaming the published wire value
     - Persisted set becomes draft, testing, active, archived, where active denotes Published and remains the
@@ -871,7 +871,7 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       came from
     - _Requirements: 13.12, 13.13, 13.14, 13.15, 13.16, 13.23_
 
-  - [ ] 14.4 Encode the publish permission as a matrix entry and state the current publishing route in the interface
+  - [x] 14.4 Encode the publish permission as a matrix entry and state the current publishing route in the interface
     - Applies Q-1's conservative assumption: publish is staff-only, the builder role holds edit but not
       publish, and the interface states that an AmazFlow contact publishes rather than showing a control
       that refuses. Resolving Q-1 later changes one matrix entry and one label
@@ -880,11 +880,12 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       is refused. `workflow-lifecycle.test.cjs` asserts the builder's refusal and that the workflow stays
       a draft. The `ORG_OWNER` case is asserted against the matrix's actual answer rather than an
       assumption, so if the entry moves the test says so instead of silently passing
-    - OUTSTANDING (13.22, 30.4): the INTERFACE half. There is no workflow detail view yet, so there is
-      nowhere that states "your AmazFlow contact publishes this". This lands with 14.6
+    - The customer workflow workspace states that an AmazFlow contact publishes each workflow and
+      intentionally renders no publish control for customer roles. The focused rendering suite asserts
+      both the stated route and the absence of a control the API would refuse.
     - _Requirements: 13.22, 7.11, 30.4_
 
-  - [ ] 14.5 Build workflow list, text search, and filtering with an allowlisted filter field set
+  - [x] 14.5 Build workflow list, text search, and filtering with an allowlisted filter field set
     - Filter by status, provider, required execution surface, and assigned role; reject an unrecognized
       filter field with 400 rather than ignoring it
     - CONTROL PLANE DONE: `GET /workflows` accepts `q`, `status`, `provider`, `surface` and
@@ -893,16 +894,15 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       tell them their organization has no published workflows when it has several. Status is matched
       against the DISPLAY status so the Archived filter also returns the legacy `paused` records the list
       labels Archived; surface is derived from the steps
-    - OUTSTANDING (13.6): the customer surface still renders the unfiltered list. No search box and no
-      filter controls exist yet, so the server-side capability is unreachable from the product
+    - The customer list now submits encoded search and filters to the same route. Its empty state says
+      when no workflow matches rather than conflating that result with an organization that has none.
     - _Requirements: 13.6, 13.7, 27.6, 27.7_
 
-  - [ ] 14.6 Build workflow detail: version history, derived required surfaces, and preflight readiness
+  - [x] 14.6 Build workflow detail: version history, derived required surfaces, and preflight readiness
     - Required surfaces are rendered from the workflow's steps, never from a separately stored field
-    - NOT STARTED as a view. Everything it needs is in place and asserted server-side:
-      `GET /workflows/{id}/versions` returns newest-first with each row carrying the definition as it was;
-      `requiredSurfacesFor` derives surfaces from the steps; and `GET /workflows/{id}/preflight` now
-      actually returns `surfaces` (it was being stripped by a borrowed response contract — see task 13)
+    - `WorkflowWorkspace` loads version history and preflight alongside the definition. Its required
+      surfaces are calculated with `requiredTargets(draft)`, never trusted from a stored field, and
+      the preflight result states readiness and the recovery action per surface.
     - _Requirements: 13.19, 13.20, 13.21_
 
   - [x] 14.7 Pin runs to the workflow version in effect and keep that version readable after later edits
@@ -918,7 +918,7 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       with
     - _Requirements: 13.17, 13.18_
 
-  - [ ] 14.8 Wire the no-code builder for every supported action type on both surfaces
+  - [x] 14.8 Wire the no-code builder for every supported action type on both surfaces
     - Field-level editing for every browser and desktop action; each step's surface derived from its
       provider; only operations in that surface's vocabulary accepted
     - SERVER-SIDE HALF DONE: `ACTIONS_BY_SURFACE` and `AGENT_SURFACE_FOR_PROVIDER` are in both copies and
@@ -927,11 +927,12 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       lists rather than a hand-written nine-entry subset, which is a defect fix in its own right: the
       canonical copy silently refused every desktop action and every `NAVIGATE`, so the two control-plane
       copies disagreed about what an agent may be offered
-    - OUTSTANDING (14.1): `workflow-builder.tsx` (1,388 lines, already field-level and schema-driven) is
-      still only reachable from `/app`. Promoting it into `apps/customer` is the remaining work
+    - The existing field-level, schema-driven builder and its styles are promoted into `apps/customer`.
+      The customer wrapper preserves provider-derived targets and the full browser/desktop action
+      vocabulary, while restricting its selectable write statuses to draft and testing.
     - _Requirements: 14.1, 14.2_
 
-  - [ ] 14.9 Wire the plain-language entry point to a validated draft
+  - [x] 14.9 Wire the plain-language entry point to a validated draft
     - Request a candidate definition from the managed service, validate before persisting, respond 422 with
       the reason without persisting on failure, persist a passing candidate as a draft returned in editable
       form, persist immediately so the draft survives a reload, submit the structured definition rather than
@@ -950,8 +951,9 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
     - Control flow is asserted, not assumed: the `advance` implementation is extracted by brace matching
       and checked to read `next`/`whenTrue`/`whenFalse`/`onFailure` out of the persisted definition, with
       no generation or free-form model call anywhere in the step-selection path
-    - OUTSTANDING (14.7, 14.8): the surface. There is no description box and no builder in
-      `apps/customer`, so "submit the structured definition rather than the prose" has no client half yet
+    - The customer workspace sends the plain-language description only to generation, then opens the
+      returned persisted draft in the builder. Save sends the structured definition to the draft route,
+      never the original prose; the focused suite asserts both calls by their distinct payload shapes.
     - _Requirements: 14.3, 14.4, 14.5, 14.6, 14.7, 14.8, 14.9, 14.10_
 
   - [x] 14.10 Tag runs started from a testing-status workflow as test runs

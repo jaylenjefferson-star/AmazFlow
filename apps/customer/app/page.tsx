@@ -56,6 +56,7 @@ import {
   WorkflowsView,
   type ViewProps,
 } from "./views";
+import { WorkflowWorkspace } from "./workflow-workspace";
 import {
   clientFor,
   principalOf,
@@ -67,6 +68,7 @@ import {
   type StoredSession,
 } from "./session";
 import "@amazflow/ui/ops.css";
+import "./workflow-builder.css";
 
 /**
  * What this surface reads, and which permission each read needs.
@@ -240,7 +242,7 @@ function renderRoute(view: ResolvedView, props: ViewProps) {
     case "home":
       return <HomeView {...props} />;
     case "workflows":
-      return <WorkflowsView {...props} />;
+      return view.entityId ? <WorkflowWorkspace key={view.entityId} {...props} workflowId={view.entityId} /> : <WorkflowsView {...props} />;
     case "runs":
       return <RunsView {...props} />;
     case "tasks":

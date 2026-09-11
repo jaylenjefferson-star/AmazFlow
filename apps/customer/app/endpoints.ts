@@ -86,6 +86,16 @@ export const readAllNotifications = (): Endpoint => ({
   path: "/notifications/read-all",
 });
 
+/** Workflow authoring. `new` is a server-reserved sentinel; it never becomes a stored identifier. */
+export const saveWorkflowDraft = (id: string): Endpoint => ({
+  route: "POST /workflows/{id}/draft",
+  path: `/workflows/${e(id)}/draft`,
+});
+export const generateWorkflow = (): Endpoint => ({
+  route: "POST /workflows/generate",
+  path: "/workflows/generate",
+});
+
 /** Personal settings (task 11.14). The target account always comes from the verified session. */
 export const saveOwnProfile = (): Endpoint => ({ route: "PUT /me/profile", path: "/me/profile" });
 export const saveOwnPreferences = (): Endpoint => ({
@@ -151,6 +161,9 @@ export const ALL_ENDPOINTS: readonly Endpoint[] = [
   removeTeamMember("team_1", "person@acme.example"),
   readNotification("ntf_1"),
   readAllNotifications(),
+  saveWorkflowDraft("new"),
+  saveWorkflowDraft("wf_1"),
+  generateWorkflow(),
   saveOwnProfile(),
   saveOwnPreferences(),
   ownPasswordChanged(),

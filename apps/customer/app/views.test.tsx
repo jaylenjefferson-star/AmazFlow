@@ -380,7 +380,7 @@ test("workflow statuses render through the shared label mapping, not as stored v
   // "Paused" invites somebody to look for the control that un-pauses it. There is none, and there never
   // will be. It has to read as Archived, which is a state they can understand and act on.
   const html = renderToStaticMarkup(
-    views.WorkflowsView({
+    createElement(views.WorkflowsView, {
       principal: principal("ORG_ADMIN"),
       navigate: () => {},
       client: fakeClient,
@@ -394,7 +394,7 @@ test("workflow statuses render through the shared label mapping, not as stored v
           { id: "wf_try", name: "Being tried out", status: "testing" },
         ]),
       },
-    }) as never,
+    }),
   );
   assert.match(html, /Published/);
   assert.match(html, /Testing/);

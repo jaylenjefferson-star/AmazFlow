@@ -228,14 +228,65 @@ export function HomeView({ slots, navigate }: ViewProps) {
   );
 }
 
-export function WorkflowsView({ slots, navigate }: ViewProps) {
-  const workflows = list<{ id: string; name: string; status: string }>(slots, "workflows");
+export function WorkflowsView({ slots, navigate, client, principal }: ViewProps) {
+  type WorkflowRow = {
+    id: string;
+    name: string;
+    status: string;
+    description?: string;
+    allowedProviders?: string[];
+    assignedRoles?: string[];
+    steps?: Array<{ type?: string; provider?: string; executionTarget?: string }>;
+  };
+  const workflows = list<WorkflowRow>(slots, "workflows");
+  const [q, setQ] = useState("");
+  const [status, setStatus] = useState("");
+  const [provider, setProvider] = useState("");
+  const [surface, setSurface] = useState("");
+  const [assignedRole, setAssignedRole] = useState("");
+  const [filtered, setFiltered] = useState<WorkflowRow[] | null>(null);
+  const [filterError, setFilterError] = useState<string | null>(null);
+  const [filtering, setFiltering] = useState(false);
+  const mayCreate = can(principal, "workflow:create", { orgId: principal.orgId }).allow;
+
+  const applyFilters = async (event: FormEvent) => {
+    event.preventDefault();
+    const parameters = new URLSearchParams();
+    if (q.trim()) parameters.set("q", q.trim());
+    if (status) parameters.set("status", status);
+    if (provider) parameters.set("provider", provider);
+    if (surface) parameters.set("surface", surface);
+    if (assignedRole) parameters.set("assignedRole", assignedRole);
+    setFiltering(true);
+    setFilterError(null);
+    try {
+      const suffix = parameters.toString();
+      setFiltered(await client.get<WorkflowRow[]>(suffix ? `/workflows?${suffix}` : "/workflows"));
+    } catch (error) {
+      setFilterError(errorText(error));
+    } finally {
+      setFiltering(false);
+    }
+  };
   return (
-    <Page title="Workflows" lead="The work AmazFlow can do for your organization.">
+    <Page
+      title="Workflows"
+      lead="The work AmazFlow can do for your organization."
+      actions={mayCreate ? <Btn variant="primary" onClick={() => navigate({ routeId: "workflows", entityId: "new" })}>New workflow</Btn> : undefined}
+    >
+      <form className="ops-toolbar" onSubmit={(event) => void applyFilters(event)}>
+        <SearchInput value={q} onChange={setQ} placeholder="Search workflows" />
+        <Select value={status} onChange={setStatus} label="Workflow status" options={[{ value: "", label: "All statuses" }, { value: "draft", label: "Draft" }, { value: "testing", label: "Testing" }, { value: "active", label: "Published" }, { value: "archived", label: "Archived" }]} />
+        <Select value={provider} onChange={setProvider} label="Provider" options={[{ value: "", label: "All providers" }, { value: "browser", label: "Browser" }, { value: "desktop", label: "Desktop" }, { value: "api", label: "API" }, { value: "spreadsheet", label: "Spreadsheet" }, { value: "email", label: "Email" }, { value: "file", label: "File" }, { value: "mock", label: "Simulated" }]} />
+        <Select value={surface} onChange={setSurface} label="Required surface" options={[{ value: "", label: "All surfaces" }, { value: "browser_extension", label: "Chrome Extension" }, { value: "desktop_agent", label: "Desktop App" }]} />
+        <Select value={assignedRole} onChange={setAssignedRole} label="Assigned role" options={[{ value: "", label: "All roles" }, { value: "FRONTLINE", label: "Frontline" }, { value: "CLIENT_ADMIN", label: "Client administrator" }, { value: "SUPER_ADMIN", label: "AmazFlow administrator" }]} />
+        <Btn type="submit" disabled={filtering}>{filtering ? "Searching…" : "Apply filters"}</Btn>
+      </form>
+      {filterError && <Alert tone="bad" title="The workflow list did not load">{filterError}</Alert>}
       <Resource
-        slot={workflows}
-        emptyTitle="No workflows yet"
-        emptyBody="Your AmazFlow contact builds these with you. They appear here once published."
+        slot={{ ...workflows, value: filtered ?? workflows.value }}
+        emptyTitle={filtered ? "No workflows match these filters" : "No workflows yet"}
+        emptyBody={filtered ? "Try removing a filter or changing the search words." : "Create a draft or ask your AmazFlow contact to build one with you."}
       >
         {(value) => (
           <ul className="ops-list">
