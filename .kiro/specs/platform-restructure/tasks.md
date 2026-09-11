@@ -1042,20 +1042,39 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       rewrite already committed in Phase 3.
     - _Requirements: 16.16, 1.6_
 
-  - [ ] 15.9 Property tests for run status transition validity (Property 3) with fast-check
+  - [x] 15.9 Property tests for run status transition validity (Property 3) with fast-check
     - **Property 3: Run status transition validity** — a terminal run never transitions again; every
       transition is in the declared table; cancel is accepted exactly for the cancellable set; an agent
       result is accepted only while awaiting an agent on that exact step; audit is append-only and monotonic
       in time; an unsubstantiated success does not advance the run; the presentation mapping is total
+    - `infrastructure/aws-cdk/test/property-run-lifecycle.test.cjs`: fast-check properties against the
+      deployed handler covering cancel exactness, each resume path's exactness (by status and by step
+      id), terminal immutability across all four operations, and unsubstantiated-success refusal —
+      generalizing guardrail-state-machine.test.cjs's hand-picked status lists to arbitrary strings.
+      `packages/domain-ui/src/terms-property.test.ts`: the presentation-mapping totality property,
+      which caught and led to fixing a real bug — `runStatus("valueOf")` returned the inherited
+      `Object.prototype.valueOf` function instead of falling back to "Unknown status", because a plain
+      object lookup with `??` does not distinguish an own `undefined` from an inherited member. Fixed
+      with `Object.hasOwn` in `packages/domain-ui/src/terms.ts`. The same lookup pattern recurs
+      elsewhere in that file and is flagged separately for its own pass rather than fixed here.
     - **Validates: Requirements 16.1, 16.5, 16.13, 16.14, 17.5, 19.5, 19.8, 28.12, 31.1, 31.2, 31.3, 31.15, 31.17**
 
-  - [ ] 15.10 Run lifecycle branch test suite
+  - [x] 15.10 Run lifecycle branch test suite
     - Every branch the design enumerates: managed-service success and failure; allowlist rejection routed to
       review and failing closed; condition branches; approval approved and rejected; confirmation required,
       granted, and expired; action success and failure with and without a failure branch; verification
       failure; reconciliation required with no automatic retry; cancellation from each cancellable status and
       refusal from each terminal status; timeout; execution status blocking creation; the ceiling returning a
       limit and in-flight count; an unrecognized status failing open; preflight refusing an unconnected surface
+    - Audited the existing suite first: nearly every branch was already covered across
+      `guardrail-state-machine`, `guardrail-concurrency-retry`, `guardrail-reconciliation` (engine),
+      `guardrail-resume-paths` (engine), and `engine.test.ts`. Closed the three genuine gaps found —
+      `packages/engine/src/run-lifecycle-branches.test.ts` covers a condition step's whenFalse branch
+      (only whenTrue was ever reached, via the data-entry fixture's fixed high-confidence input) and a
+      confirmation's own expiry (`timeout()` accepts `AWAITING_CONFIRMATION`, but every existing case
+      reached `WAITING_AGENT` first); `infrastructure/aws-cdk/test/workflow-lifecycle.test.cjs` gained
+      one case asserting `POST /workflows/{id}/runs` itself refuses (409, no run created) when preflight
+      is not ready, alongside the existing case that only asserted the preflight *report*.
     - _Requirements: 34.12_
 
 - [ ] 16. Checkpoint — customer run experience replaces the duplicated one
@@ -1146,10 +1165,16 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       run's completed steps
     - _Requirements: 19.6, 19.7, 19.8_
 
-  - [ ] 18.6 Approvals test suite
+  - [x] 18.6 Approvals test suite
     - Approval and rejection advancing the correct branch; refusal of an unauthorized role, of a caller from
       another organization, and of an approver absent from the step's permitted roles; refusal when the run
       is not awaiting approval; refusal of an already-decided step; recording of the deciding user and role
+    - `infrastructure/aws-cdk/test/approvals.test.cjs`. Cross-organization refusal and the exhaustive
+      per-status refusal sweep are intentionally not repeated here — they are already owned by
+      `isolation-api.test.cjs` and `guardrail-state-machine.test.cjs`. Pins the two INDEPENDENT refusal
+      reasons (the platform permission `approval:decide`, vs. a step's own `roles` list checked against
+      the caller's coarse group — a principal can hold the first and still fail the second), refusal of
+      an already-decided step, and that both the deciding user and role are recorded.
     - _Requirements: 34.14_
 
   - [x] 18.7* Exception classification unit tests

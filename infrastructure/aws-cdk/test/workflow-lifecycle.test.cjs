@@ -648,6 +648,36 @@ const transition = (as, id, verb, body) =>
     assert.ok(res.body.surfaces[0].action, "and each surface names what would clear it");
   });
 
+  await check("run creation itself is refused, not just reported, when a required surface has no connected agent", async () => {
+    // A published (not draft) workflow, otherwise identical to wf_desktop_only, so the refusal
+    // asserted here is provably the PREFLIGHT gate and not the draft-status gate above it.
+    putTenant(
+      TENANT,
+      "WORKFLOW",
+      browserWorkflow("wf_preflight_blocked", {
+        status: "active",
+        allowedProviders: ["desktop"],
+        steps: [
+          { id: "s_act", type: "action", name: "Open", provider: "desktop", operation: "desktop.open_app", input: { app: "TextEdit" }, next: "s_end" },
+          { id: "s_end", type: "end", name: "Done", outcome: "success" },
+        ],
+      }),
+    );
+    const res = await asUser(principals.ORG_ADMIN, "POST /workflows/{id}/runs", {
+      pathParameters: { id: "wf_preflight_blocked" },
+      body: { description: "should never start" },
+    });
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    assert.match(res.body.error, /needs an execution agent that is not ready yet/);
+    assert.equal(res.body.preflight?.ready, false, "the refusal carries the same readiness answer preflight reports");
+    assert.equal(stored("wf_preflight_blocked").status, "active", "the workflow itself is untouched by the refusal");
+    const createdRuns = [...store.entries()]
+      .filter(([key]) => key.startsWith(`TENANT#${TENANT}|RUN#`))
+      .map(([, item]) => JSON.parse(item.document.S))
+      .filter((run) => run.workflowId === "wf_preflight_blocked");
+    assert.deepEqual(createdRuns, [], "no run record was created for the refused workflow");
+  });
+
   /* ======================================================= generation from plain language ===== */
   section("14.3-14.10 -- the plain-language entry point");
 

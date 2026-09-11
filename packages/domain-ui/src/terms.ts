@@ -81,8 +81,13 @@ export function runStatus(status: string, register: LabelRegister = "operator") 
     // A run becomes RUNNING immediately; there is no queued state in the engine. More generally, an
     // unrecognised persisted value is not a product state we can name honestly, so do not humanize it
     // into a plausible-looking label (for example, QUEUED -> "Queued").
-    label: labels[status] ?? "Unknown status",
-    tone: RUN_STATUS_TONE[status] ?? "neutral",
+    //
+    // `Object.hasOwn` rather than `labels[status] ?? fallback`: a status of "constructor" or
+    // "valueOf" is still just an unrecognised string, but a plain-object index falls through to the
+    // inherited Object.prototype member of that name instead of `undefined`, which `??` then treats
+    // as a real label -- rendering a function where a string was expected.
+    label: Object.hasOwn(labels, status) ? labels[status] : "Unknown status",
+    tone: Object.hasOwn(RUN_STATUS_TONE, status) ? RUN_STATUS_TONE[status] : "neutral",
   };
 }
 
