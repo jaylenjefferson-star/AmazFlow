@@ -1457,7 +1457,9 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       change that changes a page
     - _Requirements: 30.1, 30.2, 30.3, 30.4, 30.7, 30.8, 30.9, 30.10_
 
-  - [ ] 26.10 Remove the unlinked agent test harness page from the public surface
+  - [x] 26.10 Remove the unlinked agent test harness page from the public surface
+    - Deleted `apps/web/app/agent-test/page.tsx`; it had no incoming references from nav, routes,
+      or tests
     - _Requirements: 30.6_
 
   - [ ] 26.11 Add per-route rate limits and pagination discipline
