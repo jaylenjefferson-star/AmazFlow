@@ -30,7 +30,7 @@ applications:
         build:
           commands:
             - cd apps/web
-            - pnpm exec next build
+            - pnpm run build
             - test -f out/index.html
       artifacts:
         baseDirectory: out
@@ -53,7 +53,7 @@ applications:
         build:
           commands:
             - cd apps/customer
-            - pnpm exec next build
+            - pnpm run build
             - test -f out/index.html
       artifacts:
         baseDirectory: out
@@ -76,7 +76,7 @@ applications:
         build:
           commands:
             - cd apps/internal
-            - pnpm exec next build
+            - pnpm run build
             - test -f out/index.html
       artifacts:
         baseDirectory: out

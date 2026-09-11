@@ -5,7 +5,9 @@ document exists so that step stops being tribal knowledge.
 
 | Component | Ships by | Needs AWS access? |
 |---|---|---|
-| Web app (`apps/web`) — marketing, `/console`, `/app` | Merge to `main` → Amplify Hosting builds from GitHub | No |
+| Marketing web app (`apps/web`) — marketing, `/console`, `/app` | Merge to `main` → Amplify Hosting builds from GitHub | No |
+| Customer app (`apps/customer`) — `app.amazflow.com` | Merge to `main` → Amplify Hosting builds from GitHub | No |
+| Internal app (`apps/internal`) — `admin.amazflow.com` | Merge to `main` → Amplify Hosting builds from GitHub | No |
 | Control plane Lambda + API routes (`infrastructure/aws-cdk/amazflow-dev.yaml`) | CloudFormation deploy | **Yes** |
 | Chrome extension (`apps/browser-agent`) | Rebuild the zip, commit it, merge → Amplify serves it from `/downloads` | No |
 | Desktop Agent (`apps/desktop-agent`) | Signed macOS build attached to a GitHub release | No (needs Apple signing) |
@@ -31,8 +33,11 @@ canonical source still agree on every security invariant and on the provider all
 
 ## 1. Web app — automatic
 
-Amplify Hosting is connected to this repository and builds `apps/web` per `amplify.yml` on every
-push to the tracked branch. Merging is the deploy. There is nothing to run.
+Amplify Hosting is connected to this repository and builds the three static Next applications
+(`apps/web`, `apps/customer`, and `apps/internal`) per `amplify.yml` on every push to the tracked
+branch. Merging is the deploy. There is nothing to run. The build commands invoke each app's
+package script rather than calling Next directly, so app-specific checks (including the customer
+bundle leak check) cannot be skipped by hosting.
 
 Verify a deploy landed:
 
