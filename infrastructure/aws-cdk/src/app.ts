@@ -157,7 +157,7 @@ class AmazFlowAgentCoreStack extends cdk.Stack {
     // Rollback-only permission. The cutover runbook removes it on day 14.
     control.addToRolePolicy(new iam.PolicyStatement({ sid: "LegacyRollbackWindow", actions: ["bedrock:InvokeModel"], resources: [legacyModelArn.valueAsString] }));
 
-    const api = new apigwv2.HttpApi(this, "Api", { corsPreflight: { allowOrigins: ["https://amazflow.com", "https://www.amazflow.com"], allowHeaders: ["authorization", "content-type"], allowMethods: [apigwv2.CorsHttpMethod.ANY], maxAge: cdk.Duration.days(1) } });
+    const api = new apigwv2.HttpApi(this, "Api", { corsPreflight: { allowOrigins: ["https://amazflow.com", "https://www.amazflow.com", "https://app.amazflow.com", "https://admin.amazflow.com"], allowHeaders: ["authorization", "content-type", "x-correlation-id"], exposeHeaders: ["x-correlation-id"], allowMethods: [apigwv2.CorsHttpMethod.ANY], maxAge: cdk.Duration.days(1) } });
     const integration = new integrations.HttpLambdaIntegration("ControlIntegration", control);
     const jwt = new authorizers.HttpJwtAuthorizer("CognitoJwt", issuer, { jwtAudience: [userPoolClientId.valueAsString] });
     const publicRoutes = ["GET /health", "POST /leads", "GET /organizations/{slug}/branding", "POST /agent-authorizations/{code}/exchange", "GET /agent/tasks", "POST /agent/tasks/{id}/claim", "POST /agent/tasks/{id}/result", "POST /agent/tools/record-step-result", "POST /agent/heartbeat"];

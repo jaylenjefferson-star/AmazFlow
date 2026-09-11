@@ -2562,7 +2562,8 @@ Resources:
         # DELETE is needed by the browser-connection route ported in Phase 0b. A route that exists
         # but cannot be called is the same class of defect as a route that only exists in one copy.
         AllowMethods: [GET, POST, PUT, DELETE, OPTIONS]
-        AllowHeaders: [authorization, content-type]
+        AllowHeaders: [authorization, content-type, x-correlation-id]
+        ExposeHeaders: [x-correlation-id]
 
   ApiIntegration:
     Type: AWS::ApiGatewayV2::Integration

@@ -39,11 +39,24 @@ branch. Merging is the deploy. There is nothing to run. The build commands invok
 package script rather than calling Next directly, so app-specific checks (including the customer
 bundle leak check) cannot be skipped by hosting.
 
+For separate Amplify applications backed by this monorepo, configure each app's
+`AMPLIFY_MONOREPO_APP_ROOT` environment variable to match its `appRoot`: `apps/web`,
+`apps/customer`, or `apps/internal`. Keep each app on static hosting with the artifact directory
+declared in `amplify.yml`; these applications use Next static export and do not produce
+`required-server-files.json`.
+
 Verify a deploy landed:
 
 ```bash
 curl -s -o /dev/null -w "%{http_code}\n" https://amazflow.com/
 ```
+
+The control plane must allow browser requests from `https://amazflow.com`,
+`https://www.amazflow.com`, `https://app.amazflow.com`, and `https://admin.amazflow.com`.
+Its CORS preflight must allow `authorization`, `content-type`, and `x-correlation-id`, and expose
+`x-correlation-id` so support references can be read by the browser. The canonical CDK source and
+the deployed template keep these values in parity; changing the live API requires deploying the
+reviewed control-plane template.
 
 ---
 
