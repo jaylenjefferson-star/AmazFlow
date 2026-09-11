@@ -52,7 +52,9 @@ const RESOURCES = [
   { key: "activity", path: "/activity", permission: "internal:audit_read_all", empty: [] },
   { key: "leads", path: "/leads", permission: "internal:lead_read", empty: [] },
   { key: "tickets", path: "/support/tickets", permission: "internal:support_manage", empty: [] },
-  { key: "health", path: "/health", permission: null, empty: null },
+  // The public liveness endpoint remains available for probes; the staff view is still policy
+  // protected so a customer cannot turn this surface into a platform-information oracle.
+  { key: "health", path: "/health", permission: "internal:platform_settings", empty: null },
   { key: "settings", path: "/settings", permission: "internal:platform_settings", empty: null },
 ] as const satisfies readonly ResourceSpec<unknown>[];
 

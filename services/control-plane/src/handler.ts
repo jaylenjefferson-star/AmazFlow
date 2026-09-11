@@ -256,6 +256,7 @@ let requestStartedAt = null;
 let requestUserId = null;
 let requestOrgId = null;
 let lastPermissionCheck = null;
+let requestTruncated = false;
 const CODE_FOR_STATUS = {
   400: "BAD_REQUEST",
   401: "UNAUTHENTICATED",
@@ -341,6 +342,7 @@ const reply = (s, b) => {
       // already reads this header as a fallback (packages/api-client), so a success response
       // carrying it is completing an existing contract, not adding a new one.
       ...(correlationId ? { "x-correlation-id": correlationId } : {}),
+      ...(requestTruncated ? { "x-amazflow-list-truncated": "true" } : {}),
       ...corsHeaders(),
     },
     body: JSON.stringify(projected, (key, value) =>
@@ -751,9 +753,12 @@ const PAGE_GUARD = 200;
 // correct; the problem was that every reader of a call site had to know what scanType would decide on
 // their behalf.
 //
-// Cross-tenant reads still Scan: there is no cross-tenant GSI yet. Accepted tradeoff at current
-// scale -- add a GSI if the operator's own views get slow.
+// Cross-tenant reads use the indexed projection when deployed. The fallback is retained for
+// existing tables during the migration window, but remains paged and advertises truncation.
+const crossOrganizationIndex = process.env.CROSS_ORG_INDEX_NAME || "CrossOrganizationIndex";
 const pagedScan = async (type) => {
+  if (process.env.CROSS_ORG_INDEX_ENABLED === "true")
+    return pagedIndexedRead(type);
   const items = [];
   let cursor;
   let pages = 0;
@@ -762,6 +767,24 @@ const pagedScan = async (type) => {
     for (const i of out.Items || []) {
       if (i.sk?.S?.startsWith(type) && i.document?.S) items.push(parse(i));
     }
+    cursor = out.LastEvaluatedKey;
+  } while (cursor && ++pages < PAGE_GUARD);
+  if (cursor) reportTruncation(type, pages);
+  return items;
+};
+const pagedIndexedRead = async (type) => {
+  const items = [];
+  let cursor;
+  let pages = 0;
+  do {
+    const out = await db.send(new QueryCommand({
+      TableName: table,
+      IndexName: crossOrganizationIndex,
+      KeyConditionExpression: "gsi1pk = :type",
+      ExpressionAttributeValues: { ":type": { S: type } },
+      ExclusiveStartKey: cursor,
+    }));
+    for (const i of out.Items || []) if (i.document?.S) items.push(parse(i));
     cursor = out.LastEvaluatedKey;
   } while (cursor && ++pages < PAGE_GUARD);
   if (cursor) reportTruncation(type, pages);
@@ -791,6 +814,7 @@ const pagedQuery = async (pk, type) => {
 // Truncation means results are incomplete. Say so loudly rather than returning a plausible-looking
 // partial list.
 const reportTruncation = (type, pages) => {
+  requestTruncated = true;
   console.error(
     JSON.stringify({
       level: "error",
@@ -1071,6 +1095,8 @@ const save = async (type, doc) =>
       Item: {
         pk: { S: `TENANT#${doc.tenantId}` },
         sk: { S: `${type}#${doc.id}` },
+        gsi1pk: { S: `${type}#` },
+        gsi1sk: { S: `${doc.tenantId}#${doc.createdAt || now()}#${doc.id}` },
         tenantId: { S: doc.tenantId },
         document: { S: JSON.stringify(doc) },
         updatedAt: { S: now() },
@@ -1889,6 +1915,8 @@ const saveRunWithAudit = async (run, auditStartIdx) => {
         Item: {
           pk: { S: `TENANT#${run.tenantId}` },
           sk: { S: `RUN#${run.id}` },
+          gsi1pk: { S: "RUN#" },
+          gsi1sk: { S: `${run.tenantId}#${run.createdAt || now()}#${run.id}` },
           tenantId: { S: run.tenantId },
           document: { S: JSON.stringify(run) },
           updatedAt: { S: now() },
@@ -3498,6 +3526,8 @@ const logActivity = async (tenantId, entry, notification) => {
       Item: {
         pk: { S: `TENANT#${tenantId}` },
         sk: { S: `ACTIVITY#${String(Date.now()).padStart(14, "0")}_${id}` },
+        gsi1pk: { S: "ACTIVITY#" },
+        gsi1sk: { S: `${tenantId}#${doc.at}#${id}` },
         tenantId: { S: tenantId },
         document: { S: JSON.stringify(doc) },
         updatedAt: { S: now() },
@@ -6057,6 +6087,7 @@ exports.handler = async (e) => {
   requestUserId = null;
   requestOrgId = null;
   lastPermissionCheck = null;
+  requestTruncated = false;
   try {
     if (e.source === "amazflow.sweep") {
       const result = await sweepExpired();

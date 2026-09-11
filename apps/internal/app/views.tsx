@@ -106,6 +106,8 @@ export function StaffSection({
     return <StaffUsers organizations={rows as Organization[]} client={client} />;
   if (routeId === "organizations" && client && refresh)
     return <OrganizationsManager rows={rows} client={client} refresh={refresh} runs={(slots.runs?.value ?? []) as Record<string, unknown>[]} workflows={(slots.workflows?.value ?? []) as Record<string, unknown>[]} agents={(slots.agents?.value ?? []) as Record<string, unknown>[]} connections={(slots.connections?.value ?? []) as Record<string, unknown>[]} />;
+  if (routeId === "support" && client && refresh)
+    return <SupportQueue rows={rows} client={client} refresh={refresh} />;
   return <Table routeId={routeId} rows={rows} />;
 }
 
@@ -267,7 +269,42 @@ function Table({ routeId, rows }: { routeId: string; rows: Record<string, unknow
     if (routeId === "leads") return [label(row.name ?? row.email ?? row.id), label(row.company), label(row.status), label(row.createdAt)];
     return [label(row.id), label(row.tenantId), label(row.status), label(row.subject), label(row.updatedAt ?? row.createdAt)];
   };
-  return <div className="ops-tablewrap"><table className="ops-table"><thead><tr>{headings.map((heading) => <th key={heading}>{heading}</th>)}</tr></thead><tbody>{rows.slice(0, 100).map((row, index) => <tr key={label(row.id ?? row.slug, String(index))}>{cells(row).map((cell, cellIndex) => <td key={`${cellIndex}-${cell}`}>{cell}</td>)}</tr>)}</tbody></table></div>;
+  return <div className="ops-tablewrap"><table className="ops-table"><thead><tr>{headings.map((heading) => <th key={heading}>{heading}</th>)}{routeId === "runs" && <th>Technical</th>}</tr></thead><tbody>{rows.slice(0, 100).map((row, index) => <tr key={label(row.id ?? row.slug, String(index))}>{cells(row).map((cell, cellIndex) => <td key={`${cellIndex}-${cell}`}>{cell}</td>)}{routeId === "runs" && <td><TechnicalDisclosure run={row} /></td>}</tr>)}</tbody></table></div>;
+}
+
+function TechnicalDisclosure({ run }: { run: Record<string, unknown> }) {
+  const usage = run.usage && typeof run.usage === "object" ? run.usage as Record<string, unknown> : null;
+  const traceId = run.traceId ?? (run.metadata && typeof run.metadata === "object" ? (run.metadata as Record<string, unknown>).traceId : undefined);
+  const runtime = run.aiRuntimeLabel ?? (usage?.modelId ? "managed AI" : undefined);
+  if (!traceId && !runtime && !usage?.modelId && !usage?.provider) return null;
+  return (
+    <details>
+      <summary>Technical details</summary>
+      <dl>
+        <dt>Runtime</dt>
+        <dd>{label(runtime)}</dd>
+        {Boolean(usage?.provider) && <><dt>Provider</dt><dd>{label(usage?.provider)}</dd></>}
+        {Boolean(usage?.modelId) && <><dt>Model</dt><dd>{label(usage?.modelId)}</dd></>}
+        {Boolean(traceId) && <><dt>Trace</dt><dd>{label(traceId)}</dd></>}
+      </dl>
+      <p className="ops-muted">Diagnostic executor access is restricted to AmazFlow staff.</p>
+    </details>
+  );
+}
+
+function SupportQueue({ rows, client, refresh }: { rows: Record<string, unknown>[]; client: ApiClient; refresh: () => Promise<void> }) {
+  const [pending, setPending] = useState<string | null>(null);
+  const update = async (id: string, status: string) => {
+    if (pending) return;
+    setPending(id);
+    try {
+      await client.post(`/support/tickets/${encodeURIComponent(id)}/status`, { status });
+      await refresh();
+    } finally {
+      setPending(null);
+    }
+  };
+  return <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Ticket</th><th>Organization</th><th>Status</th><th>Subject</th><th>Updated</th><th /></tr></thead><tbody>{rows.slice(0, 100).map((row, index) => <tr key={label(row.id, String(index))}><td>{label(row.id)}</td><td>{label(row.tenantId)}</td><td><Pill tone={row.status === "closed" ? "good" : "waiting"}>{label(row.status)}</Pill></td><td>{label(row.subject)}</td><td>{label(row.updatedAt ?? row.createdAt)}</td><td><Select label={`Status for ${label(row.id, String(index))}`} value={String(row.status ?? "open")} onChange={(status) => void update(String(row.id), status)} options={[{ value: "open", label: "Open" }, { value: "pending", label: "Pending" }, { value: "closed", label: "Closed" }]} /></td></tr>)}</tbody></table>{pending && <p className="ops-muted" aria-live="polite">Updating ticket…</p>}</div>;
 }
 
 /**
