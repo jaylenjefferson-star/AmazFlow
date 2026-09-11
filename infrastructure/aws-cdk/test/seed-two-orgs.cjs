@@ -8,7 +8,8 @@
 //
 // Both organizations get: users in all six customer roles plus staff, workflows (published, draft
 // and archived), runs in every persisted status, tasks, approvals/confirmations, agents of both
-// surfaces with live credentials, browser connections, secrets, notifications, and audit records.
+// surfaces with live credentials, browser connections, secrets, teams, notifications addressed three
+// different ways, and audit records.
 //
 // A note on roles. The deployed control plane today recognizes exactly three groups --
 // SUPER_ADMIN, CLIENT_ADMIN and FRONTLINE. The six fine-grained customer roles are a later phase.
@@ -300,16 +301,73 @@ function seedOrg({ tenantId, label }) {
   };
   putTenant(tenantId, "SECRET", secret);
 
-  const notification = {
-    id: `notif_${label}`,
-    tenantId,
-    userId: principals.OPERATOR.userId,
-    kind: "APPROVAL_REQUIRED",
-    message: `${label} needs an approval`,
-    read: false,
-    createdAt: iso(-1000),
+  // Teams. Not a permission boundary, but they ARE a notification audience and they are addressable
+  // by identifier on five routes, so both organizations need one for the isolation probes to have
+  // an own-identifier case and a foreign-identifier case.
+  const teams = {
+    primary: {
+      id: `team_${label}_primary`,
+      tenantId,
+      name: `${label}_Payroll`,
+      memberUsernames: [principals.OPERATOR.username, principals.VIEWER.username],
+      createdAt: iso(-86400000),
+      updatedAt: iso(-86400000),
+    },
+    secondary: {
+      id: `team_${label}_secondary`,
+      tenantId,
+      name: `${label}_Onboarding`,
+      memberUsernames: [principals.APPROVER.username],
+      createdAt: iso(-86400000),
+      updatedAt: iso(-86400000),
+    },
   };
-  putTenant(tenantId, "NOTIFICATION", notification);
+  for (const team of Object.values(teams)) putTenant(tenantId, "TEAM", team);
+
+  // Notifications, written in the shape `notificationsFor` actually reads -- audience, one of the
+  // eight real kinds, title, body, deepLink -- rather than an approximation. Three of them, covering
+  // the three audience forms the handler resolves (everyone, one person, one role), because a single
+  // "everyone" record would let an audience filter that dropped everything else still pass.
+  //
+  // Every string carries the label, so an Org A response containing one of these is unambiguously a
+  // cross-organization leak. That is the point of seeding them for BOTH organizations: if a future
+  // change swapped `tenantRead` for a scan, `GET /notifications` as Org A would return these.
+  const notifications = [
+    {
+      id: `ntf_${label}_everyone`,
+      tenantId,
+      audience: "everyone",
+      kind: "run_failed",
+      title: `${label}_run failed`,
+      body: `${label}_ a run stopped on an error`,
+      deepLink: "/runs/",
+      eventId: `act_${label}`,
+      createdAt: iso(-3000),
+    },
+    {
+      id: `ntf_${label}_person`,
+      tenantId,
+      audience: principals.OPERATOR.username,
+      kind: "approval_required",
+      title: `${label}_approval waiting`,
+      body: `${label}_ an approval is waiting for you`,
+      deepLink: "/approvals/",
+      eventId: `act_${label}`,
+      createdAt: iso(-2000),
+    },
+    {
+      id: `ntf_${label}_role`,
+      tenantId,
+      audience: "role:ORG_ADMIN",
+      kind: "agent_offline",
+      title: `${label}_agent offline`,
+      body: `${label}_ an agent stopped reporting`,
+      deepLink: "/agents/",
+      eventId: `act_${label}`,
+      createdAt: iso(-1000),
+    },
+  ];
+  for (const notification of notifications) putTenant(tenantId, "NOTIFICATION", notification);
 
   const ticket = {
     id: `ticket_${label}`,
@@ -335,7 +393,26 @@ function seedOrg({ tenantId, label }) {
     at: iso(-86400000),
   });
 
-  return { org, tenantId, label, principals, workflows, runs, tasks, approval, confirmation, agents, tokens, connection, secret, notification, ticket };
+  return {
+    org,
+    tenantId,
+    label,
+    principals,
+    workflows,
+    runs,
+    tasks,
+    approval,
+    confirmation,
+    agents,
+    tokens,
+    connection,
+    secret,
+    teams,
+    notifications,
+    // Kept as a singular alias so callers written against the previous fixture shape still resolve.
+    notification: notifications[0],
+    ticket,
+  };
 }
 
 /** Staff (internal) principal. Belongs to no customer organization. */

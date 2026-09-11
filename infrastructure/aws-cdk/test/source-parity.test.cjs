@@ -221,6 +221,22 @@ const invariants = [
   ["every successful route response has an explicit allowlist", /const RESPONSE_FIELDS_BY_ROUTE=new Map/, /const RESPONSE_FIELDS_BY_ROUTE = new Map/],
   ["a missing successful response contract fails closed", /response allowlist missing/, /response allowlist missing/],
   ["private response fields are stripped at every nesting depth", /privateResponseFields\.has\(key\)/, /privateResponseFields\.has\(key\)/],
+  // A fail-closed allowlist has a second failure mode besides leaking: a route that borrows another
+  // route's contract quietly loses the fields it does not share. Preflight borrowed the workflow
+  // contract and lost `surfaces` -- the per-surface status, recovery action and agent list that is
+  // the entire answer the route exists to give. Pinned in both copies so the narrower contract
+  // cannot come back on one side only.
+  ["the preflight readiness report has its own response contract rather than the workflow one", /allowResponseFields\(\['GET \/workflows\/\{id\}\/preflight'\],'preflight'\)/, /allowResponseFields\(\["GET \/workflows\/\{id\}\/preflight"\], "preflight"\)/],
+  ["the preflight contract carries the per-surface readiness detail", /preflight:\['workflowId','requiredTargets','surfaces','ready'\]/, /preflight: \["workflowId", "requiredTargets", "surfaces", "ready"\]/],
+  ["a connection response names who provisioned it, so the write stays attributable", /'preferredMode','status','createdBy'/, /"preferredMode", "status", "createdBy"/],
+  // The same failure mode on the agent path, where it is worse: an agent that receives a task with
+  // no `input`, `expiresAt` or `destination` cannot carry it out, and a claim envelope with no
+  // `task`, `grant`, `verify` or `display` breaks execution and both agent interfaces at once.
+  // Neither is visible from the control plane's own tests, which assert on identifiers.
+  ["an offered task carries the arguments, deadline and destination the agent acts on", /task:\['id','tenantId','runId','stepId','provider','operation','input','status','executionTarget','destination'/, /"provider", "operation", "input", "status", "executionTarget", "destination"/],
+  ["the claim envelope has its own response contract rather than the task one", /allowResponseFields\(\['POST \/agent\/tasks\/\{id\}\/claim'\],'claim'\)/, /allowResponseFields\(\["POST \/agent\/tasks\/\{id\}\/claim"\], "claim"\)/],
+  ["the claim envelope carries the grant, the verification contract and the display block", /claim:\['task','grant','grantId','runId','stepId','workflowId','claimExpiresAt','verify','executionTarget','destination','display'\]/, /claim: \["task", "grant", "grantId", "runId", "stepId", "workflowId", "claimExpiresAt", "verify", "executionTarget", "destination", "display"\]/],
+  ["the agent list keeps the derived organization and the raw last-seen timestamp", /'organizationId','name','status','connectionStatus'/, /"organizationId", "name", "status", "connectionStatus"/],
   ["a customer cannot set its own execution status or plan", /is set by AmazFlow, not from this route/, /is set by AmazFlow, not from this route/],
   ["an internal field is refused by name rather than dropped", /is an internal AmazFlow field and cannot be set by an organization/, /is an internal AmazFlow field and cannot be set by an organization/],
   ["the activation timestamp is derived and never caller-supplied", /activatedAt is derived from the first completed production run/, /activatedAt is derived from the first completed production run/],

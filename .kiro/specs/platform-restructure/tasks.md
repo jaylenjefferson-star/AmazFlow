@@ -742,8 +742,7 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       while a wrong zero costs storage and is reversible by setting one environment variable
     - _Requirements: 22.1, 25.17, 26.2_
 
-- [ ] 12. Notifications
-  - 3 of 4 sub-tasks complete. 12.4's cross-organization scoping half is outstanding; see that leaf
+- [x] 12. Notifications
 
   - [x] 12.1 Persist notifications and per-user read state within the organization they concern
     - Audience, kind, title, body, deep link, creation timestamp; the eight required kinds; read state per
@@ -779,20 +778,40 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
     - No email delivery anywhere, and the preferences page states that rather than offering a dead toggle
     - _Requirements: 22.4, 22.5, 22.7, 22.9_
 
-  - [ ] 12.4* Notification scoping and read-state tests
-    - READ-STATE (22.6) is done: `phase4-administration.test.cjs` asserts that the list honours audience and
+  - [x] 12.4* Notification scoping and read-state tests
+    - READ-STATE (22.6): `phase4-administration.test.cjs` asserts that the list honours audience and
       stored preferences, that every visible notification starts unread, and that mark-all writes a read
       record for exactly the visible, preference-enabled notifications and no others
-    - OUTSTANDING (22.8): there is no route-level cross-organization assertion for notifications. Property 1
-      covers `tenantRead` generally and the notification list is built on it, so the scoping holds
-      structurally — but `GET /notifications` is absent from the enumerated list-route set in
-      `isolation-api.test.cjs`, so a future change that swapped `tenantRead` for a scan would not fail there.
-      Closing this is two entries in that enumeration (`GET /notifications` and `GET /teams`) plus seeding
-      notifications for Org B, and it is backend test work rather than surface work
+    - SCOPING (22.8): `GET /notifications` and `GET /teams` are now enumerated in the list-route set in
+      `isolation-api.test.cjs`, and the two-organization seed carries teams plus three notifications per
+      organization addressed three different ways (everyone, one person, one role). Property 1 covers
+      `tenantRead` generally, but that argument only says the CURRENT implementation is partitioned —
+      with Org B's records seeded and asserted against, a change that swapped `tenantRead` for a scan
+      now fails here. The list probe also asserts each route returned at least one row, so an empty
+      list cannot satisfy it vacuously
+    - The same completeness guard covers the ten Phase 4 identifier-taking routes that had entered the
+      inventory unprobed: the five team routes, the notification read route, the three invitation and
+      role routes under `/tenants/{tenantId}/users/{username}`, and `POST /organizations/{slug}/profile`.
+      `POST /invitations/{token}/accept` is recorded as a special case with its own isolation argument —
+      the path parameter is a single-use secret, not a substitutable identifier — and is asserted to
+      refuse an unknown token without naming an organization and to create nothing in an organization
+      named only by the request body
     - _Requirements: 22.8, 22.6_
 
-- [ ] 13. Checkpoint — organization and user administration complete
-  - Ensure all tests pass, ask the user if questions arise.
+- [x] 13. Checkpoint — organization and user administration complete
+  - The complete control-plane suite passes (inventory, seven guardrail suites, nine behaviour suites,
+    three property suites, source parity, provider parity), plus the engine, customer, internal,
+    domain-ui, api-client and both agent contract suites
+  - Closing this checkpoint required fixing four response-allowlist defects that task 7.6 introduced and
+    no Phase 4 test could see, because the allowlist fails closed by STRIPPING rather than by refusing.
+    Each was a route borrowing another route's field group and silently losing what it did not share:
+    `GET /workflows/{id}/preflight` lost `surfaces` (the entire readiness answer); `GET /agent/tasks`
+    lost `input`, `expiresAt` and `destination`, so no agent could execute anything it was offered;
+    `POST /agent/tasks/{id}/claim` lost `task`, `grantId`, `verify` and `display`, which breaks
+    execution and both agent interfaces at once; `GET /agents` lost `organizationId` and `lastSeenAt`,
+    reporting a live agent as never connected in the existing staff console. Preflight, the claim
+    envelope and the agent snapshot now have their own contracts in both copies, each pinned by a
+    source-parity invariant so a narrower one cannot return on one side only
 
 - [ ] 14. Phase 5 — Workflows, the single status model, and the builder
 

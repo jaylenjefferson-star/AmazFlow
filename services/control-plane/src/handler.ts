@@ -122,10 +122,27 @@ const RESPONSE_FIELD_GROUPS = {
   notification: ["id", "tenantId", "audience", "kind", "title", "body", "deepLink", "createdAt", "read", "eventId"],
   preferences: ["username", "values", "updatedAt", "keys"],
   workflow: ["id", "tenantId", "name", "description", "version", "status", "startAt", "steps", "assignedRoles", "inputSchema", "manualMinutesEstimate", "createdAt", "updatedAt", "requiredTargets", "targets", "ready", "checks"],
+  // Preflight gets its own contract rather than borrowing the workflow one. It is not a workflow: it
+  // is a readiness report, and `surfaces` -- the per-surface status, recovery action and agent list
+  // that is the entire point of the route -- was silently stripped while the route reused the
+  // workflow group. A route whose response shape differs needs its own entry, or the allowlist
+  // quietly turns a useful answer into a shorter one.
+  preflight: ["workflowId", "requiredTargets", "surfaces", "ready"],
   run: ["id", "tenantId", "workflowId", "workflowVersion", "workflowName", "status", "currentStepId", "createdBy", "createdAt", "startedAt", "updatedAt", "completedAt", "input", "context", "audit", "steps", "output", "error", "testRun", "resumedFromRunId", "grant", "result", "usage", "traceId", "aiRuntimeLabel", "ok", "runId", "stepId", "recordedAt"],
-  task: ["id", "tenantId", "runId", "stepId", "operation", "status", "executionTarget", "requiredCapabilities", "createdBy", "createdAt", "updatedAt", "claimedBy", "claimExpiresAt", "grant", "result"],
-  agent: ["id", "tenantId", "name", "status", "connectionStatus", "agentType", "capabilities", "platform", "version", "permissions", "lastHeartbeatAt", "createdAt", "updatedAt", "code", "expiresAt", "installationId", "agent", "token", "agentId", "agentName", "userId", "userRole", "ok"],
-  connection: ["id", "tenantId", "name", "baseUrl", "allowedOrigins", "preferredMode", "status", "createdAt", "updatedAt", "loginSessionId", "expiresAt", "ready", "message"],
+  // A task an agent is offered has to carry the work: `input` is the action's arguments, `expiresAt`
+  // is the deadline the agent honours, and `destination` is the origin or application it is allowed
+  // to touch. Without those three the poll response is a list of identifiers an agent cannot act on,
+  // which is what the first, narrower version of this group produced.
+  task: ["id", "tenantId", "runId", "stepId", "provider", "operation", "input", "status", "executionTarget", "destination", "requiredCapabilities", "assignedRoles", "workflowId", "expiresAt", "createdBy", "createdAt", "updatedAt", "claimedBy", "claimedAt", "claimExpiresAt", "grant", "grantId", "result"],
+  // The claim envelope is not a task: it wraps one, alongside the single-use grant, the lease
+  // deadline, the verification contract, and the `display` block both agents render instead of
+  // showing identifiers to a person. Sharing the task contract stripped every one of those.
+  claim: ["task", "grant", "grantId", "runId", "stepId", "workflowId", "claimExpiresAt", "verify", "executionTarget", "destination", "display"],
+  // `organizationId` and `lastSeenAt` are both part of the shape `GET /agents` has always returned:
+  // the first comes from agentSnapshot, the second is what the existing staff console renders "last
+  // seen" from. Omitting them turned a working agent list into one that reported "never connected".
+  agent: ["id", "tenantId", "organizationId", "name", "status", "connectionStatus", "agentType", "capabilities", "allowedDomains", "platform", "version", "permissions", "lastSeenAt", "lastHeartbeatAt", "createdBy", "createdAt", "updatedAt", "code", "expiresAt", "installationId", "agent", "token", "agentId", "agentName", "userId", "userRole", "ok"],
+  connection: ["id", "tenantId", "name", "baseUrl", "allowedOrigins", "preferredMode", "status", "createdBy", "createdAt", "updatedAt", "loginSessionId", "expiresAt", "ready", "message"],
   audit: ["id", "tenantId", "at", "actor", "actorLabel", "action", "summary", "details"],
   ticket: ["id", "tenantId", "subject", "message", "status", "createdBy", "createdAt", "updatedAt", "category", "priority"],
   lead: ["id", "tenantId", "name", "email", "company", "role", "workflow", "volume", "message", "source", "status", "createdAt"],
@@ -154,9 +171,11 @@ allowResponseFields(["GET /teams"], "teams");
 allowResponseFields(["POST /teams", "PUT /teams/{id}", "DELETE /teams/{id}", "POST /teams/{id}/members", "DELETE /teams/{id}/members/{username}"], "team");
 allowResponseFields(["GET /notifications"], "notification");
 allowResponseFields(["GET /permissions/matrix"], "matrix");
-allowResponseFields(["GET /workflows", "POST /workflows", "POST /workflows/generate", "GET /workflows/{id}/versions", "GET /workflows/{id}/preflight"], "workflow");
+allowResponseFields(["GET /workflows", "POST /workflows", "POST /workflows/generate", "GET /workflows/{id}/versions"], "workflow");
+allowResponseFields(["GET /workflows/{id}/preflight"], "preflight");
 allowResponseFields(["GET /runs", "POST /workflows/{id}/runs", "POST /runs/{id}/cancel", "POST /runs/{id}/confirmations/{stepId}/confirm", "POST /runs/{id}/approvals/{stepId}", "POST /runs/{id}/executor/invoke", "POST /agent-tasks/{id}/result", "POST /agent/tasks/{id}/result", "POST /agent/tools/record-step-result", "POST /ai/execute"], "run");
-allowResponseFields(["GET /agent-tasks", "GET /agent/tasks", "POST /agent/tasks/{id}/claim"], "task");
+allowResponseFields(["GET /agent-tasks", "GET /agent/tasks"], "task");
+allowResponseFields(["POST /agent/tasks/{id}/claim"], "claim");
 allowResponseFields(["GET /agents", "POST /agent-authorizations", "POST /agent-authorizations/{code}/exchange", "POST /agents/{id}/revoke", "POST /agent/heartbeat"], "agent");
 allowResponseFields(["GET /connections/browser", "POST /connections/browser", "POST /connections/browser/{id}/login-session", "POST /connections/browser/{id}/login-session/complete", "DELETE /connections/browser/{id}"], "connection");
 allowResponseFields(["GET /audit", "GET /activity"], "audit");

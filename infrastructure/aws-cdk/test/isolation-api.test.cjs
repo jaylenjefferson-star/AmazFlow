@@ -83,6 +83,39 @@ const idScoped = () => [
   { route: "GET /workflows/{id}/versions", own: { id: A.workflows.published.id }, foreign: { id: B.workflows.published.id } },
   { route: "GET /workflows/{id}/preflight", own: { id: A.workflows.published.id }, foreign: { id: B.workflows.published.id } },
   {
+    route: "POST /notifications/{id}/read",
+    own: { id: A.notifications[0].id },
+    foreign: { id: B.notifications[0].id },
+  },
+  {
+    route: "PUT /teams/{id}",
+    own: { id: A.teams.primary.id },
+    foreign: { id: B.teams.primary.id },
+    body: { name: "renamed by probe" },
+  },
+  {
+    // The username in the body is deliberately Org A's own: the foreign case must be refused because
+    // the TEAM is another organization's, not because the person named is unknown. A probe that sent
+    // Org B's username would pass even if the team lookup were unscoped.
+    route: "POST /teams/{id}/members",
+    own: { id: A.teams.primary.id },
+    foreign: { id: B.teams.primary.id },
+    body: { username: A.principals.APPROVER.username },
+  },
+  {
+    route: "DELETE /teams/{id}/members/{username}",
+    own: { id: A.teams.primary.id, username: A.principals.APPROVER.username },
+    foreign: { id: B.teams.primary.id, username: A.principals.APPROVER.username },
+  },
+  // Destructive, so last among the team probes: deleting the team the probes above address would
+  // make them fail for a reason that has nothing to do with isolation. The SECONDARY team is used
+  // for the accepted case so `GET /teams` below still has a row to assert on.
+  {
+    route: "DELETE /teams/{id}",
+    own: { id: A.teams.secondary.id },
+    foreign: { id: B.teams.secondary.id },
+  },
+  {
     route: "POST /workflows/{id}/runs",
     own: { id: A.workflows.published.id },
     foreign: { id: B.workflows.published.id },
@@ -176,6 +209,29 @@ const specialCase = () => [
     },
   },
   {
+    route: "POST /invitations/{token}/accept",
+    why:
+      "The path parameter is a single-use invitation token, not an entity id, and the organization " +
+      "and role are resolved SERVER-side from the token rather than read from the caller. There is " +
+      "therefore no identifier a caller could substitute; what must hold is that an unknown token is " +
+      "refused without naming any organization, and that a known token cannot be redirected by the body.",
+    async assertIt() {
+      const unknown = await call(
+        sessionEvent(A.principals.OPERATOR, "POST /invitations/{token}/accept", {
+          pathParameters: { token: "definitely-not-a-real-invitation-token" },
+          body: { orgId: B.tenantId, role: "ORG_OWNER" },
+        }),
+      );
+      assert.equal(unknown.status, 404, `an unknown token is Not Found, got ${unknown.status}`);
+      assert.ok(!leaksOrgB(unknown.body), "and the refusal names no organization");
+      // The body named Org B and an owner role. If either were read, a membership would exist.
+      const planted = [...store.keys()].filter((key) =>
+        key.startsWith(`TENANT#${B.tenantId}|MEMBERSHIP#${A.principals.OPERATOR.username}`),
+      );
+      assert.deepEqual(planted, [], "a body naming another organization created nothing there");
+    },
+  },
+  {
     route: "POST /connections/browser/{id}/login-session/complete",
     why:
       "Same id-scoped shape as its sibling, but it requires a login session that the probe above " +
@@ -199,6 +255,7 @@ const paramScoped = () => [
   { route: "GET /organizations/{slug}", key: "slug" },
   { route: "POST /organizations/{slug}/settings", key: "slug", body: { timezone: "UTC" } },
   { route: "POST /organizations/{slug}/branding", key: "slug", body: { displayName: "Probe" } },
+  { route: "POST /organizations/{slug}/profile", key: "slug", body: { primaryDomain: "probe.example.com" } },
   { route: "GET /tenants/{tenantId}/summary", key: "tenantId" },
   { route: "GET /tenants/{tenantId}/users", key: "tenantId" },
   { route: "POST /tenants/{tenantId}/users", key: "tenantId", body: { email: "mole@probe.example.com", role: "FRONTLINE" } },
@@ -207,6 +264,22 @@ const paramScoped = () => [
     key: "tenantId",
     extra: (org) => ({ username: org.principals.OPERATOR.username }),
     body: { enabled: false },
+  },
+  {
+    route: "POST /tenants/{tenantId}/users/{username}/role",
+    key: "tenantId",
+    extra: (org) => ({ username: org.principals.OPERATOR.username }),
+    body: { role: "VIEWER" },
+  },
+  {
+    route: "POST /tenants/{tenantId}/users/{username}/invitation/resend",
+    key: "tenantId",
+    extra: (org) => ({ username: org.principals.OPERATOR.username }),
+  },
+  {
+    route: "DELETE /tenants/{tenantId}/users/{username}/invitation",
+    key: "tenantId",
+    extra: (org) => ({ username: org.principals.OPERATOR.username }),
   },
 ];
 
@@ -341,6 +414,11 @@ const paramScoped = () => [
 
   section("34.5 -- list routes return nothing belonging to another organization");
 
+  // `GET /notifications` and `GET /teams` are enumerated here (task 12.4) rather than left to
+  // Property 1's general `tenantRead` argument. Both organizations are seeded with teams and with
+  // notifications addressed three different ways, so if either list were ever rebuilt on a scan the
+  // probe below would return Org B's records and fail -- which the structural argument alone cannot
+  // detect, because it only says the CURRENT implementation is partitioned.
   for (const route of [
     "GET /workflows",
     "GET /runs",
@@ -349,11 +427,21 @@ const paramScoped = () => [
     "GET /support/tickets",
     "GET /connections/browser",
     "GET /audit",
+    "GET /notifications",
+    "GET /teams",
   ]) {
     await check(`${route} -- asserted on the complete returned set`, async () => {
       const res = await call(sessionEvent(A.principals.ORG_ADMIN, route, {}));
       assert.equal(res.status, 200, JSON.stringify(res.body));
-      const items = Array.isArray(res.body) ? res.body : [];
+      // Most list routes return a bare array; `GET /teams` returns an envelope, because it also has
+      // to state that team membership grants no permissions. Unwrapped rather than special-cased at
+      // the call site so a route that returned an empty envelope could not pass by returning nothing.
+      const items = Array.isArray(res.body)
+        ? res.body
+        : res.body && Array.isArray(res.body.teams)
+          ? res.body.teams
+          : [];
+      assert.ok(items.length > 0, `${route} returned no rows, so the assertion below is vacuous`);
       // Asserted on EVERY item, not on a sample and not on the count: a leak of one record is the
       // whole defect, and a count assertion would pass a list that swapped one item for another's.
       const foreign = items.filter(

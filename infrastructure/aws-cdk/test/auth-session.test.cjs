@@ -326,10 +326,32 @@ const STAFF = claimsFor(STAFF_EMAIL, "amazflow", "SUPER_ADMIN");
     // inventory rather than by probing a list of routes somebody remembered to think of. Staff can
     // disable an account and revoke its sessions; they cannot become the customer.
     const inventory = require("./route-inventory.json");
-    const suspicious = inventory.routes
+    const credentialRoutes = inventory.routes
       .map((entry) => entry.route)
       .filter((route) => /password|credential/i.test(route));
-    assert.deepEqual(suspicious, [], `no route may exist for setting a password: ${suspicious.join(", ")}`);
+    // `POST /me/password-changed` is the one route that may name a password, and what makes it safe
+    // is not its name: it is addressed at `/me` and takes NO target principal, so there is no
+    // username or tenant a caller could substitute. It records that the caller changed their own
+    // password in Cognito; it never sets one. Any other password- or credential-named route, and in
+    // particular any that takes a `{username}` or `{tenantId}`, is an operator path to a customer's
+    // credentials and must not exist.
+    const SELF_SERVICE = "POST /me/password-changed";
+    const operatorPaths = credentialRoutes.filter((route) => route !== SELF_SERVICE);
+    assert.deepEqual(
+      operatorPaths,
+      [],
+      `no route may exist for setting another user's password: ${operatorPaths.join(", ")}`,
+    );
+    for (const route of credentialRoutes) {
+      assert.ok(
+        !/\{username\}|\{tenantId\}|\{slug\}/.test(route),
+        `${route} names a target principal, so it is an operator path to a credential`,
+      );
+      assert.ok(
+        route.startsWith("GET /me/") || route.startsWith("POST /me/") || route.startsWith("PUT /me/"),
+        `${route} is not addressed at the caller's own account`,
+      );
+    }
 
     const { extract } = require("./extract-inline-handler.cjs");
     const source = extract();
