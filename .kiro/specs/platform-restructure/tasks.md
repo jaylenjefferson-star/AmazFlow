@@ -1134,9 +1134,11 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       provider data, timeouts, and connection state. It keeps policy/reconciliation failures unsafe to retry.
     - _Requirements: 19.1, 19.2, 19.3_
 
-  - [ ] 18.4 Build the exceptions view with cause-appropriate recovery
+  - [x] 18.4 Build the exceptions view with cause-appropriate recovery
     - Display the classified cause and its recovery action; where the derived diagnosis marks the run unsafe
       to retry, present reconciliation guidance and no retry control
+    - The customer exception queue presents the derived cause and its specific next step; policy conflicts
+      show reconciliation guidance and deliberately never present a retry action.
     - _Requirements: 19.4, 19.5, 31.16_
 
   - [ ] 18.5 Implement resume as a new run pinned to the same workflow version
@@ -1150,8 +1152,9 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       is not awaiting approval; refusal of an already-decided step; recording of the deciding user and role
     - _Requirements: 34.14_
 
-  - [ ] 18.7* Exception classification unit tests
+  - [x] 18.7* Exception classification unit tests
     - One case per derived cause plus the unsafe-to-retry flag
+    - Rendering coverage exercises every derived cause and asserts unsafe classification has no retry control.
     - _Requirements: 19.2, 19.3, 19.5_
 
 - [ ] 19. Checkpoint — the full operational customer surface is functional

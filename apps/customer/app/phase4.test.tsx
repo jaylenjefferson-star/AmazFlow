@@ -591,6 +591,10 @@ test("exceptions derive recovery from recorded run and connection data", () => {
       { id: "run_reconcile", status: "FAILED", audit: [{ type: "VERIFICATION_FAILED" }] },
       { id: "run_agent", status: "TIMED_OUT", audit: [] },
       { id: "run_api", status: "FAILED", audit: [{ type: "ACTION_FAILED" }], stepResults: { step_1: { status: "FAILED", provider: "api" } } },
+      { id: "run_review", status: "FAILED", audit: [{ type: "REJECTED" }] },
+      { id: "run_ambiguous", status: "FAILED", audit: [{ type: "AI_ALLOWLIST_REJECTED" }] },
+      { id: "run_missing", status: "FAILED", audit: [{ type: "AI_FAILED", message: "Missing required input" }] },
+      { id: "run_system", status: "FAILED", audit: [{ type: "AI_FAILED" }] },
     ]),
     connections: slot([]),
   }));
@@ -598,6 +602,11 @@ test("exceptions derive recovery from recorded run and connection data", () => {
   assert.match(html, /Reconcile the target system/);
   assert.match(html, /AGENT UNAVAILABLE/);
   assert.match(html, /INTEGRATION FAILURE/);
+  assert.match(html, /HUMAN REVIEW/);
+  assert.match(html, /AMBIGUOUS RECORD/);
+  assert.match(html, /MISSING INFORMATION/);
+  assert.match(html, /SYSTEM FAILURE/);
+  assert.doesNotMatch(html, />Retry</);
 });
 
 test("the owner onboarding checklist adapts to required surfaces and stays hidden from non-admin roles", () => {
