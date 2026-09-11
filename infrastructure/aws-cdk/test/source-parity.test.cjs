@@ -155,6 +155,13 @@ const invariants = [
   ["resume pins the new run to the original's own workflow version", /getWorkflowVersion\(run\.tenantId,run\.workflowId,run\.workflowVersion\)/, /getWorkflowVersion\(\s*run\.tenantId,\s*run\.workflowId,\s*run\.workflowVersion,\s*\)/],
   ["resuming a run is audited", /RUN_RESUMED_FROM_EXCEPTION/, /RUN_RESUMED_FROM_EXCEPTION/],
 
+  // Correlation, structured logging, and audit (26.12).
+  ["a supplied correlation identifier is used where present", /e\.headers\?\.\['x-correlation-id'\]/, /e\.headers\?\.\["x-correlation-id"\]/],
+  ["the correlation identifier is returned on every response, not only errors", /'x-correlation-id':correlationId/, /"x-correlation-id": correlationId/],
+  ["every request emits one structured log line", /const logRequest=\(status\)=>/, /const logRequest = \(status\) => /],
+  ["the structured line never carries a request or response body, only its shape", /routeKey:responseRoute,userId:requestUserId,orgId:requestOrgId,status,durationMs/, /routeKey: responseRoute,\s*userId: requestUserId,\s*orgId: requestOrgId,\s*status,\s*durationMs/],
+  ["every audit event carries its request's correlation identifier", /doc=\{id,tenantId,at:now\(\),\.\.\.entry,correlationId\}/, /doc = \{ id, tenantId, at: now\(\), \.\.\.entry, correlationId \}/],
+
   // Phase 1 -- authentication and session lifecycle. Same standing rule as above: each
   // security-relevant behaviour gets an invariant in both copies.
   //

@@ -1563,14 +1563,22 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       or tests
     - _Requirements: 30.6_
 
-  - [ ] 26.11 Add per-route rate limits and pagination discipline
+  - [ ] 26.11 Add per-route rate limits and pagination discipline (rate limits done; pagination not started)
     - Rate-limit the lead route, the unauthenticated branding route restricted to display name and branding
       values, the invitation routes, and the webhook; paginate list routes with a caller-supplied page size
       defaulting to fifty and capped at two hundred plus an opaque cursor; never truncate a list silently;
       apply the declared status-code contract
+    - Done: `lead_create` (5/5min) and `branding_read` (60/5min) rate-limit buckets added to
+      `RATE_LIMITS` in both control-plane copies, matching the existing `invitation_inspect`/
+      `invitation_accept` pattern (429 + `retryAfterSeconds`). The webhook route does not exist yet
+      (Phase 12).
+    - Not started: cursor-based pagination across list routes. This is a genuinely separate, larger
+      piece — no route currently supports it and no frontend view expects a paginated response, so
+      it needs its own design pass (response-shape choice, frontend "load more" wiring) rather than a
+      rushed retrofit under time pressure. Left explicitly open rather than half-implemented.
     - _Requirements: 6.13, 27.8, 27.9, 27.10, 27.11_
 
-  - [ ] 26.12 Complete correlation, structured logging, metrics, and alarms
+  - [ ] 26.12 Complete correlation, structured logging, metrics, and alarms (mostly done; one alarm gap noted)
     - Assign a correlation identifier per request using a supplied one where present, return it in every
       response, include it in every audit event, and emit one structured line per request carrying route key,
       user, organization, status, duration, evaluated permission, and decision; exclude secrets, tokens, grant
@@ -1580,6 +1588,23 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       administrative and security-relevant audit action with actor, actor label, organization, action, target,
       time, changed values, and correlation identifier, keeping the run and administrative audit records
       distinct and append-only
+    - Done, in both control-plane copies: `x-correlation-id` is read from the caller (the shared API
+      client already sends it) before falling back to the API Gateway request id; it is now returned as
+      a response header on EVERY response (previously only in the error-envelope body); every
+      `logActivity` audit event carries it; a new `logRequest()` emits one structured JSON line per
+      request from the single `reply()` choke point, naming exactly the fields listed and nothing else
+      (no body content, by construction) — `lastPermissionCheck` is set inside `authorizeIn`, so both
+      the throwing and reply-returning wrappers are covered from one place.
+    - Done: `infrastructure/aws-cdk/amazflow-dev.yaml` gained the four alarms the deployed Lambda's own
+      metrics support (`AgentFailure`, `AuthorizationDenied`, `BrowserFallback`, `ScanTruncated`) plus an
+      `AlarmEmail` parameter, an SNS topic, and a conditional email subscription — it had zero alarms
+      before this. `infrastructure/aws-cdk/src/app.ts` (canonical) already declared six AgentCore-side
+      alarms but never wired a destination — `AlarmEmailPendingConfiguration` was a permanent dead end;
+      added the same topic/subscription/condition there and attached `AlarmActions` to all six.
+    - Not done: a dedicated cross-organization-access alarm with a zero-value heartbeat metric (so the
+      alarm is never left in `INSUFFICIENT_DATA`). `AuthorizationDenied` is alarmed; cross-tenant access
+      is currently only an audit event (`CROSS_TENANT_READ`/`CROSS_TENANT_WRITE`), not also an EMF
+      metric. Left open rather than adding an under-designed metric under time pressure.
     - _Requirements: 28.1, 28.2, 28.3, 28.4, 28.5, 28.6, 28.7, 28.8, 28.9, 28.10, 28.11, 28.12_
 
   - [x] 26.13 Add the bundle content check to the build

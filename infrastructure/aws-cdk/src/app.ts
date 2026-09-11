@@ -6,6 +6,7 @@ import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import * as integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
+import * as cwActions from "aws-cdk-lib/aws-cloudwatch-actions";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 import * as iam from "aws-cdk-lib/aws-iam";
 import * as kms from "aws-cdk-lib/aws-kms";
@@ -13,6 +14,7 @@ import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as secretsmanager from "aws-cdk-lib/aws-secretsmanager";
+import * as sns from "aws-cdk-lib/aws-sns";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const controlPlaneAsset = path.resolve(dirname, "../../../services/control-plane/dist");
@@ -163,15 +165,32 @@ class AmazFlowAgentCoreStack extends cdk.Stack {
     const add = (route: string, authorizer?: authorizers.HttpJwtAuthorizer) => { const [method, ...parts] = route.split(" "); api.addRoutes({ path: parts.join(" "), methods: [apigwv2.HttpMethod[method as keyof typeof apigwv2.HttpMethod]], integration, authorizer }); };
     publicRoutes.forEach((route) => add(route)); protectedRoutes.forEach((route) => add(route, jwt));
 
+    // Requirement 26.12 / task 34.19: an alarm nobody is notified by is not "published" in any
+    // operational sense, so the topic and its conditional subscription complete what
+    // AlarmEmailPendingConfiguration otherwise leaves permanently pending. The subscription is
+    // conditional because SNS refuses an empty email endpoint outright -- this parameter is
+    // genuinely optional (a fresh stack with no on-call address yet must still deploy).
+    const alarmTopic = new sns.Topic(this, "AlarmTopic", { displayName: "AmazFlow operational alarms" });
+    const hasAlarmEmail = new cdk.CfnCondition(this, "HasAlarmEmail", {
+      expression: cdk.Fn.conditionNot(cdk.Fn.conditionEquals(alarmEmail.valueAsString, "")),
+    });
+    const alarmSubscription = new sns.CfnSubscription(this, "AlarmEmailSubscription", {
+      topicArn: alarmTopic.topicArn,
+      protocol: "email",
+      endpoint: alarmEmail.valueAsString,
+    });
+    alarmSubscription.cfnOptions.condition = hasAlarmEmail;
+
     for (const [name, namespace, metricName, threshold, statistic] of [["PolicyDenials", "AWS/Bedrock-AgentCore", "DenyDecisions", 1, "Sum"], ["AgentFailures", "AmazFlow/AgentCore", "AgentFailure", 5, "Sum"], ["BrowserFallback", "AmazFlow/AgentCore", "BrowserFallback", 10, "Sum"], ["Latency", "AWS/Bedrock-AgentCore", "Latency", 120000, "p99"], ["TokenUsage", "AmazFlow/AgentCore", "TokenUsage", 1_000_000, "Sum"], ["Spend", "AmazFlow/AgentCore", "EstimatedSpendUsd", 500, "Sum"]] as const) {
-      new cloudwatch.Alarm(this, `${name}Alarm`, { metric: new cloudwatch.Metric({ namespace, metricName, period: cdk.Duration.minutes(5), statistic }), threshold, evaluationPeriods: 1, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING });
+      const alarm = new cloudwatch.Alarm(this, `${name}Alarm`, { metric: new cloudwatch.Metric({ namespace, metricName, period: cdk.Duration.minutes(5), statistic }), threshold, evaluationPeriods: 1, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING });
+      alarm.addAlarmAction(new cwActions.SnsAction(alarmTopic));
     }
 
     new cdk.CfnOutput(this, "ApiUrl", { value: api.apiEndpoint });
     new cdk.CfnOutput(this, "OperatorHarnessArn", { value: operatorHarness.getAtt("Arn").toString() });
     new cdk.CfnOutput(this, "ExecutionHarnessArn", { value: executionHarness.getAtt("Arn").toString() });
     new cdk.CfnOutput(this, "BrowserIdentifier", { value: browser.getAtt("BrowserId").toString() });
-    new cdk.CfnOutput(this, "AlarmEmailPendingConfiguration", { value: alarmEmail.valueAsString });
+    new cdk.CfnOutput(this, "AlarmTopicArn", { value: alarmTopic.topicArn, description: "Subscribe additional operations addresses to this topic directly; AlarmEmail only wires the first one" });
   }
 }
 

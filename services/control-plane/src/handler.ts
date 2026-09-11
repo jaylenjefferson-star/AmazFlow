@@ -181,7 +181,7 @@ const RESPONSE_FIELD_GROUPS = {
   // Never `ref` (the Secrets Manager pointer) and never a value -- requirement 20.8. `deleted` is
   // present only in the delete route's ack, matching the `team` group's convention below.
   secret: ["id", "tenantId", "name", "kind", "hint", "createdBy", "createdAt", "rotatedAt", "lastUsedAt", "deleted"],
-  audit: ["id", "tenantId", "at", "actor", "actorLabel", "action", "summary", "details"],
+  audit: ["id", "tenantId", "at", "actor", "actorLabel", "action", "summary", "details", "correlationId"],
   ticket: ["id", "tenantId", "subject", "message", "status", "createdBy", "createdAt", "updatedAt", "category", "priority"],
   lead: ["id", "tenantId", "name", "email", "company", "role", "workflow", "volume", "message", "source", "status", "createdAt"],
   settings: ["taskExpiryMs", "confirmationExpiryMs", "agentCodeExpiryMs", "aiRuntimeLabel", "dataBoundary", "updatedAt"],
@@ -249,6 +249,13 @@ const projectRouteResponse = (route, status, body) => {
 // matched to the exact log line. Set once at the top of the handler; a Lambda container serves one
 // invocation at a time, so module scope is the right lifetime.
 let correlationId = null;
+// Requirement 26.12: one structured log line per request, carrying route, user, organization,
+// status, duration, and the permission last evaluated for it. Same module-scope lifetime as
+// correlationId above -- these are read by reply() at the very end of the invocation they describe.
+let requestStartedAt = null;
+let requestUserId = null;
+let requestOrgId = null;
+let lastPermissionCheck = null;
 const CODE_FOR_STATUS = {
   400: "BAD_REQUEST",
   401: "UNAUTHENTICATED",
@@ -304,12 +311,36 @@ const allowedOriginFor = (e) => {
 };
 const corsHeaders = () =>
   requestOrigin ? { "access-control-allow-origin": requestOrigin, vary: "origin" } : {};
+// Requirement 26.12: one structured line per request. Deliberately excludes everything the
+// requirement names -- secrets, tokens, grant payloads, customer input, run context values,
+// evidence bodies, full email addresses -- by construction: it names only the request's shape
+// (route, who, which org, outcome, timing, the permission decision), never any request or response
+// body content.
+const logRequest = (status) => {
+  console.log(
+    JSON.stringify({
+      correlationId,
+      routeKey: responseRoute,
+      userId: requestUserId,
+      orgId: requestOrgId,
+      status,
+      durationMs: requestStartedAt ? Date.now() - requestStartedAt : null,
+      permission: lastPermissionCheck ? lastPermissionCheck.permission : null,
+      decision: lastPermissionCheck ? lastPermissionCheck.decision : null,
+    }),
+  );
+};
 const reply = (s, b) => {
   const projected = projectRouteResponse(responseRoute, s, withErrorEnvelope(s, b));
+  logRequest(s);
   return {
     statusCode: s,
     headers: {
       "content-type": "application/json",
+      // Requirement 26.12: returned on every response, not only errors -- the shared API client
+      // already reads this header as a fallback (packages/api-client), so a success response
+      // carrying it is completing an existing contract, not adding a new one.
+      ...(correlationId ? { "x-correlation-id": correlationId } : {}),
       ...corsHeaders(),
     },
     body: JSON.stringify(projected, (key, value) =>
@@ -982,6 +1013,10 @@ const resolveEntity = async (type, id, principal, reason) => {
  */
 const authorizeIn = async (p, permission, resource) => {
   const decision = can(p, permission, resource);
+  // Requirement 26.12: the structured log line names the permission a route evaluated and the
+  // decision it got, alongside the request that made it -- guardIn() is a thin wrapper over this
+  // same function, so both call shapes are covered from this one place.
+  lastPermissionCheck = { permission, decision: decision.code };
   // A staff principal reaching into another organization is the event requirement 6.10 asks for, and
   // this is the one place that can see it for EVERY route -- including the parameter-scoped ones,
   // which resolve their record from the PLATFORM partition and so never pass through
@@ -3454,7 +3489,9 @@ const validateOrgSettings = (body) => {
 // Copilot-driven change is traceable to a named actor, never anonymous.
 const logActivity = async (tenantId, entry, notification) => {
   const id = `act_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const doc = { id, tenantId, at: now(), ...entry };
+  // correlationId last and not spreadable by entry: requirement 26.12 wants it in every audit
+  // event, and the real value of a request's own log line, not something a call site can shadow.
+  const doc = { id, tenantId, at: now(), ...entry, correlationId };
   await db.send(
     new PutItemCommand({
       TableName: table,
@@ -5656,7 +5693,14 @@ const observeInvitationExpiry = async (invitation, actor) => {
  * limit is no limit at all against somebody trying a different token every time -- which is the
  * attack.
  */
-const RATE_LIMITS = { invitation_inspect: { limit: 30, windowMs: 300000 }, invitation_accept: { limit: 10, windowMs: 300000 } };
+const RATE_LIMITS = {
+  invitation_inspect: { limit: 30, windowMs: 300000 },
+  invitation_accept: { limit: 10, windowMs: 300000 },
+  // Requirement 26.11: both are unauthenticated and reachable from the public marketing site, so the
+  // caller's address is the only subject a rate limit has to key on.
+  lead_create: { limit: 5, windowMs: 300000 },
+  branding_read: { limit: 60, windowMs: 300000 },
+};
 const rateLimitKey = (bucket, subject, windowStart) =>
   `RATELIMIT#${bucket}#${subject}#${windowStart}`;
 const consumeRateLimit = async (bucket, subject) => {
@@ -5998,10 +6042,21 @@ const validateOrgProfileForCustomer = (body) => {
 };
 
 exports.handler = async (e) => {
+  // Requirement 26.12: use the caller's own correlation identifier where it supplied one -- the
+  // shared API client always sends x-correlation-id -- so a customer's own network trace and this
+  // request's server-side log line are looking at the same value, rather than two different ones
+  // that both happen to be present.
   correlationId =
-    e.requestContext?.requestId || `local_${crypto.randomUUID()}`;
+    e.headers?.["x-correlation-id"] ||
+    e.headers?.["X-Correlation-Id"] ||
+    e.requestContext?.requestId ||
+    `local_${crypto.randomUUID()}`;
   responseRoute = e.routeKey || (e.source === "amazflow.sweep" ? "SWEEP" : "UNKNOWN");
   requestOrigin = allowedOriginFor(e);
+  requestStartedAt = Date.now();
+  requestUserId = null;
+  requestOrgId = null;
+  lastPermissionCheck = null;
   try {
     if (e.source === "amazflow.sweep") {
       const result = await sweepExpired();
@@ -6016,6 +6071,12 @@ exports.handler = async (e) => {
         aiRuntime: useAgentCore() ? "managed" : "legacy",
       });
     if (route === "POST /leads") {
+      const leadGate = await consumeRateLimit("lead_create", callerAddress(e));
+      if (!leadGate.allowed)
+        return reply(429, {
+          error: "Too many submissions. Wait a moment and try again.",
+          retryAfterSeconds: leadGate.retryAfterSeconds,
+        });
       const b = JSON.parse(e.body || "{}");
       const clean = (v) =>
         String(v == null ? "" : v)
@@ -6182,6 +6243,12 @@ exports.handler = async (e) => {
       }
     }
     if (route === "GET /organizations/{slug}/branding") {
+      const brandingGate = await consumeRateLimit("branding_read", callerAddress(e));
+      if (!brandingGate.allowed)
+        return reply(429, {
+          error: "Too many requests. Wait a moment and try again.",
+          retryAfterSeconds: brandingGate.retryAfterSeconds,
+        });
       const org = await getOrganization(e.pathParameters?.slug);
       if (!org) return reply(404, { error: "Organization not found" });
       return reply(200, {
@@ -6237,6 +6304,11 @@ exports.handler = async (e) => {
       return reply(200, visible);
     }
     const a = auth(e);
+    // Requirement 26.12: the structured log line's user/organization fields. userId is a Cognito
+    // sub, an opaque identifier -- never a.email, which the requirement names explicitly as
+    // something logs must exclude.
+    requestUserId = a.userId || null;
+    requestOrgId = a.tenantId || null;
     if (!a.role)
       return reply(
         403,
