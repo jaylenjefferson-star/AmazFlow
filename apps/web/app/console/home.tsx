@@ -78,7 +78,7 @@ export function HomeScreen({
       {runs.length === 0 ? (
         <div className="console-empty console-impact-empty">
           <h2>Your impact will appear here.</h2>
-          <p>Run a workflow below and AmazFlow will start tracking the hours and value it saves your team.</p>
+          <p>Run a workflow below and AmazFlow will start tracking its activity for your team.</p>
         </div>
       ) : (
         <div className="console-stats">
@@ -102,17 +102,6 @@ export function HomeScreen({
               <>
                 <p className="console-stat-value accent">{stats.hoursSaved}</p>
                 <p className="console-stat-caption">{hoursCaption}</p>
-              </>
-            )}
-          </div>
-          <div className="console-stat">
-            <p className="console-stat-label">Value saved</p>
-            {stats.valueSaved === null ? (
-              <p className="console-stat-value">—</p>
-            ) : (
-              <>
-                <p className="console-stat-value">${stats.valueSaved.toLocaleString()}</p>
-                <p className="console-stat-caption">Estimated at $35/hr — ask your AmazFlow contact to set your team’s actual rate.</p>
               </>
             )}
           </div>

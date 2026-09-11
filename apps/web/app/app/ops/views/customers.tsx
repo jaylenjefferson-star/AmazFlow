@@ -73,7 +73,6 @@ import {
   activityAction,
   clockTime,
   isException,
-  money,
   percent,
   relativeTime,
   runStatus,
@@ -664,7 +663,7 @@ function OrgOverview({ org, tenantId }: { org: Organization; tenantId: string })
       </div>
 
       <div className="ops-col">
-        <Panel title="Value delivered" sub="From the control plane">
+        <Panel title="Estimated time saved" sub="From the control plane">
           {!summary || summary.state === "loading" ? (
             <p className="ops-small ops-muted">Loading…</p>
           ) : summary.state === "error" ? (
@@ -677,14 +676,13 @@ function OrgOverview({ org, tenantId }: { org: Organization; tenantId: string })
                   label: "Time saved",
                   value: `${summary.data.totalMinutesSaved.toLocaleString()} min`,
                 },
-                { label: "Estimated value", value: money(summary.data.dollarEstimate) },
               ]}
             />
           ) : null}
           <div style={{ marginTop: 10 }}>
             <p className="ops-small ops-muted">
-              Derived from each workflow&apos;s manual-minutes estimate at a blended rate. This is
-              the value story, not billing — the platform has no invoicing surface yet.
+              This is an estimate against the manual duration recorded for each workflow; runs
+              without one are excluded. AmazFlow does not derive a monetary value.
             </p>
           </div>
         </Panel>
@@ -1375,13 +1373,6 @@ function OrgUsage({
                   : "loading…",
             },
             {
-              label: "Estimated value",
-              value:
-                summary?.state === "ready" && summary.data
-                  ? money(summary.data.dollarEstimate)
-                  : "loading…",
-            },
-            {
               label: "Configured minutes per run",
               value: minutesConfigured > 0 ? `${minutesConfigured} across ${workflows.length} workflows` : "not estimated",
             },
@@ -1389,9 +1380,9 @@ function OrgUsage({
         />
         <div style={{ marginTop: 12 }}>
           <Alert tone="neutral" title="No billing surface yet">
-            The control plane records no invoices, seat counts, rate cards, or metered spend. The
-            numbers above are the value estimate it does compute. Treat plan as a label, not an
-            entitlement — enforcement today is by workflow status and assigned roles.
+            The control plane records no invoices, seat counts, rate cards, or metered spend. Time
+            estimates exclude runs without a recorded manual duration. Plan is reporting-only;
+            enforcement today is by workflow status, assigned roles, and the run limit.
           </Alert>
         </div>
       </Panel>

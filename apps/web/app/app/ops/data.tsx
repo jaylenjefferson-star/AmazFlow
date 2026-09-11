@@ -216,7 +216,6 @@ export const isPendingInvite = (user: UserRecord) =>
 export type TenantSummary = {
   totalRunsCompleted: number;
   totalMinutesSaved: number;
-  dollarEstimate: number;
 };
 
 /** Async slot for data loaded on demand per entity. */

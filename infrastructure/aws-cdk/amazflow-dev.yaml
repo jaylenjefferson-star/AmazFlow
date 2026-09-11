@@ -259,7 +259,9 @@ Resources:
             connection:['id','tenantId','name','baseUrl','allowedOrigins','preferredMode','status','createdBy','createdAt','updatedAt','loginSessionId','expiresAt','ready','message'],
             audit:['id','tenantId','at','actor','actorLabel','action','summary','details'],ticket:['id','tenantId','subject','message','status','createdBy','createdAt','updatedAt','category','priority'],
             lead:['id','tenantId','name','email','company','role','workflow','volume','message','source','status','createdAt'],settings:['taskExpiryMs','confirmationExpiryMs','agentCodeExpiryMs','bedrockModel','aiRuntimeLabel','dataBoundary','updatedAt'],
-            matrix:['roles','permissions','grants'],copilot:['id','tenantId','status','messages','actions','role','content','createdAt','updatedAt','result','usage','traceId'],summary:['totalRunsCompleted','totalMinutesSaved','dollarEstimate']
+            // Time saved is an estimate against a customer-supplied manual duration. A dollar
+            // figure would imply a labor rate the platform neither stores nor verifies.
+            matrix:['roles','permissions','grants'],copilot:['id','tenantId','status','messages','actions','role','content','createdAt','updatedAt','result','usage','traceId'],summary:['totalRunsCompleted','totalMinutesSaved']
           };
           const RESPONSE_FIELDS_BY_ROUTE=new Map();const allowResponseFields=(routes,group)=>{const fields=new Set(RESPONSE_FIELD_GROUPS[group]);for(const route of routes)RESPONSE_FIELDS_BY_ROUTE.set(route,fields);};
           allowResponseFields(['GET /health'],'health');
@@ -1398,7 +1400,6 @@ Resources:
             }
             return {expiredTasks:expiredTasks.length,releasedClaims:stalledClaims.length,expiredConfirmations:expiredConfirmations.length,timedOutRuns,triggeredRuns};
           };
-          const BLENDED_HOURLY_RATE=35; // Placeholder blended rate until per-tenant rates exist.
           const listTenantUsers=async(tenantId)=>{
             const roleByUsername={};
             for(const group of ['FRONTLINE','CLIENT_ADMIN']){
@@ -1519,7 +1520,7 @@ Resources:
               const actualMinutes=(new Date(run.updatedAt)-new Date(run.createdAt))/60000;
               totalMinutesSaved+=Math.max(0,estimate-actualMinutes);
             }
-            return {totalRunsCompleted,totalMinutesSaved:Math.round(totalMinutesSaved),dollarEstimate:Math.round((totalMinutesSaved/60)*BLENDED_HOURLY_RATE)};
+            return {totalRunsCompleted,totalMinutesSaved:Math.round(totalMinutesSaved)};
           };
 
           // ---------- Organization branding (Phase 10 whitelabel prep) ----------

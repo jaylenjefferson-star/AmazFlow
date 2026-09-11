@@ -181,7 +181,9 @@ const RESPONSE_FIELD_GROUPS = {
   settings: ["taskExpiryMs", "confirmationExpiryMs", "agentCodeExpiryMs", "aiRuntimeLabel", "dataBoundary", "updatedAt"],
   matrix: ["roles", "permissions", "grants"],
   copilot: ["id", "tenantId", "status", "messages", "actions", "role", "content", "createdAt", "updatedAt", "result", "usage", "traceId"],
-  summary: ["totalRunsCompleted", "totalMinutesSaved", "dollarEstimate"],
+  // Time saved is an estimate against a customer-supplied manual duration. A dollar figure would
+  // imply a labor rate the platform neither stores nor verifies, so it is never returned.
+  summary: ["totalRunsCompleted", "totalMinutesSaved"],
 };
 const RESPONSE_FIELDS_BY_ROUTE = new Map();
 const allowResponseFields = (routes, group) => {
@@ -2987,7 +2989,6 @@ const sweepExpired = async () => {
     timedOutRuns,
   };
 };
-const BLENDED_HOURLY_RATE = 35; // Placeholder blended rate until per-tenant rates exist.
 const listTenantUsers = async (tenantId) => {
   const roleByUsername = {};
   for (const group of ["FRONTLINE", "CLIENT_ADMIN"]) {
@@ -3225,7 +3226,6 @@ const tenantSummary = async (tenantId) => {
   return {
     totalRunsCompleted,
     totalMinutesSaved: Math.round(totalMinutesSaved),
-    dollarEstimate: Math.round((totalMinutesSaved / 60) * BLENDED_HOURLY_RATE),
   };
 };
 

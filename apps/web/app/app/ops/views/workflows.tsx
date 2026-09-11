@@ -721,18 +721,6 @@ function StepDrawer({
     rows.push({ label: "Outcome", value: step.outcome });
   }
 
-  if (step.retry?.maxAttempts) {
-    rows.push({
-      label: "Retry policy",
-      value: (
-        <span className="ops-row ops-gap-sm">
-          max {step.retry.maxAttempts} attempts
-          <Pill tone="waiting">not enforced yet</Pill>
-        </span>
-      ),
-    });
-  }
-
   const runsTouching = ops
     .runsForWorkflow(workflow.id)
     .filter((run) => Boolean(run.stepResults?.[step.id]) || run.currentStepId === step.id);

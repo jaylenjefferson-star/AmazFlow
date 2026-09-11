@@ -198,14 +198,11 @@ export function completedDurationLine(run: WorkflowRun, workflow: WorkflowDefini
   return `Took ${actual}.`;
 }
 
-export const BLENDED_HOURLY_RATE = 35;
-
 export type StatRow = {
   activeWorkflows: number;
   runsThisMonth: number;
   runsLast30Days: number;
   hoursSaved: number | null;
-  valueSaved: number | null;
 };
 
 export function computeStats(
@@ -237,9 +234,7 @@ export function computeStats(
     hoursSaved = Math.round(totalMinutesSaved / 60);
   }
 
-  const valueSaved = hoursSaved === null ? null : hoursSaved * BLENDED_HOURLY_RATE;
-
-  return { activeWorkflows, runsThisMonth, runsLast30Days, hoursSaved, valueSaved };
+  return { activeWorkflows, runsThisMonth, runsLast30Days, hoursSaved };
 }
 
 export function visibleWorkflows<T extends { assignedRoles: AmazFlowRole[]; status: string }>(workflows: T[], role: AmazFlowRole): T[] {

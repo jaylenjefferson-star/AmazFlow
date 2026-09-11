@@ -1406,7 +1406,7 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       clearing any prior identified messenger and booting anonymous whenever no server hash is available.
     - _Requirements: 33.1, 33.2_
 
-  - [ ] 26.2 Remove the fabricated monetary savings figure (H-2)
+  - [x] 26.2 Remove the fabricated monetary savings figure (H-2)
     - Delete it from every customer-facing surface and stop returning it from the control plane; keep run
       counts, success rate as completed over decided with not-available when nothing is decided, median
       duration, exception counts by derived cause, per-workflow volume and success, and agent availability
@@ -1414,20 +1414,22 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       duration recorded by the customer's AmazFlow contact; state when runs are excluded from analytics
     - _Requirements: 33.3, 33.4, 21.1, 21.2, 21.3, 21.4, 21.5, 21.6, 21.7, 21.8, 21.9, 21.10_
 
-  - [ ] 26.3 Label the organization plan field as reporting-only wherever it is displayed (H-3)
+  - [x] 26.3 Label the organization plan field as reporting-only wherever it is displayed (H-3)
     - Applies Q-4's conservative assumption: reporting-only, with the concurrency ceiling remaining the only
       enforced limit; no stored value is presented as an enforced limit unless a runtime behaviour reads it
     - _Requirements: 33.5, 8.13, 30.5_
 
-  - [ ] 26.4 Keep per-step retry attempts unrendered until a counter is persisted (H-4)
+  - [x] 26.4 Keep per-step retry attempts unrendered until a counter is persisted (H-4)
     - Applies Q-5's conservative assumption: neither implementing retries nor removing the field is presumed;
       no attempt count is displayed while no counter exists
     - _Requirements: 33.6, 33.7, 16.11_
 
-  - [ ] 26.5 Supersede the stale internal document and record every remediation resolution (H-7, H-1..H-8)
+  - [x] 26.5 Supersede the stale internal document and record every remediation resolution (H-7, H-1..H-8)
     - Remove or mark superseded the document naming an agent authorization page as the highest-priority gap,
       which the self-authenticating extension contradicts; record the resolution of each remediation item in
       a version-controlled artifact
+    - `docs/HONESTY_REMEDIATIONS.md` is the current resolution record; the old gap analysis remains only as
+      explicitly superseded historical context.
     - _Requirements: 33.10, 33.12_
 
   - [ ] 26.6 Add error boundaries and the support-referenceable error code

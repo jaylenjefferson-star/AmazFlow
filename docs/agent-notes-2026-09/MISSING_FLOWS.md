@@ -1,3 +1,11 @@
+# Superseded — historical missing-flows analysis
+
+> This September 2026 snapshot is retained as historical context only. Its agent-authorization
+> finding is false for the current product: browser agents self-authenticate through the supported
+> authorization-code exchange. Do not use this file to prioritize work. The current implementation
+> plan is `.kiro/specs/platform-restructure/tasks.md`; honesty-remediation status is recorded in
+> `docs/HONESTY_REMEDIATIONS.md`.
+
 # AmazFlow - Missing Flows & Gaps Analysis
 
 ## Critical Missing Features

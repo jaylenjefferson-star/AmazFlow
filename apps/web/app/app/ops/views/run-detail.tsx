@@ -73,7 +73,6 @@ import {
   diagnose,
   gates,
   grantScopes,
-  retryPolicy,
   runDuration,
   stepProgression,
   timeline,
@@ -142,7 +141,6 @@ export function RunDetailView({ runId }: { runId: string }) {
   const grants = useMemo(() => grantScopes(workflow, run), [workflow, run]);
   const events = useMemo(() => timeline(workflow, run), [workflow, run]);
   const verdict = useMemo(() => diagnose(workflow, run), [workflow, run]);
-  const retries = useMemo(() => retryPolicy(workflow, run), [workflow, run]);
   const related = useMemo(() => relatedAttempts(run, ops.runs), [run, ops.runs]);
   const data = useMemo(() => contextValues(run), [run]);
 
@@ -400,7 +398,7 @@ export function RunDetailView({ runId }: { runId: string }) {
                 <RelatedTab run={run} related={related} tickets={linkedTickets} />
               )}
               {tab === "technical" && (
-                <TechnicalTab run={run} grants={grants} retries={retries} />
+                <TechnicalTab run={run} grants={grants} />
               )}
             </div>
           </div>
@@ -1293,11 +1291,9 @@ function RunMiniTable({ runs, onOpen }: { runs: WorkflowRun[]; onOpen: (id: stri
 function TechnicalTab({
   run,
   grants,
-  retries,
 }: {
   run: WorkflowRun;
   grants: ReturnType<typeof grantScopes>;
-  retries: ReturnType<typeof retryPolicy>;
 }) {
   return (
     <div className="ops-col">
@@ -1334,29 +1330,6 @@ function TechnicalTab({
               </div>
             ))}
           </div>
-        )}
-      </Panel>
-
-      <Panel title="Retries">
-        {retries.configured.length === 0 ? (
-          <p className="ops-small ops-muted">
-            No step in this workflow configures a retry policy.
-          </p>
-        ) : (
-          <>
-            <KeyValue
-              rows={retries.configured.map((entry) => ({
-                label: entry.stepName,
-                value: `max ${entry.maxAttempts} attempts configured`,
-              }))}
-            />
-            <div style={{ marginTop: 10 }}>
-              <Alert tone="waiting" title="Retry policy is not enforced yet">
-                These values are stored on the workflow but no execution path reads them, and no
-                per-attempt counter is persisted. Treat every run as a single attempt.
-              </Alert>
-            </div>
-          </>
         )}
       </Panel>
 
