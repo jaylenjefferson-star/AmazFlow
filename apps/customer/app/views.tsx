@@ -23,6 +23,7 @@ import {
   pathToView,
   relativeTime,
   runStatus,
+  workflowStatus,
   type ResourceSlot,
 } from "@amazflow/domain-ui";
 import {
@@ -238,19 +239,28 @@ export function WorkflowsView({ slots, navigate }: ViewProps) {
       >
         {(value) => (
           <ul className="ops-list">
-            {value.map((workflow) => (
-              <li key={workflow.id}>
-                <button
-                  type="button"
-                  onClick={() => navigate({ routeId: "workflows", entityId: workflow.id })}
-                >
-                  <span>{workflow.name}</span>
-                  <Pill tone="neutral" plain>
-                    {workflow.status}
-                  </Pill>
-                </button>
-              </li>
-            ))}
+            {value.map((workflow) => {
+              // Task 14.1 / requirement 13.2-13.3. The raw stored value used to be rendered directly,
+              // which meant the surface said "active" where the product says Published, and said
+              // "paused" for a retired value the status model only reads. `workflowStatus()` is the one
+              // place that translation happens, so the list, the detail view and any later surface
+              // cannot disagree about what a stored status means.
+              const status = workflowStatus(workflow.status);
+              return (
+                <li key={workflow.id}>
+                  <button
+                    type="button"
+                    onClick={() => navigate({ routeId: "workflows", entityId: workflow.id })}
+                  >
+                    <span>{workflow.name}</span>
+                    <Pill tone={status.tone}>{status.label}</Pill>
+                    {/* What the status MEANS for whether this can run. A label alone leaves a person
+                        to guess whether Draft is a state they can act on. */}
+                    <span className="ops-muted">{status.effect}</span>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </Resource>

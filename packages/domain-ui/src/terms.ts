@@ -430,16 +430,60 @@ export const NOTIFICATION_KIND_LABEL: Record<string, string> = {
   onboarding_step_ready: "Onboarding step ready",
 };
 
+/**
+ * The single workflow status model, presentation half (requirement 13.2, design decision D-5).
+ *
+ * `active` is the persisted value for Published. The label lives here rather than the wire value being
+ * renamed, because `active` is what the run gate, `preflightFor` and the managed-connection check all
+ * read — renaming it would be a rename of the one string the execution path depends on, in exchange
+ * for a word on a screen.
+ *
+ * `paused` is a LEGACY stored value and is mapped to Archived rather than kept as its own label
+ * (requirement 13.3). Nothing writes it again. Giving it a "Paused" label of its own would present two
+ * words for one meaning, which is exactly the conflicting status model this phase exists to end — and
+ * the person reading it cannot act on the difference, because nothing will ever set it back.
+ */
 export const WORKFLOW_STATUS_LABEL: Record<string, string> = {
-  active: "Published",
   draft: "Draft",
-  paused: "Paused",
+  testing: "Testing",
+  active: "Published",
+  archived: "Archived",
+  paused: "Archived",
 };
 
 export const WORKFLOW_STATUS_TONE: Record<string, Tone> = {
-  active: "good",
   draft: "muted",
-  paused: "waiting",
+  testing: "waiting",
+  active: "good",
+  archived: "muted",
+  paused: "muted",
+};
+
+/** What each status MEANS for whether work can start, so the label is never the whole answer. */
+export const WORKFLOW_STATUS_EFFECT: Record<string, string> = {
+  draft: "Being written. It cannot run.",
+  testing: "Runnable by people who can edit it, and those runs are marked as tests.",
+  active: "Published. Anyone the workflow is assigned to can run it.",
+  archived: "Kept for the record. It cannot run.",
+  paused: "Kept for the record. It cannot run.",
+};
+
+/** Statuses the run gate admits. Must match RUNNABLE_WORKFLOW_STATUSES in the control plane. */
+export const RUNNABLE_WORKFLOW_STATUSES = ["active", "testing"];
+
+export const workflowStatus = (status?: string) => {
+  const stored = String(status ?? "");
+  // The legacy value is translated in ONE place. A view comparing against "paused" itself would be a
+  // second opinion about what the legacy value means, and the two would eventually disagree.
+  const shown = stored === "paused" ? "archived" : stored;
+  return {
+    label: WORKFLOW_STATUS_LABEL[shown] ?? humanize(shown),
+    tone: WORKFLOW_STATUS_TONE[shown] ?? ("neutral" as Tone),
+    effect: WORKFLOW_STATUS_EFFECT[shown] ?? "",
+    runnable: RUNNABLE_WORKFLOW_STATUSES.includes(shown),
+    /** True when the record still carries the retired value, so a surface can say so honestly. */
+    legacy: stored === "paused",
+  };
 };
 
 export const CONNECTION_STATUS_LABEL: Record<string, string> = {

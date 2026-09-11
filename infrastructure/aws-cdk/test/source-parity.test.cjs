@@ -308,6 +308,49 @@ const invariants = [
   // 11.7 -- the sign-in timestamp, and 9.22's honest absence.
   ["the sign-in timestamp is recorded on the membership record", /const touchMembershipLogin=/, /const touchMembershipLogin = /],
   ["an unrecorded sign-in is reported as absent rather than as a date", /lastLoginAt:\(meMembership&&meMembership\.lastLoginAt\)\|\|null/, /lastLoginAt: \(meMembership && meMembership\.lastLoginAt\) \|\| null/],
+
+  // Phase 5 -- workflows, the single status model, and the builder. Same standing rule, and the
+  // asymmetric risks are worth naming: a copy that admitted `testing` without the edit-or-publish
+  // check would let any operator run an unreviewed workflow against real systems; a copy whose publish
+  // route did not re-run the connection check would publish a workflow that fails at run time instead
+  // of at publish time; and a copy whose draft route still created under a caller-chosen identifier
+  // would let a builder plant another organization's workflow id inside its own list. None of the three
+  // is visible from the outside until it has already happened.
+  ["the workflow status set is a closed four-member enumeration", /const WORKFLOW_STATUSES=\['draft','testing','active','archived'\]/, /const WORKFLOW_STATUSES = \["draft", "testing", "active", "archived"\]/],
+  ["the retired status stays readable and is never written again", /const LEGACY_WORKFLOW_STATUSES=\['paused'\]/, /const LEGACY_WORKFLOW_STATUSES = \["paused"\]/],
+  ["only active and testing are runnable", /const RUNNABLE_WORKFLOW_STATUSES=\['active','testing'\]/, /const RUNNABLE_WORKFLOW_STATUSES = \["active", "testing"\]/],
+  ["the run gate reads the runnable set rather than comparing to one status", /if\(!isRunnableWorkflowStatus\(workflow\.status\)\)/, /if \(!isRunnableWorkflowStatus\(workflow\.status\)\)/],
+  ["a testing run is admitted only from a principal who can edit or publish", /const isTestRun=workflow\.status==='testing';/, /const isTestRun = workflow\.status === "testing";/],
+  ["a testing run is tagged at creation rather than patched afterwards", /\.\.\.\(flags\.isTest\?\{isTest:true\}:\{\}\)/, /\.\.\.\(flags\.isTest \? \{ isTest: true \} : \{\}\)/],
+  ["the retired status is refused by name on the staff write route", /The status "paused" has been retired/, /The status "paused" has been retired/],
+  ["the copilot can no longer propose the retired status", /^(?![\s\S]*enum:\['active','paused'\])[\s\S]*$/, /^(?![\s\S]*enum: \["active", "paused"\])[\s\S]*$/],
+  ["the draft write route is exposed", /POST \/workflows\/\{id\}\/draft/, /POST \/workflows\/\{id\}\/draft/],
+  ["the draft route creates only under a reserved sentinel, never a caller-chosen identifier", /const NEW_WORKFLOW_SENTINEL='new'/, /const NEW_WORKFLOW_SENTINEL = "new"/],
+  ["an addressed workflow that is not the caller's own is Not Found", /if\(!creating&&!existing\)return reply\(404,\{error:'Not found'\}\)/, /if \(!creating && !existing\) return reply\(404, \{ error: "Not found" \}\)/],
+  ["the draft route cannot publish", /A draft save cannot publish a workflow/, /A draft save cannot publish a workflow/],
+  ["a draft is validated before anything is persisted", /const shapeError=validateWorkflowShape\(candidate\);if\(shapeError\)return reply\(422,\{error:shapeError\}\)/, /const shapeError = validateWorkflowShape\(candidate\);\s*if \(shapeError\) return reply\(422, \{ error: shapeError \}\)/],
+  ["provider allowlisting is enforced against the definition's own list", /which this workflow does not allow/, /which this workflow does not allow/],
+  ["surface-to-action pairing is enforced at save time", /is not an action the \$\{SURFACE_NAME\[surface\]\} can perform/, /is not an action the \$\{SURFACE_NAME\[surface\]\} can perform/],
+  ["browser connection fields are refused on a non-browser provider", /can only use browser connection fields with the browser provider/, /can only use browser connection fields with the browser provider/],
+  ["the publish route is exposed", /POST \/workflows\/\{id\}\/publish/, /POST \/workflows\/\{id\}\/publish/],
+  ["publish re-runs the managed-connection availability check", /const gap=await managedConnectionGapFor\(workflow\)/, /const gap = await managedConnectionGapFor\(workflow\)/],
+  ["a managed step with no live connection is refused with a state conflict", /Sign that connection in before publishing/, /Sign that connection in before publishing/],
+  ["the unpublish route is exposed and returns the workflow to draft", /POST \/workflows\/\{id\}\/unpublish/, /POST \/workflows\/\{id\}\/unpublish/],
+  ["the duplicate route is exposed and produces a draft", /POST \/workflows\/\{id\}\/duplicate/, /POST \/workflows\/\{id\}\/duplicate/],
+  ["the archive route is exposed", /POST \/workflows\/\{id\}\/archive/, /POST \/workflows\/\{id\}\/archive/],
+  ["every lifecycle transition has its own audit event", /const WORKFLOW_TRANSITION_AUDIT=\{active:'WORKFLOW_PUBLISHED',draft:'WORKFLOW_UNPUBLISHED',archived:'WORKFLOW_ARCHIVED'/, /const WORKFLOW_TRANSITION_AUDIT = \{\s*active: "WORKFLOW_PUBLISHED",\s*draft: "WORKFLOW_UNPUBLISHED",\s*archived: "WORKFLOW_ARCHIVED"/],
+  ["a duplication is audited", /WORKFLOW_DUPLICATED/, /WORKFLOW_DUPLICATED/],
+  ["every save writes an immutable version record", /const saveWorkflowWithVersion=async workflow=>/, /const saveWorkflowWithVersion = async \(workflow\) =>/],
+  ["the version record is keyed by version, so a run's pin stays resolvable", /id:`\$\{next\.id\}_v\$\{String\(next\.version\)\.padStart\(6,'0'\)\}`/, /id: `\$\{next\.id\}_v\$\{String\(next\.version\)\.padStart\(6, "0"\)\}`/],
+  ["the filter field set is an allowlist", /const WORKFLOW_FILTER_FIELDS=\['q','status','provider','surface','assignedRole'\]/, /const WORKFLOW_FILTER_FIELDS = \["q", "status", "provider", "surface", "assignedRole"\]/],
+  ["an unrecognized filter field is refused rather than ignored", /is not a field this list can be filtered by/, /is not a field this list can be filtered by/],
+  ["required execution surfaces are derived from the steps", /const requiredSurfacesFor=workflow=>/, /const requiredSurfacesFor = \(workflow\) =>/],
+  ["generation and validation failures are distinguishable", /class GenerationUnavailable extends Error/, /class GenerationUnavailable extends Error/],
+  ["an unreachable generator is not reported as an invalid description", /err&&err\.status===503\?503:422/, /err && err\.status === 503 \? 503 : 422/],
+  ["a generated candidate is validated again after its identity is imposed", /generatedFromDescription:true/, /generatedFromDescription: true/],
+  ["a generated draft is persisted immediately, so it survives a reload", /const saved=await saveWorkflowWithVersion\(candidate\)/, /const saved = await saveWorkflowWithVersion\(candidate\)/],
+  ["the generation is audited without recording the description itself", /descriptionLength:body\.sop\.trim\(\)\.length/, /descriptionLength: body\.sop\.trim\(\)\.length/],
+  ["generation writes only into the caller's own organization unless the caller is staff", /const targetOrg=p\.isStaff\?String\(body\.tenantId\|\|a\.tenantId\|\|'amazflow'\):p\.orgId/, /const targetOrg = p\.isStaff \? String\(body\.tenantId \|\| a\.tenantId \|\| "amazflow"\) : p\.orgId/],
 ];
 
 let pass = 0, fail = 0;

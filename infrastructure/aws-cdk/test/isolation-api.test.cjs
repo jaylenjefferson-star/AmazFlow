@@ -87,6 +87,48 @@ const idScoped = () => [
     own: { id: A.notifications[0].id },
     foreign: { id: B.notifications[0].id },
   },
+  // Phase 5's workflow lifecycle. The draft route is the interesting one: the ONLY organization it
+  // will write into is the caller's own, and the body deliberately names Org B's tenantId so that a
+  // route reading it would land the definition there. Ordered before the transitions because they
+  // change the status the transitions then assert on.
+  //
+  // The first version of this route CREATED whatever identifier was addressed, so a foreign id
+  // produced a new workflow in the caller's own organization carrying that id. This probe is what
+  // caught it, and the route now only creates under the reserved `new` value.
+  {
+    route: "POST /workflows/{id}/draft",
+    own: { id: A.workflows.draft.id },
+    foreign: { id: B.workflows.draft.id },
+    body: {
+      tenantId: B.tenantId,
+      name: "isolation probe draft",
+      startAt: "s_end",
+      allowedProviders: ["mock"],
+      steps: [{ id: "s_end", type: "end", outcome: "success", name: "Done" }],
+    },
+  },
+  {
+    route: "POST /workflows/{id}/duplicate",
+    own: { id: A.workflows.draft.id },
+    foreign: { id: B.workflows.draft.id },
+  },
+  {
+    route: "POST /workflows/{id}/unpublish",
+    own: { id: A.workflows.published.id },
+    foreign: { id: B.workflows.published.id },
+  },
+  {
+    route: "POST /workflows/{id}/publish",
+    own: { id: A.workflows.published.id },
+    foreign: { id: B.workflows.published.id },
+  },
+  // Last of the workflow probes: archiving Org A's own draft makes it unrunnable, and a probe that
+  // did that before the ones above would fail them for a reason that has nothing to do with isolation.
+  {
+    route: "POST /workflows/{id}/archive",
+    own: { id: A.workflows.draft.id },
+    foreign: { id: B.workflows.draft.id },
+  },
   {
     route: "PUT /teams/{id}",
     own: { id: A.teams.primary.id },

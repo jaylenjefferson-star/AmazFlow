@@ -668,7 +668,52 @@
       "orgScope": "session-scoped"
     },
     {
+      "route": "POST /workflows/{id}/archive",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /workflows/{id}/draft",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /workflows/{id}/duplicate",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /workflows/{id}/publish",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
       "route": "POST /workflows/{id}/runs",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /workflows/{id}/unpublish",
       "copies": [
         "deployed",
         "canonical"

@@ -64,10 +64,23 @@ export class WorkflowEngine {
     private options: WorkflowEngineOptions = {}
   ) {}
 
-  async start(workflow: WorkflowDefinition, input: Record<string, unknown>, actorOverride?: { userId?: string; role?: string }) {
+  /**
+   * `flags.isTest` marks a run started from a `testing`-status workflow (requirement 13.5).
+   *
+   * Additive and inert: the engine never reads it, so control flow is identical whether it is set or
+   * not. It is stamped at creation rather than patched on afterwards because a run that has already
+   * dispatched its first step untagged is a run whose audit trail and any dispatched task describe
+   * something other than a test.
+   */
+  async start(
+    workflow: WorkflowDefinition,
+    input: Record<string, unknown>,
+    actorOverride?: { userId?: string; role?: string },
+    flags: { isTest?: boolean } = {}
+  ) {
     const timestamp = now();
     const actor = actorOverride ?? (input._actor ?? {}) as { userId?: string; role?: string };
-    const run: WorkflowRun = { id: uid("run"), tenantId: workflow.tenantId, workflowId: workflow.id, workflowVersion: workflow.version, status: "RUNNING", currentStepId: workflow.startAt, createdBy: actor.userId, confirmedStepIds: [], stepResults: {}, context: { input, values: {}, lastAction: null }, audit: [{ id: uid("aud"), at: timestamp, type: "RUN_STARTED", message: "Workflow execution started", details: { actor: actor.userId, role: actor.role } }], createdAt: timestamp, updatedAt: timestamp, executionBackend: this.actionExecutor ? "agentcore" : "legacy" };
+    const run: WorkflowRun = { id: uid("run"), tenantId: workflow.tenantId, workflowId: workflow.id, workflowVersion: workflow.version, ...(flags.isTest ? { isTest: true as const } : {}), status: "RUNNING", currentStepId: workflow.startAt, createdBy: actor.userId, confirmedStepIds: [], stepResults: {}, context: { input, values: {}, lastAction: null }, audit: [{ id: uid("aud"), at: timestamp, type: "RUN_STARTED", message: "Workflow execution started", details: { actor: actor.userId, role: actor.role } }], createdAt: timestamp, updatedAt: timestamp, executionBackend: this.actionExecutor ? "agentcore" : "legacy" };
     await this.store.saveRun(run);
     return this.advance(workflow, run);
   }

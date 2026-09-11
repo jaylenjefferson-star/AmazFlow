@@ -815,47 +815,120 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
 
 - [ ] 14. Phase 5 — Workflows, the single status model, and the builder
 
-  - [ ] 14.1 Extend the workflow status set without renaming the published wire value
+  - [x] 14.1 Extend the workflow status set without renaming the published wire value
     - Persisted set becomes draft, testing, active, archived, where active denotes Published and remains the
       value the run gate reads; the Published label lives in the shared label mapping; legacy paused records
       display as Archived and are never written again
+    - `active` is deliberately NOT renamed. It is the value the run gate, `preflightFor` and the
+      managed-connection check all read, so renaming it to `published` would rename the one string the
+      whole execution path depends on in exchange for a word on a screen. `WORKFLOW_STATUSES` in both
+      control-plane copies, `workflowDefinitionSchema` and `terms.ts` all carry the same four members
+    - `paused` stays PARSEABLE and is never written again. Dropping it from the schema would make every
+      stored record carrying it fail validation, so a workflow that is merely old would read as corrupt
+      and disappear from its owner's list instead of displaying as Archived. The retired value is now
+      refused by name on `POST /workflows` and removed from the Copilot status tool's vocabulary — that
+      tool was the last remaining writer of it
+    - The display half is wired: `WorkflowsView` renders through `workflowStatus()` rather than printing
+      the stored string, so `active` reads as Published and `paused` reads as Archived. Asserted in
+      `views.test.tsx` in both directions — the stored value must not reach the screen, and "Paused" must
+      not be presented as a state somebody could act on when no control will ever un-pause it
     - _Requirements: 13.1, 13.2, 13.3, 3.2_
 
-  - [ ] 14.2 Add the customer draft write route
+  - [x] 14.2 Add the customer draft write route
     - Writes a definition only into the caller's own organization; validates against the existing definition
       schema including step-reference integrity, provider allowlisting, and surface-to-action pairing;
       responds 422 with the reason without persisting on failure; cannot set the published status
+    - `POST /workflows/{id}/draft`, `workflow:edit`. The organization comes from the resolved RECORD when
+      editing and from the PRINCIPAL when creating — never from `body.tenantId`, which is what
+      `POST /workflows` reads because it is staff
+    - The first version created whatever identifier was addressed, and the two-organization isolation probe
+      caught it: naming another organization's workflow id produced a new workflow carrying that id inside
+      the caller's own organization. Nothing crossed the tenancy boundary, but the caller had planted a
+      foreign identifier in its own list, and a caller-chosen id is also free to collide with a future
+      server-minted one. Creation is now only under the reserved `new` value; any other addressed
+      identifier must already exist under the caller's own scope, so a foreign id and an absent one are
+      both 404
+    - `validateWorkflowShape` gained the two checks requirement 13.9 names and did not have: provider
+      allowlisting against the definition's own `allowedProviders`, and surface-to-action pairing (a
+      desktop operation on a browser step, or an `executionTarget` contradicting the provider). Without
+      the second, a mismatched step saved cleanly and failed much later as an agent that is offered work
+      it has no capability for and simply never claims
     - _Requirements: 13.8, 13.9, 13.10, 13.11_
 
-  - [ ] 14.3 Add publish, unpublish, duplicate, and archive transitions with their audit events
+  - [x] 14.3 Add publish, unpublish, duplicate, and archive transitions with their audit events
     - Publish re-runs the managed-connection availability check and refuses with a state conflict when a
       managed-browser step has no active connection; unpublish returns to draft and makes the workflow
       unrunnable; duplicate produces a new draft with a new identifier; archive makes the workflow
       unrunnable
+    - The connection check is RE-RUN at publish rather than trusted from the draft, because a connection
+      can be revoked between authoring and publishing. A managed-browser step whose connection is gone
+      does not fail at publish — it fails at run time, against a customer's real system, having already
+      told them the workflow was live. Asserted for all four gap reasons: no connection named, a
+      connection that no longer exists, one that is pending, and one revoked after authoring
+    - A duplicate arrives as `draft` at version 1 with a new identifier, never as a copy of the publish
+      state: a duplicate that arrived published would put an unreviewed copy in front of real systems
+    - Each transition records its own audit event carrying the workflow, the version, and the status it
+      came from
     - _Requirements: 13.12, 13.13, 13.14, 13.15, 13.16, 13.23_
 
   - [ ] 14.4 Encode the publish permission as a matrix entry and state the current publishing route in the interface
     - Applies Q-1's conservative assumption: publish is staff-only, the builder role holds edit but not
       publish, and the interface states that an AmazFlow contact publishes rather than showing a control
       that refuses. Resolving Q-1 later changes one matrix entry and one label
+    - MATRIX HALF DONE: `WORKFLOW_BUILDER` holds `workflow:edit` and `workflow:archive` but not
+      `workflow:publish`, and the publish and unpublish routes guard on `workflow:publish`, so a builder
+      is refused. `workflow-lifecycle.test.cjs` asserts the builder's refusal and that the workflow stays
+      a draft. The `ORG_OWNER` case is asserted against the matrix's actual answer rather than an
+      assumption, so if the entry moves the test says so instead of silently passing
+    - OUTSTANDING (13.22, 30.4): the INTERFACE half. There is no workflow detail view yet, so there is
+      nowhere that states "your AmazFlow contact publishes this". This lands with 14.6
     - _Requirements: 13.22, 7.11, 30.4_
 
   - [ ] 14.5 Build workflow list, text search, and filtering with an allowlisted filter field set
     - Filter by status, provider, required execution surface, and assigned role; reject an unrecognized
       filter field with 400 rather than ignoring it
+    - CONTROL PLANE DONE: `GET /workflows` accepts `q`, `status`, `provider`, `surface` and
+      `assignedRole` from a closed allowlist. An unrecognized FIELD is 400, and so is an unrecognized
+      VALUE — `?status=published` is the word a person reaches for, and returning an empty list would
+      tell them their organization has no published workflows when it has several. Status is matched
+      against the DISPLAY status so the Archived filter also returns the legacy `paused` records the list
+      labels Archived; surface is derived from the steps
+    - OUTSTANDING (13.6): the customer surface still renders the unfiltered list. No search box and no
+      filter controls exist yet, so the server-side capability is unreachable from the product
     - _Requirements: 13.6, 13.7, 27.6, 27.7_
 
   - [ ] 14.6 Build workflow detail: version history, derived required surfaces, and preflight readiness
     - Required surfaces are rendered from the workflow's steps, never from a separately stored field
+    - NOT STARTED as a view. Everything it needs is in place and asserted server-side:
+      `GET /workflows/{id}/versions` returns newest-first with each row carrying the definition as it was;
+      `requiredSurfacesFor` derives surfaces from the steps; and `GET /workflows/{id}/preflight` now
+      actually returns `surfaces` (it was being stripped by a borrowed response contract — see task 13)
     - _Requirements: 13.19, 13.20, 13.21_
 
-  - [ ] 14.7 Pin runs to the workflow version in effect and keep that version readable after later edits
+  - [x] 14.7 Pin runs to the workflow version in effect and keep that version readable after later edits
     - Immutable version record written on save
+    - `saveWorkflowWithVersion` writes `WORKFLOW#` and `WORKFLOWVERSION#{id}_v{padded}` together, and
+      every save that changes the definition bumps the version — immutability here is a property of the
+      KEY, so reusing a version is what would break it
+    - This is what makes a run's pin mean anything: `runWorkflow` stores `workflowVersion` and every later
+      read resolves the definition through `getWorkflowVersion(tenantId, workflowId, version)`, which
+      falls back to the CURRENT workflow when no version record exists. Without the record an in-flight
+      run would silently start following steps that were edited underneath it. Asserted directly: a run is
+      started, the workflow is then edited, and the pinned version still says what the run was started
+      with
     - _Requirements: 13.17, 13.18_
 
   - [ ] 14.8 Wire the no-code builder for every supported action type on both surfaces
     - Field-level editing for every browser and desktop action; each step's surface derived from its
       provider; only operations in that surface's vocabulary accepted
+    - SERVER-SIDE HALF DONE: `ACTIONS_BY_SURFACE` and `AGENT_SURFACE_FOR_PROVIDER` are in both copies and
+      the validator refuses any operation outside its surface's vocabulary, in both directions, plus an
+      `executionTarget` that contradicts its provider. `ALLOWED_AGENT_OPS` is now derived from those two
+      lists rather than a hand-written nine-entry subset, which is a defect fix in its own right: the
+      canonical copy silently refused every desktop action and every `NAVIGATE`, so the two control-plane
+      copies disagreed about what an agent may be offered
+    - OUTSTANDING (14.1): `workflow-builder.tsx` (1,388 lines, already field-level and schema-driven) is
+      still only reachable from `/app`. Promoting it into `apps/customer` is the remaining work
     - _Requirements: 14.1, 14.2_
 
   - [ ] 14.9 Wire the plain-language entry point to a validated draft
@@ -864,19 +937,53 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       form, persist immediately so the draft survives a reload, submit the structured definition rather than
       the prose when saving, and audit the generation
     - Control flow is never decided by a language model
+    - CONTROL PLANE DONE: `POST /workflows/generate` moved from `internal:workflow_author` to
+      `workflow:create`, because requirement 14.3 is about the person building the workflow and the
+      design's own sequence diagram names that person "Builder (customer or staff)". A customer's target
+      organization is its own and `body.tenantId` is not consulted. The candidate is validated, then the
+      identity fields are imposed and it is validated AGAIN — the generator validated its own output, but
+      what is about to be persisted is a different object. A passing candidate is persisted immediately as
+      a draft so it survives a reload, and the generation is its own audit event recording the
+      description's LENGTH rather than the description, which is the customer's own process documentation
+    - The 422/503 split is new and matters: the previous code answered 422 for an unconfigured generator,
+      which told a customer their description was invalid when the truth was that AmazFlow could not ask
+    - Control flow is asserted, not assumed: the `advance` implementation is extracted by brace matching
+      and checked to read `next`/`whenTrue`/`whenFalse`/`onFailure` out of the persisted definition, with
+      no generation or free-form model call anywhere in the step-selection path
+    - OUTSTANDING (14.7, 14.8): the surface. There is no description box and no builder in
+      `apps/customer`, so "submit the structured definition rather than the prose" has no client half yet
     - _Requirements: 14.3, 14.4, 14.5, 14.6, 14.7, 14.8, 14.9, 14.10_
 
-  - [ ] 14.10 Tag runs started from a testing-status workflow as test runs
+  - [x] 14.10 Tag runs started from a testing-status workflow as test runs
     - Applies Q-7's conservative assumption: the tag exists so either counting policy can be applied without
       a schema change; no counting or analytics-exclusion policy is asserted. Testing-status runs are
       admitted only from principals holding workflow edit or publish permission
+    - `isTest` is stamped at creation rather than patched on afterwards, because a run that has already
+      dispatched its first step untagged is a run whose audit trail and dispatched task describe something
+      other than a test. Added to `WorkflowEngine.start` as an inert flag the engine never reads
+    - Q-7 is held open deliberately, and the suite asserts that: `isTest` must not appear near
+      `LIVE_RUN_STATUSES`, `liveNow`, `runLimit` or `maxConcurrentRuns`, so the code cannot have quietly
+      answered a question the business has not
+    - An operator is refused a testing run. The status exists so a builder can try a workflow against real
+      systems before anyone else can, so admitting an operator would defeat the point of it
     - _Requirements: 13.4, 13.5_
 
-  - [ ] 14.11 Workflow lifecycle test suite
+  - [x] 14.11 Workflow lifecycle test suite
     - Draft, testing, published, archived; schema rejection of an invalid step graph; refusal to publish a
       managed-browser step with no active connection; an unpublished workflow becoming unrunnable; a pinned
       version readable after later edits; duplication producing a new draft; version list ordering;
       generation producing either a schema-valid draft or a stated validation failure
+    - `infrastructure/aws-cdk/test/workflow-lifecycle.test.cjs`, 51 checks, wired into `test:behaviour`.
+      Every enumerated case is covered, plus the surface-pairing and provider-allowlist rejections in both
+      directions
+    - Each negative case asserts on the STORED record as well as the response, because that is where these
+      failures hide: a validation failure that persisted anyway looks like a validation failure until
+      somebody reloads, and a publish request the draft route silently downgraded looks like a successful
+      save
+    - The managed model is stood in for the same way DynamoDB and Cognito are — the behaviour under test is
+      not the model's, it is what the control plane does with a candidate. The stand-in is a QUEUE because
+      the generation path legitimately retries once with the validation error fed back; a single slot would
+      have made the second attempt look like an unreachable service
     - _Requirements: 34.11_
 
 - [ ] 15. Phase 6 — Runs, status presentation, and evidence

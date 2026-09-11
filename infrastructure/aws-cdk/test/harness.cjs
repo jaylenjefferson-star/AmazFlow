@@ -194,12 +194,54 @@ const db = {
   },
 };
 
+/* ---------------------------------------------------------- scripted managed-model responses -- */
+
+// The one external service the control plane consults that is not a database or a user pool: the
+// managed model that produces a CANDIDATE workflow definition from a plain-language description.
+//
+// Stood in for the same way DynamoDB and Cognito are, and for the same reason: the behaviour under
+// test is not the model's. What is under test is what the control plane does with a candidate --
+// validate it against the same schema every other write uses, refuse it with a stated reason and
+// persist nothing when it does not hold, persist it as a draft and audit the generation when it does.
+// A test that could not supply a candidate could only ever assert that generation was unreachable.
+//
+// Default is to throw, which is the honest default for an unconfigured environment and is what lets a
+// test assert that an unreachable generator answers 503 rather than blaming the person's description.
+//
+// A QUEUE rather than a single slot, because the generation path legitimately retries once with the
+// validation error fed back to the model. A single slot would make the second attempt look like an
+// unreachable service, so a test asserting on a validation failure would get a 503 instead — the retry
+// is real behaviour and the stand-in has to be able to represent it.
+const modelScript = [];
+/**
+ * Queue the exact text the managed model will return, once per invocation.
+ * @param times how many consecutive invocations return this text; use 2 to cover the retry.
+ */
+const scriptModelResponse = (text, times = 1) => {
+  const body = typeof text === "string" ? text : JSON.stringify(text);
+  for (let i = 0; i < times; i++) modelScript.push(body);
+};
+const takeModelResponse = () => {
+  if (!modelScript.length) throw new Error("no managed model in harness");
+  return modelScript.shift();
+};
+
 const stubs = {
   "@aws-sdk/client-dynamodb": {
     DynamoDBClient: class { async send(c) { return db.send(c); } },
     PutItemCommand, GetItemCommand, ScanCommand, QueryCommand, TransactWriteItemsCommand, DeleteItemCommand,
   },
-  "@aws-sdk/client-bedrock-runtime": { BedrockRuntimeClient: class { async send() { throw new Error("no bedrock in harness"); } }, ConverseCommand: Cmd },
+  "@aws-sdk/client-bedrock-runtime": {
+    BedrockRuntimeClient: class {
+      async send() {
+        // Shaped exactly like a Converse response, because the handler reads
+        // `out.output.message.content.find(x => x.text).text` and a looser shape would let a change
+        // to that read pass here and fail in production.
+        return { output: { message: { content: [{ text: takeModelResponse() }] } } };
+      }
+    },
+    ConverseCommand: Cmd,
+  },
   "@aws-sdk/client-sesv2": { SESv2Client: class { async send() { return {}; } }, SendEmailCommand: Cmd },
   "@aws-sdk/client-cognito-identity-provider": {
     // A working in-memory user pool rather than a stub that always answers "no users".
@@ -229,4 +271,4 @@ process.env.DATA_BOUNDARY = "harness";
 process.env.EXECUTION_GRANT_SECRET = "harness-secret-not-a-real-key";
 process.env.BEDROCK_MODEL_ID = "harness-model";
 
-module.exports = { store, key, db, crypto, users, groups, globallySignedOut, seedUser, resetPool, cognitoFaults };
+module.exports = { store, key, db, crypto, users, groups, globallySignedOut, seedUser, resetPool, cognitoFaults, scriptModelResponse };

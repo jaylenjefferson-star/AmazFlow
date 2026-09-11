@@ -83,13 +83,50 @@ export const workflowStepSchema = z.discriminatedUnion("type", [
   baseStep.extend({ type: z.literal("end"), outcome: z.enum(["success", "failed"]) })
 ]);
 
+/**
+ * The persisted workflow status set (requirement 13.1, design decision D-5).
+ *
+ * `active` still means published-and-runnable and is deliberately NOT renamed. It is the value the
+ * run gate reads, the value `preflightFor` reads, and the value the managed-connection check reads;
+ * renaming it to `published` would be a rename of the one string the whole execution path depends on,
+ * for a cosmetic gain that belongs at the presentation layer. The Published label lives in the shared
+ * label mapping, which is what that module is for.
+ */
+export const WORKFLOW_STATUSES = ["draft", "testing", "active", "archived"] as const;
+export type WorkflowStatus = (typeof WORKFLOW_STATUSES)[number];
+
+/**
+ * `paused` predates the status set above and still exists in stored records.
+ *
+ * It stays PARSEABLE and is never written again (requirement 13.3). Dropping it from the schema would
+ * make every stored workflow carrying it fail validation -- so a record that is merely old would read
+ * as a record that is corrupt, and the workflow would disappear from its owner's list rather than
+ * displaying as Archived.
+ */
+export const LEGACY_WORKFLOW_STATUSES = ["paused"] as const;
+
+/** The two statuses the run gate admits. Everything else is refused with a state conflict (13.4). */
+export const RUNNABLE_WORKFLOW_STATUSES = ["active", "testing"] as const;
+
+export const isRunnableWorkflowStatus = (status: string): boolean =>
+  (RUNNABLE_WORKFLOW_STATUSES as readonly string[]).includes(status);
+
+/**
+ * The status a surface should render, which is not always the status that is stored.
+ *
+ * The single place the legacy value is translated. A view that compared against `"paused"` itself
+ * would be a second opinion about what the legacy value means, and the two would eventually disagree.
+ */
+export const displayWorkflowStatus = (status: string): WorkflowStatus | string =>
+  status === "paused" ? "archived" : status;
+
 export const workflowDefinitionSchema = z.object({
   id: z.string().min(1),
   tenantId: z.string().min(1),
   name: z.string().min(1),
   description: z.string().default(""),
   version: z.number().int().positive(),
-  status: z.enum(["draft", "active", "paused"]).default("draft"),
+  status: z.enum([...WORKFLOW_STATUSES, ...LEGACY_WORKFLOW_STATUSES]).default("draft"),
   dataClass: dataClassSchema.default("INTERNAL"),
   assignedRoles: z.array(roleSchema).default(["FRONTLINE", "CLIENT_ADMIN"]),
   manualMinutesEstimate: z.number().positive().optional(),
@@ -214,6 +251,16 @@ export type WorkflowRun = {
   workflowId: string;
   workflowVersion: number;
   status: RunStatus;
+  /**
+   * Set when the run was started from a `testing`-status workflow (requirement 13.5).
+   *
+   * The tag and nothing more: no counting or analytics-exclusion policy is attached to it, because
+   * whether test runs consume the concurrency ceiling and whether they appear in a customer's numbers
+   * are separate business decisions (deferred question Q-7) and neither has been made. Recording the
+   * fact now is what lets either be applied later without a schema change — and a run that was a test
+   * cannot be identified after the fact from anything else the record holds.
+   */
+  isTest?: boolean;
   currentStepId?: string;
   createdBy?: string;
   confirmedStepIds?: string[];

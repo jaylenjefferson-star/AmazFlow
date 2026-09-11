@@ -121,14 +121,21 @@ const RESPONSE_FIELD_GROUPS = {
   invitation: ["organizationName", "organizationId", "email", "role", "acceptUrl", "invitationId", "username", "enabled", "userStatus", "createdAt"],
   notification: ["id", "tenantId", "audience", "kind", "title", "body", "deepLink", "createdAt", "read", "eventId"],
   preferences: ["username", "values", "updatedAt", "keys"],
-  workflow: ["id", "tenantId", "name", "description", "version", "status", "startAt", "steps", "assignedRoles", "inputSchema", "manualMinutesEstimate", "createdAt", "updatedAt", "requiredTargets", "targets", "ready", "checks"],
+  // `allowedProviders`, `dataClass`, `customerSummary` and `trigger` are part of the definition the
+  // builder round-trips: the draft route validates `allowedProviders` on save, so a response that
+  // stripped it would hand back a definition that fails its own validation on the next save.
+  // The lifecycle timestamps are here because a workflow that says "Published" without saying when,
+  // or by whom, is asking the reader to take it on trust.
+  workflow: ["id", "tenantId", "name", "description", "version", "status", "startAt", "steps", "assignedRoles", "allowedProviders", "dataClass", "customerSummary", "trigger", "inputSchema", "manualMinutesEstimate", "createdBy", "createdAt", "updatedAt", "publishedAt", "publishedBy", "unpublishedAt", "archivedAt", "archivedBy", "duplicatedFromWorkflowId", "duplicatedFromVersion", "generatedFromDescription", "requiredSurfaces", "requiredTargets", "targets", "ready", "checks"],
   // Preflight gets its own contract rather than borrowing the workflow one. It is not a workflow: it
   // is a readiness report, and `surfaces` -- the per-surface status, recovery action and agent list
   // that is the entire point of the route -- was silently stripped while the route reused the
   // workflow group. A route whose response shape differs needs its own entry, or the allowlist
   // quietly turns a useful answer into a shorter one.
   preflight: ["workflowId", "requiredTargets", "surfaces", "ready"],
-  run: ["id", "tenantId", "workflowId", "workflowVersion", "workflowName", "status", "currentStepId", "createdBy", "createdAt", "startedAt", "updatedAt", "completedAt", "input", "context", "audit", "steps", "output", "error", "testRun", "resumedFromRunId", "grant", "result", "usage", "traceId", "aiRuntimeLabel", "ok", "runId", "stepId", "recordedAt"],
+  // `isTest` marks a run started from a `testing`-status workflow. Returned, not hidden: a person
+  // looking at a run needs to know whether it was a rehearsal, and so does anyone reading the list.
+  run: ["id", "tenantId", "workflowId", "workflowVersion", "workflowName", "status", "currentStepId", "createdBy", "createdAt", "startedAt", "updatedAt", "completedAt", "input", "context", "audit", "steps", "output", "error", "isTest", "testRun", "resumedFromRunId", "grant", "result", "usage", "traceId", "aiRuntimeLabel", "ok", "runId", "stepId", "recordedAt"],
   // A task an agent is offered has to carry the work: `input` is the action's arguments, `expiresAt`
   // is the deadline the agent honours, and `destination` is the origin or application it is allowed
   // to touch. Without those three the poll response is a list of identifiers an agent cannot act on,
@@ -171,7 +178,7 @@ allowResponseFields(["GET /teams"], "teams");
 allowResponseFields(["POST /teams", "PUT /teams/{id}", "DELETE /teams/{id}", "POST /teams/{id}/members", "DELETE /teams/{id}/members/{username}"], "team");
 allowResponseFields(["GET /notifications"], "notification");
 allowResponseFields(["GET /permissions/matrix"], "matrix");
-allowResponseFields(["GET /workflows", "POST /workflows", "POST /workflows/generate", "GET /workflows/{id}/versions"], "workflow");
+allowResponseFields(["GET /workflows", "POST /workflows", "POST /workflows/generate", "GET /workflows/{id}/versions", "POST /workflows/{id}/draft", "POST /workflows/{id}/publish", "POST /workflows/{id}/unpublish", "POST /workflows/{id}/duplicate", "POST /workflows/{id}/archive"], "workflow");
 allowResponseFields(["GET /workflows/{id}/preflight"], "preflight");
 allowResponseFields(["GET /runs", "POST /workflows/{id}/runs", "POST /runs/{id}/cancel", "POST /runs/{id}/confirmations/{stepId}/confirm", "POST /runs/{id}/approvals/{stepId}", "POST /runs/{id}/executor/invoke", "POST /agent-tasks/{id}/result", "POST /agent/tasks/{id}/result", "POST /agent/tools/record-step-result", "POST /ai/execute"], "run");
 allowResponseFields(["GET /agent-tasks", "GET /agent/tasks"], "task");
@@ -383,6 +390,62 @@ const isUnsafeUrl = (urlStr) => {
     return true;
   }
 };
+/* ============================== Phase 5: workflows, the status model, and the builder ========= */
+
+// The persisted workflow status set (requirement 13.1, design decision D-5). `active` still means
+// published-and-runnable: it is the value this file's run gate, `preflightFor` and the
+// managed-connection check all read, so renaming it to `published` would rename the one string the
+// execution path depends on in exchange for a word on a screen. The Published label lives in the
+// shared label mapping, which is what that module is for.
+const WORKFLOW_STATUSES = ["draft", "testing", "active", "archived"];
+// `paused` predates that set and still exists in stored records. It stays READABLE and is never
+// written again (requirement 13.3): a record that is merely old must not read as a record that is
+// corrupt, or the workflow disappears from its owner's list instead of displaying as Archived.
+const LEGACY_WORKFLOW_STATUSES = ["paused"];
+const READABLE_WORKFLOW_STATUSES = [...WORKFLOW_STATUSES, ...LEGACY_WORKFLOW_STATUSES];
+// The only two statuses the run gate admits (requirement 13.4). Everything else is a state conflict.
+const RUNNABLE_WORKFLOW_STATUSES = ["active", "testing"];
+const isRunnableWorkflowStatus = (status) => RUNNABLE_WORKFLOW_STATUSES.includes(status);
+// The reserved path value on POST /workflows/{id}/draft that means "mint an identifier". Every real
+// identifier is server-minted (`wf_...`), so this can never collide with one.
+const NEW_WORKFLOW_SENTINEL = "new";
+
+// The action vocabulary each execution surface can carry out. These are the same two lists as
+// BROWSER_ACTIONS/DESKTOP_ACTIONS in @amazflow/workflow-schema, and they are what makes
+// surface-to-action pairing checkable at save time rather than at dispatch time. The previous
+// canonical copy carried a hand-written nine-entry subset for claim eligibility, which silently
+// refused every desktop action and every NAVIGATE -- so the two control-plane copies disagreed about
+// what an agent is allowed to be offered.
+const BROWSER_ACTIONS = [
+  "NAVIGATE", "READ_TEXT", "CLICK", "TYPE", "SELECT", "CHECK",
+  "SCROLL_TO", "WAIT_FOR", "VERIFY_TEXT", "CAPTURE_EVIDENCE", "SET_EMPLOYEE_STATUS",
+];
+// Deliberately narrow: enough to drive an approved desktop procedure, with no shell, no arbitrary
+// code, no filesystem access and no credential surface.
+const DESKTOP_ACTIONS = [
+  "desktop.open_app", "desktop.focus_window", "desktop.click", "desktop.type_text",
+  "desktop.keypress", "desktop.wait_for", "desktop.verify_text", "desktop.capture_evidence",
+];
+const ACTIONS_BY_SURFACE = {
+  browser_extension: BROWSER_ACTIONS,
+  desktop_agent: DESKTOP_ACTIONS,
+};
+// The provider fully determines the surface, so a builder never has to offer an invalid pairing and
+// an older workflow gets the right surface without being rewritten. Providers absent from this table
+// (api, spreadsheet, email, file, mock) are ones AmazFlow runs itself: nothing is dispatched.
+const AGENT_SURFACE_FOR_PROVIDER = { browser: "browser_extension", desktop: "desktop_agent" };
+const SURFACE_NAME = { browser_extension: "Chrome Extension", desktop_agent: "Desktop App" };
+// Which surfaces a workflow needs installed before it can run, DERIVED from its own steps. Never a
+// stored field: a stored list is a second source of truth that drifts from the steps.
+const requiredSurfacesFor = (workflow) => [
+  ...new Set(
+    (workflow.steps || [])
+      .filter((step) => step && step.type === "action")
+      .map((step) => step.executionTarget || AGENT_SURFACE_FOR_PROVIDER[step.provider])
+      .filter(Boolean),
+  ),
+];
+
 // Shared shape validation for both the AI-generation path and the hand-edited-JSON
 // save path (POST /workflows previously only checked 4 top-level fields and let
 // anything through underneath -- a typo'd provider or a dangling step reference
@@ -424,12 +487,44 @@ const validateWorkflowShape = (draft) => {
       return `Step "${step.id}" has invalid type "${step.type}" (must be one of ${VALID_STEP_TYPES.join(", ")})`;
     if (step.type === "action" && !VALID_PROVIDERS.includes(step.provider))
       return `Step "${step.id}" has invalid provider "${step.provider}" (must be one of ${VALID_PROVIDERS.join(", ")})`;
+    // Provider allowlisting (requirement 13.9). `allowedProviders` is the definition's own statement
+    // of which providers it may touch, and it is the mechanism by which a workflow reviewed as
+    // browser-only cannot silently acquire a desktop step. Enforced only when the field is present,
+    // because older stored definitions predate it and rejecting those would make an existing
+    // workflow unsavable on its next edit.
+    if (
+      step.type === "action" &&
+      Array.isArray(draft.allowedProviders) &&
+      draft.allowedProviders.length > 0 &&
+      !draft.allowedProviders.includes(step.provider)
+    )
+      return `Step "${step.id}" uses the ${step.provider} provider, which this workflow does not allow (allowed: ${draft.allowedProviders.join(", ")})`;
+    // Execution surface-to-action pairing (requirement 13.9, 14.2). The provider fully determines the
+    // surface, so this is not a second declaration to keep in step -- it is a check that the step's
+    // own operation belongs to the vocabulary of the surface its provider implies. Without it a
+    // desktop operation can be saved on a browser step, and the failure surfaces much later as an
+    // agent that is offered work it has no capability for and simply never claims.
+    if (step.type === "action") {
+      const surface = AGENT_SURFACE_FOR_PROVIDER[step.provider];
+      if (surface && step.executionTarget && step.executionTarget !== surface)
+        return `Step "${step.id}" runs on the ${SURFACE_NAME[surface]}, so it cannot target ${step.executionTarget}`;
+      if (!surface && step.executionTarget)
+        return `Step "${step.id}" uses the ${step.provider} provider, which AmazFlow runs itself and cannot be assigned to an agent`;
+      if (surface && !ACTIONS_BY_SURFACE[surface].includes(step.operation))
+        return `"${step.operation}" is not an action the ${SURFACE_NAME[surface]} can perform`;
+      // Browser connection fields belong to the browser provider alone. A `connectionId` on a
+      // spreadsheet step is not harmless clutter: it reads as a dependency the connections view
+      // would then report, on a step that will never use it.
+      if (step.provider !== "browser" && (step.connectionId || step.browserMode || step.path))
+        return `Step "${step.id}" can only use browser connection fields with the browser provider`;
+    }
     const refs = [
       step.next,
       step.type === "condition" ? step.whenTrue : undefined,
       step.type === "condition" ? step.whenFalse : undefined,
       step.type === "approval" ? step.onReject : undefined,
       step.type === "verify" ? step.onFailure : undefined,
+      step.type === "action" ? step.onFailure : undefined,
     ].filter(Boolean);
     for (const ref of refs)
       if (!ids.has(ref))
@@ -437,27 +532,57 @@ const validateWorkflowShape = (draft) => {
   }
   return null;
 };
+/**
+ * The two ways generation can fail, kept apart on purpose (requirement 14.5).
+ *
+ * `422` means a candidate was produced and did not satisfy the schema -- a statement about the
+ * candidate, which the person can act on by rewording their description. `503` means no candidate was
+ * produced at all because the managed service is not configured or did not answer, which is a
+ * statement about AmazFlow. Collapsing both into 422 told a customer their description was invalid
+ * when the truth was that the generator was switched off.
+ */
+class GenerationUnavailable extends Error {
+  constructor(message) {
+    super(message);
+    this.status = 503;
+  }
+}
+class GenerationInvalid extends Error {
+  constructor(message) {
+    super(message);
+    this.status = 422;
+  }
+}
 const generateWorkflowFromSop = async (sop, tenantId) => {
   const system =
     'You design AmazFlow workflow definitions as JSON. A workflow has: id, tenantId, name, description, version, status, dataClass, assignedRoles (array of FRONTLINE/CLIENT_ADMIN/SUPER_ADMIN), startAt, allowedProviders, steps. Each step has a unique id, name, and type: "ai" (operation, prompt, outputKey, allowedValues?, confidenceThreshold?, next), "condition" (path, operator: equals|notEquals|exists|gt|lt, value, whenTrue, whenFalse), "approval" (message, roles, next, onReject?), "action" (provider: browser|api|spreadsheet|email|file|mock -- ONLY these six exact strings, never invent another provider name, next), "verify" (path, operator, value, next, onFailure?), or "end" (outcome: success|failed). Every step id referenced by next/whenTrue/whenFalse/onReject/onFailure must exist in steps, and every path traced from startAt must reach an end step. Put a human approval step before any high-impact action (access changes, financial actions, deletions, anything hard to undo). Return ONLY the JSON object -- no prose, no markdown fences.';
   const basePrompt = `Design a workflow for this standard operating procedure:\n${sop}\n\nUse tenantId "${tenantId}". Set status to "draft". Use a short kebab-case id starting with "workflow-".`;
   if (useAgentCore()) {
     if (!executionHarnessArn)
-      throw new Error("Managed workflow builder is not configured");
-    const response = await agentCoreRuntime.invoke({
-      harnessArn: executionHarnessArn,
-      sessionId: `sop-${crypto.randomUUID()}`,
-      prompt: basePrompt,
-      systemPrompt: system,
-      allowedTools: [],
-      maxIterations: 1,
-      maxTokens: 3000,
-    });
+      throw new GenerationUnavailable(
+        "The workflow generator is not configured in this environment, so no draft can be produced from a description. Build the workflow in the editor instead.",
+      );
+    let response;
+    try {
+      response = await agentCoreRuntime.invoke({
+        harnessArn: executionHarnessArn,
+        sessionId: `sop-${crypto.randomUUID()}`,
+        prompt: basePrompt,
+        systemPrompt: system,
+        allowedTools: [],
+        maxIterations: 1,
+        maxTokens: 3000,
+      });
+    } catch (err) {
+      throw new GenerationUnavailable(
+        "The workflow generator did not answer. Try again, or build the workflow in the editor.",
+      );
+    }
     let draft;
     try {
       draft = JSON.parse(response.text);
     } catch {
-      throw new Error("Managed workflow builder returned invalid JSON");
+      throw new GenerationInvalid("The generator did not return a workflow definition");
     }
     draft.tenantId = tenantId;
     draft.status = "draft";
@@ -465,7 +590,7 @@ const generateWorkflowFromSop = async (sop, tenantId) => {
     if (!draft.id) draft.id = `workflow-${Date.now().toString(36)}`;
     const shapeError = validateWorkflowShape(draft);
     if (shapeError)
-      throw new Error(`Could not generate a valid workflow: ${shapeError}`);
+      throw new GenerationInvalid(`Could not generate a valid workflow: ${shapeError}`);
     return draft;
   }
   assertLegacyEnabled();
@@ -475,14 +600,21 @@ const generateWorkflowFromSop = async (sop, tenantId) => {
       attempt === 0
         ? basePrompt
         : `${basePrompt}\n\nYour previous attempt was invalid: ${lastError}. Fix that specific problem and return the corrected JSON object.`;
-    const out = await bedrock.send(
-      new ConverseCommand({
-        modelId: process.env.BEDROCK_MODEL_ID,
-        system: [{ text: system }],
-        messages: [{ role: "user", content: [{ text: prompt }] }],
-        inferenceConfig: { maxTokens: 3000, temperature: 0.2 },
-      }),
-    );
+    let out;
+    try {
+      out = await bedrock.send(
+        new ConverseCommand({
+          modelId: process.env.BEDROCK_MODEL_ID,
+          system: [{ text: system }],
+          messages: [{ role: "user", content: [{ text: prompt }] }],
+          inferenceConfig: { maxTokens: 3000, temperature: 0.2 },
+        }),
+      );
+    } catch (err) {
+      throw new GenerationUnavailable(
+        "The workflow generator did not answer. Try again, or build the workflow in the editor.",
+      );
+    }
     let text = out.output?.message?.content?.find((x) => x.text)?.text || "{}";
     text = text.replace(/^```json\s*|\s*```$/g, "").trim();
     let draft;
@@ -500,7 +632,7 @@ const generateWorkflowFromSop = async (sop, tenantId) => {
     if (!shapeError) return draft;
     lastError = shapeError;
   }
-  throw new Error(`Could not generate a valid workflow: ${lastError}`);
+  throw new GenerationInvalid(`Could not generate a valid workflow: ${lastError}`);
 };
 const valueAt = (obj, path) => {
   const keys = String(path || "").split(".");
@@ -1731,17 +1863,7 @@ const getWorkflowVersion = async (tenantId, workflowId, version) => {
   );
   return out.Item && out.Item.document?.S ? parse(out.Item) : null;
 };
-const ALLOWED_AGENT_OPS = new Set([
-  "READ_TEXT",
-  "CLICK",
-  "TYPE",
-  "SELECT",
-  "CHECK",
-  "SCROLL_TO",
-  "WAIT_FOR",
-  "VERIFY_TEXT",
-  "SET_EMPLOYEE_STATUS",
-]);
+const ALLOWED_AGENT_OPS = new Set([...BROWSER_ACTIONS, ...DESKTOP_ACTIONS]);
 const advance = async (workflow, run, auditStartIdx) => {
   const settings = await getSettings();
   const audit = (type, message, stepId, details) =>
@@ -2380,11 +2502,20 @@ const createProductionEngine = async (loadedRun) => {
     confirmationExpiryMs: settings.confirmationExpiryMs,
   });
 };
-const runWorkflow = async (workflow, input, a) => {
+/**
+ * `flags.isTest` implements Q-7's conservative half (requirement 13.5).
+ *
+ * The tag is written and nothing else: no counting policy and no analytics exclusion is asserted here,
+ * because whether a test run consumes the concurrency ceiling and whether it appears in a customer's
+ * numbers are two separate business decisions and neither has been made. Recording the fact now is
+ * what lets either be applied later without a schema change or a backfill -- and a run that was a test
+ * cannot be identified after the fact from anything else the record holds.
+ */
+const runWorkflow = async (workflow, input, a, flags = {}) => {
   if (useAgentCore()) {
     if (!agentCoreAi)
       throw new Error("Managed workflow execution is not configured");
-    return (await createProductionEngine()).start(workflow, input, a);
+    return (await createProductionEngine()).start(workflow, input, a, flags);
   }
   assertLegacyEnabled();
   const run = {
@@ -2392,6 +2523,7 @@ const runWorkflow = async (workflow, input, a) => {
     tenantId: workflow.tenantId,
     workflowId: workflow.id,
     workflowVersion: workflow.version || 1,
+    ...(flags.isTest ? { isTest: true } : {}),
     status: "RUNNING",
     currentStepId: workflow.startAt,
     createdBy: a.userId,
@@ -3449,15 +3581,18 @@ const COPILOT_TOOLS = [
   {
     toolSpec: {
       name: "set_workflow_status",
+      // `paused` is gone from this tool's vocabulary (requirement 13.3). It was the one remaining
+      // writer of the legacy value, so leaving it here would have kept minting records that the
+      // status model only knows how to read.
       description:
-        "Propose publishing a draft (status active) or pausing a published workflow (status paused). This changes what customers can actually run, so treat it as high-risk.",
+        "Propose publishing a draft (status active), returning a published workflow to draft, or archiving it. This changes what customers can actually run, so treat it as high-risk.",
       inputSchema: {
         json: {
           type: "object",
           properties: {
             tenantId: { type: "string" },
             workflowId: { type: "string" },
-            status: { type: "string", enum: ["active", "paused"] },
+            status: { type: "string", enum: ["draft", "testing", "active", "archived"] },
           },
           required: ["tenantId", "workflowId", "status"],
         },
@@ -3736,14 +3871,14 @@ const runCopilotTool = async (userId, name, input) => {
       throw new Error(
         `No workflow ${input.workflowId} in tenant ${input.tenantId}`,
       );
-    if (!["active", "paused"].includes(input.status))
-      throw new Error("status must be active or paused");
+    if (!WORKFLOW_STATUSES.includes(input.status))
+      throw new Error(`status must be one of ${WORKFLOW_STATUSES.join(", ")}`);
     const target = { ...w, status: input.status };
     const action = await proposeAction(
       userId,
       input.tenantId,
       "WORKFLOW_STATUS",
-      `${input.status === "active" ? "Publish" : "Pause"} "${w.name}" v${w.version} (currently ${w.status})`,
+      `Set "${w.name}" v${w.version} to ${input.status} (currently ${w.status})`,
       { op: "SAVE_WORKFLOW", workflow: target, before: w },
     );
     return {
@@ -4343,6 +4478,148 @@ const listWorkflowVersions = async (tenantId, workflowId) => {
     .filter((i) => i.document?.S)
     .map(parse)
     .sort((a, b) => (b.version || 0) - (a.version || 0));
+};
+
+/* ---------- 14.1 / 14.2 / 14.3 / 14.7 Workflow lifecycle ---------- */
+
+/**
+ * Write a workflow and its immutable version record together (requirements 13.17, 13.18).
+ *
+ * The version record is what makes a run's pin meaningful. `runWorkflow` stores
+ * `workflowVersion: workflow.version` and every later read of that run resolves the definition through
+ * `getWorkflowVersion(tenantId, workflowId, version)` -- so if no version record were written on save,
+ * that lookup would fall back to the CURRENT workflow and an in-flight run would silently start
+ * following steps that were edited underneath it.
+ *
+ * `WORKFLOWVERSION#{id}_v{padded}` is keyed by version, so writing the same version twice overwrites
+ * rather than accumulating. That is why every save that changes the definition bumps the version:
+ * immutability here is a property of the KEY, and reusing a version is what would break it.
+ */
+const saveWorkflowWithVersion = async (workflow) => {
+  const next = { ...workflow, updatedAt: now() };
+  await save("WORKFLOW", next);
+  if (next.version)
+    await save("WORKFLOWVERSION", {
+      ...next,
+      id: `${next.id}_v${String(next.version).padStart(6, "0")}`,
+    });
+  return next;
+};
+
+/**
+ * The managed-connection availability check, re-run at publish time (requirements 13.12, 13.13).
+ *
+ * Re-run rather than trusted from the draft, because the connection can be revoked between authoring
+ * and publishing, and a managed-browser step whose connection is gone does not fail at publish -- it
+ * fails at run time, against a customer's real system, having already told them the workflow was live.
+ *
+ * Returns the offending step id, or null when every managed step has an active, authenticated
+ * connection.
+ */
+const managedConnectionGapFor = async (workflow) => {
+  for (const step of workflow.steps || []) {
+    if (!step || step.type !== "action" || step.provider !== "browser") continue;
+    if (step.browserMode !== "managed") continue;
+    if (!step.connectionId) return { stepId: step.id, reason: "names no connection" };
+    const connection = await getBrowserConnection(workflow.tenantId, step.connectionId);
+    if (!connection) return { stepId: step.id, reason: "names a connection that no longer exists" };
+    if (connection.status !== "active")
+      return { stepId: step.id, reason: `names a connection that is ${connection.status}` };
+    if (!connection.managedProfileId)
+      return { stepId: step.id, reason: "names a connection that has never been signed in" };
+  }
+  return null;
+};
+
+/**
+ * Resolve a workflow the caller may address, under the caller's own scope.
+ *
+ * `resolveEntity` partitions the read for a non-staff principal, so another organization's identifier
+ * is simply NOT FOUND -- there is no comparison to get wrong and no 403 existence oracle to
+ * reintroduce (requirement 34.4).
+ */
+const resolveWorkflow = async (id, p, reason) => resolveEntity("WORKFLOW#", id, p, reason);
+
+/** The audit event each transition records (requirement 13.23). One per transition, named for it. */
+const WORKFLOW_TRANSITION_AUDIT = {
+  active: "WORKFLOW_PUBLISHED",
+  draft: "WORKFLOW_UNPUBLISHED",
+  archived: "WORKFLOW_ARCHIVED",
+  testing: "WORKFLOW_STATUS_CHANGED",
+};
+
+/**
+ * The allowlisted filter field set for `GET /workflows` (requirements 13.6, 13.7).
+ *
+ * An unrecognized field is REFUSED rather than ignored. Ignoring it is the dangerous reading: a
+ * client asking for `?state=draft` and being handed the unfiltered list has been told, by the shape of
+ * a successful response, that every workflow it received is a draft.
+ */
+const WORKFLOW_FILTER_FIELDS = ["q", "status", "provider", "surface", "assignedRole"];
+const workflowMatchesFilters = (workflow, filters) => {
+  if (filters.q) {
+    const needle = filters.q.toLowerCase();
+    const haystack = [workflow.name, workflow.description, workflow.customerSummary]
+      .filter((value) => typeof value === "string")
+      .join(" ")
+      .toLowerCase();
+    if (!haystack.includes(needle)) return false;
+  }
+  // Compared against the DISPLAY status so that filtering for Archived also returns the legacy
+  // `paused` records the list shows as Archived. Filtering on the stored value would show a person a
+  // workflow labelled Archived that their own Archived filter then hides.
+  if (filters.status) {
+    const shown = workflow.status === "paused" ? "archived" : workflow.status;
+    if (shown !== filters.status) return false;
+  }
+  if (filters.provider) {
+    const providers = new Set(
+      (workflow.steps || [])
+        .filter((step) => step && step.type === "action" && step.provider)
+        .map((step) => step.provider),
+    );
+    if (!providers.has(filters.provider)) return false;
+  }
+  // Derived from the steps, never from a stored field, for the same reason the detail view derives it.
+  if (filters.surface && !requiredSurfacesFor(workflow).includes(filters.surface)) return false;
+  if (filters.assignedRole) {
+    const assigned = Array.isArray(workflow.assignedRoles) ? workflow.assignedRoles : [];
+    if (!assigned.includes(filters.assignedRole)) return false;
+  }
+  return true;
+};
+const readWorkflowFilters = (query) => {
+  const params = query || {};
+  const unknown = Object.keys(params).filter((key) => !WORKFLOW_FILTER_FIELDS.includes(key));
+  if (unknown.length)
+    throw {
+      status: 400,
+      message: `"${unknown[0]}" is not a field this list can be filtered by (available: ${WORKFLOW_FILTER_FIELDS.join(", ")})`,
+    };
+  const filters = {};
+  for (const field of WORKFLOW_FILTER_FIELDS) {
+    const raw = params[field];
+    if (typeof raw !== "string" || !raw.trim()) continue;
+    filters[field] = raw.trim().slice(0, 120);
+  }
+  // A value outside the closed set is refused for the same reason an unknown FIELD is: silently
+  // returning nothing is indistinguishable from "your organization has none of those".
+  if (filters.status && !READABLE_WORKFLOW_STATUSES.includes(filters.status))
+    throw {
+      status: 400,
+      message: `"${filters.status}" is not a workflow status (available: ${WORKFLOW_STATUSES.join(", ")})`,
+    };
+  if (filters.provider && !VALID_PROVIDERS.includes(filters.provider))
+    throw {
+      status: 400,
+      message: `"${filters.provider}" is not a provider (available: ${VALID_PROVIDERS.join(", ")})`,
+    };
+  if (filters.surface && !Object.keys(ACTIONS_BY_SURFACE).includes(filters.surface))
+    throw {
+      status: 400,
+      message: `"${filters.surface}" is not an execution surface (available: ${Object.keys(ACTIONS_BY_SURFACE).join(", ")})`,
+    };
+  return filters;
 };
 
 // ---------- Managed browser connections ----------
@@ -5791,12 +6068,24 @@ exports.handler = async (e) => {
     // that can disagree with enforcement (requirement 7.17, task 7.13).
     if (route === "GET /permissions/matrix") return reply(200, permissionMatrix());
     if (route === "GET /workflows") {
+      // 14.5 — text search and the allowlisted filter field set. Applied server-side so the answer a
+      // surface renders is the answer the control plane stands behind, and an unrecognized field is
+      // refused rather than ignored (requirement 13.7).
+      let filters;
+      try {
+        filters = readWorkflowFilters(e.queryStringParameters);
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
       const items = await scanType("WORKFLOW#", a);
       return reply(
         200,
-        items.sort((x, y) =>
-          String(y.version).localeCompare(String(x.version)),
-        ),
+        items
+          .filter((workflow) => workflowMatchesFilters(workflow, filters))
+          .sort((x, y) =>
+            String(y.version).localeCompare(String(x.version)),
+          ),
       );
     }
     if (route === "POST /workflows") {
@@ -5807,30 +6096,30 @@ exports.handler = async (e) => {
       const body = JSON.parse(e.body || "{}");
       const shapeError = validateWorkflowShape(body);
       if (shapeError) return reply(400, { error: shapeError });
-      if (body.status === "active") {
-        for (const step of body.steps || []) {
-          if (step.type !== "action" || step.provider !== "browser" || step.browserMode !== "managed") continue;
-          const connection = await getBrowserConnection(body.tenantId, step.connectionId);
-          if (!connection || connection.status !== "active" || !connection.managedProfileId)
-            return reply(409, { error: `Managed browser step "${step.id}" must reference an active, authenticated connection` });
-        }
-      }
-      body.updatedAt = now();
-      await save("WORKFLOW", body);
-      if (body.version) {
-        const paddedV = String(body.version).padStart(6, "0");
-        await save("WORKFLOWVERSION", {
-          ...body,
-          id: `${body.id}_v${paddedV}`,
+      // 13.3 — the legacy `paused` value is never written again, including by staff. Refused by name
+      // so a caller still sending it learns that rather than having it silently rewritten.
+      if (body.status !== undefined && !WORKFLOW_STATUSES.includes(body.status))
+        return reply(400, {
+          error:
+            body.status === "paused"
+              ? 'The status "paused" has been retired. Use "archived", which is how existing paused records already display.'
+              : `status must be one of ${WORKFLOW_STATUSES.join(", ")}`,
         });
+      if (body.status === "active") {
+        const gap = await managedConnectionGapFor(body);
+        if (gap)
+          return reply(409, {
+            error: `Managed browser step "${gap.stepId}" ${gap.reason} -- it must reference an active, authenticated connection`,
+          });
       }
-      await logActivity(body.tenantId, {
+      const saved = await saveWorkflowWithVersion(body);
+      await logActivity(saved.tenantId, {
         actor: a.userId,
         actorLabel: "AmazFlow super admin",
         action: "WORKFLOW_SAVE",
-        summary: `Saved "${body.name}" v${body.version} (${body.status})`,
+        summary: `Saved "${saved.name}" v${saved.version} (${saved.status})`,
       });
-      return reply(201, body);
+      return reply(201, saved);
     }
     if (route === "GET /workflows/{id}/versions") {
       const id = e.pathParameters?.id;
@@ -5838,6 +6127,231 @@ exports.handler = async (e) => {
       const workflow = workflows.find((w) => w.id === id);
       if (!workflow) return reply(404, { error: "Workflow not found" });
       return reply(200, await listWorkflowVersions(workflow.tenantId, id));
+    }
+
+    /* ------------------------------------------- 14.2 the customer draft write route ---------- */
+    //
+    // The split design.md's *Workflows and the status model* argues for, rather than loosening
+    // `POST /workflows`. That route is staff, takes `body.tenantId`, and can write any status into any
+    // organization. This one holds `workflow:edit`, writes ONLY into the caller's own organization,
+    // and cannot set `active` at all -- publishing is a separate transition with its own permission
+    // and its own connection check.
+    if (route === "POST /workflows/{id}/draft") {
+      const addressed = String(e.pathParameters?.id || "").trim();
+      if (!addressed) return reply(400, { error: "A workflow identifier is required" });
+      // `new` is the reserved value that means "mint one", and it is the ONLY way this route creates.
+      //
+      // The first version of this route created whatever identifier the caller named, which the
+      // two-organization isolation probe caught immediately: naming another organization's workflow id
+      // produced a brand-new workflow carrying that id inside the caller's own organization. Nothing
+      // crossed the tenancy boundary, but the caller had planted a foreign identifier in its own list
+      // and every later comparison of "is this ours" had to be made against a record that looked like
+      // someone else's. A caller-chosen identifier is also free to collide with a future server-minted
+      // one, and to encode meaning the server then stores forever.
+      //
+      // So: an addressed identifier must ALREADY exist under the caller's own scope, and a foreign one
+      // is indistinguishable from an absent one -- both 404, which is the property requirement 34.4
+      // asks for.
+      const creating = addressed === NEW_WORKFLOW_SENTINEL;
+      const existing = creating
+        ? null
+        : await resolveWorkflow(addressed, p, "staff editing a workflow draft");
+      if (!creating && !existing) return reply(404, { error: "Not found" });
+      // The organization comes from the RECORD when editing and from the PRINCIPAL when creating.
+      // Never from the body: `POST /workflows` reads `body.tenantId` because it is staff, and a
+      // customer route that did the same would let a builder write into any organization it could name.
+      const orgId = existing ? existing.tenantId : p.orgId;
+      const id = existing
+        ? existing.id
+        : `wf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      {
+        const denied = await guardIn(p, "workflow:edit", { orgId });
+        if (denied) return denied;
+      }
+      // Creating a workflow is a different act from editing one, so it is a different permission.
+      // Every role holding edit today also holds create, so this changes no outcome now -- it is what
+      // keeps a future edit-only role from being able to create.
+      if (creating) {
+        const denied = await guardIn(p, "workflow:create", { orgId });
+        if (denied) return denied;
+      }
+      let body;
+      try {
+        body = JSON.parse(e.body || "{}");
+      } catch {
+        return reply(400, { error: "The request body is not valid JSON" });
+      }
+      // 13.11 — the draft route cannot publish. Refused by name rather than silently downgraded: a
+      // caller who asked to publish and got a 200 back would reasonably believe it published.
+      const requested = typeof body.status === "string" ? body.status : "draft";
+      if (requested === "active")
+        return reply(422, {
+          error:
+            "A draft save cannot publish a workflow. Publishing is a separate step that re-checks every managed connection.",
+        });
+      if (!["draft", "testing"].includes(requested))
+        return reply(422, {
+          error: `A draft save can set the status to draft or testing, not "${requested}".`,
+        });
+      // The definition is assembled from the submitted body but its identity is NOT taken from it:
+      // id comes from the path, tenantId from the resolved organization, and version is derived.
+      const candidate = {
+        ...body,
+        id,
+        tenantId: orgId,
+        status: requested,
+        version: existing ? (Number(existing.version) || 0) + 1 : 1,
+        createdAt: existing ? existing.createdAt || now() : now(),
+        createdBy: existing ? existing.createdBy || a.userId : a.userId,
+        updatedAt: now(),
+      };
+      // 13.10 — validated BEFORE anything is written, and the reason is returned. Nothing is
+      // persisted on failure, which is why the validation happens here and not inside the save.
+      const shapeError = validateWorkflowShape(candidate);
+      if (shapeError) return reply(422, { error: shapeError });
+      const saved = await saveWorkflowWithVersion(candidate);
+      await logActivity(orgId, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: "WORKFLOW_SAVE",
+        summary: `Saved "${saved.name}" v${saved.version} as ${saved.status}`,
+        details: {
+          workflowId: saved.id,
+          version: saved.version,
+          status: saved.status,
+          requiredSurfaces: requiredSurfacesFor(saved),
+        },
+      });
+      return reply(existing ? 200 : 201, saved);
+    }
+
+    /* --------------------------------- 14.3 publish, unpublish, duplicate, archive ------------ */
+    if (route === "POST /workflows/{id}/publish") {
+      const workflow = await resolveWorkflow(e.pathParameters?.id, p, "staff publishing a workflow");
+      // Resolved before the guard so the refusal for another organization's identifier is a 404 from
+      // the read rather than a 403 that would confirm the identifier exists somewhere.
+      if (!workflow) return reply(404, { error: "Not found" });
+      {
+        // Q-1 held at its conservative answer: `workflow:publish` is staff-only in ROLE_GRANTS, so a
+        // customer WORKFLOW_BUILDER is refused here and the interface says an AmazFlow contact
+        // publishes rather than offering a control that 403s. Resolving Q-1 the other way changes one
+        // matrix entry and one label, not this route.
+        const denied = await guardIn(p, "workflow:publish", { orgId: workflow.tenantId });
+        if (denied) return denied;
+      }
+      if (workflow.status === "active")
+        return reply(409, { error: "This workflow is already published" });
+      // 13.12/13.13 — the connection check is RE-RUN here rather than trusted from the draft, because
+      // a connection can be revoked between authoring and publishing.
+      const gap = await managedConnectionGapFor(workflow);
+      if (gap)
+        return reply(409, {
+          error: `Step "${gap.stepId}" runs in the AmazFlow-hosted browser and ${gap.reason}. Sign that connection in before publishing.`,
+        });
+      const previous = workflow.status;
+      const saved = await saveWorkflowWithVersion({
+        ...workflow,
+        status: "active",
+        version: (Number(workflow.version) || 0) + 1,
+        publishedAt: now(),
+        publishedBy: a.userId,
+      });
+      await logActivity(workflow.tenantId, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: WORKFLOW_TRANSITION_AUDIT.active,
+        summary: `Published "${saved.name}" v${saved.version}`,
+        details: { workflowId: saved.id, version: saved.version, previousStatus: previous },
+      });
+      return reply(200, saved);
+    }
+    if (route === "POST /workflows/{id}/unpublish") {
+      const workflow = await resolveWorkflow(e.pathParameters?.id, p, "staff unpublishing a workflow");
+      if (!workflow) return reply(404, { error: "Not found" });
+      {
+        // Unpublishing is the same authority as publishing: whoever decides a workflow may run against
+        // a customer's real systems is whoever decides it may stop.
+        const denied = await guardIn(p, "workflow:publish", { orgId: workflow.tenantId });
+        if (denied) return denied;
+      }
+      if (workflow.status !== "active")
+        return reply(409, { error: "This workflow is not published, so there is nothing to unpublish" });
+      const saved = await saveWorkflowWithVersion({
+        ...workflow,
+        status: "draft",
+        version: (Number(workflow.version) || 0) + 1,
+        unpublishedAt: now(),
+      });
+      await logActivity(workflow.tenantId, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: WORKFLOW_TRANSITION_AUDIT.draft,
+        summary: `Returned "${saved.name}" to draft, so it can no longer run`,
+        details: { workflowId: saved.id, version: saved.version },
+      });
+      return reply(200, saved);
+    }
+    if (route === "POST /workflows/{id}/duplicate") {
+      const workflow = await resolveWorkflow(e.pathParameters?.id, p, "staff duplicating a workflow");
+      if (!workflow) return reply(404, { error: "Not found" });
+      {
+        const denied = await guardIn(p, "workflow:create", { orgId: workflow.tenantId });
+        if (denied) return denied;
+      }
+      // 13.15 — a NEW identifier and status draft. Deliberately not a copy of the publish state: a
+      // duplicate that arrived published would put an unreviewed copy in front of real systems.
+      const copy = {
+        ...workflow,
+        id: `wf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: `${workflow.name} (copy)`,
+        status: "draft",
+        version: 1,
+        createdAt: now(),
+        createdBy: a.userId,
+        updatedAt: now(),
+        duplicatedFromWorkflowId: workflow.id,
+        duplicatedFromVersion: workflow.version || null,
+      };
+      delete copy.publishedAt;
+      delete copy.publishedBy;
+      delete copy.unpublishedAt;
+      const shapeError = validateWorkflowShape(copy);
+      if (shapeError) return reply(422, { error: shapeError });
+      const saved = await saveWorkflowWithVersion(copy);
+      await logActivity(workflow.tenantId, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: "WORKFLOW_DUPLICATED",
+        summary: `Duplicated "${workflow.name}" as a new draft`,
+        details: { workflowId: saved.id, sourceWorkflowId: workflow.id, sourceVersion: workflow.version || null },
+      });
+      return reply(201, saved);
+    }
+    if (route === "POST /workflows/{id}/archive") {
+      const workflow = await resolveWorkflow(e.pathParameters?.id, p, "staff archiving a workflow");
+      if (!workflow) return reply(404, { error: "Not found" });
+      {
+        const denied = await guardIn(p, "workflow:archive", { orgId: workflow.tenantId });
+        if (denied) return denied;
+      }
+      if (workflow.status === "archived")
+        return reply(409, { error: "This workflow is already archived" });
+      const previous = workflow.status;
+      const saved = await saveWorkflowWithVersion({
+        ...workflow,
+        status: "archived",
+        version: (Number(workflow.version) || 0) + 1,
+        archivedAt: now(),
+        archivedBy: a.userId,
+      });
+      await logActivity(workflow.tenantId, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: WORKFLOW_TRANSITION_AUDIT.archived,
+        summary: `Archived "${saved.name}", so it can no longer run`,
+        details: { workflowId: saved.id, version: saved.version, previousStatus: previous },
+      });
+      return reply(200, saved);
     }
     if (route === "GET /organizations") {
       {
@@ -6028,27 +6542,78 @@ exports.handler = async (e) => {
       });
       return reply(200, organizationFor(next, p));
     }
+    /* --------------------------------------- 14.9 the plain-language entry point -------------- */
+    //
+    // Opened to a customer builder (`workflow:create`) rather than staying `internal:workflow_author`,
+    // because requirement 14.3 is about the person building the workflow and design.md's own sequence
+    // diagram names that person "Builder (customer or staff)". What did NOT change is the rule the
+    // requirement actually turns on: generation produces a DEFINITION, the definition is validated
+    // against the same schema every other write uses, and execution is the deterministic state machine
+    // in packages/engine. No run consults a model for control flow, here or anywhere.
     if (route === "POST /workflows/generate") {
-      {
-        const denied = await guardIn(p, "internal:workflow_author", { orgId: a.tenantId });
-        if (denied) return reply(denied.statusCode, { error: "Only AmazFlow super admins generate workflows", code: "FORBIDDEN" });
-      }
-      const body = JSON.parse(e.body || "{}");
-      if (!body.sop || typeof body.sop !== "string")
-        return reply(400, { error: "A sop description is required" });
+      let body;
       try {
-        const draft = await generateWorkflowFromSop(
-          body.sop,
-          body.tenantId || a.tenantId || "amazflow",
-        );
-        return reply(200, draft);
+        body = JSON.parse(e.body || "{}");
+      } catch {
+        return reply(400, { error: "The request body is not valid JSON" });
+      }
+      // Staff may target another organization explicitly; a customer's target is its OWN organization
+      // and `body.tenantId` is not consulted at all. This is the same asymmetry as POST /workflows,
+      // written out rather than left to the reader.
+      const targetOrg = p.isStaff ? String(body.tenantId || a.tenantId || "amazflow") : p.orgId;
+      {
+        const denied = await guardIn(p, "workflow:create", { orgId: targetOrg });
+        if (denied) return denied;
+      }
+      if (!body.sop || typeof body.sop !== "string" || !body.sop.trim())
+        return reply(400, { error: "Describe the process you want, in your own words" });
+      let candidate;
+      try {
+        candidate = await generateWorkflowFromSop(body.sop, targetOrg);
       } catch (err) {
-        return reply(422, {
-          error:
-            err.message ||
-            "Could not generate a workflow from that description",
+        // 14.5 — a candidate that failed validation is 422 with the reason and NOTHING persisted. A
+        // generator that could not be reached is 503, which is a statement about AmazFlow rather than
+        // about the description the person wrote.
+        return reply(err && err.status === 503 ? 503 : 422, {
+          error: (err && err.message) || "Could not generate a workflow from that description",
         });
       }
+      // Identity is imposed rather than taken from the model's output: a generated definition naming
+      // another organization's tenantId would otherwise be persisted into it.
+      candidate = {
+        ...candidate,
+        tenantId: targetOrg,
+        status: "draft",
+        version: 1,
+        createdAt: now(),
+        createdBy: a.userId,
+        generatedFromDescription: true,
+      };
+      // Validated a second time, after the identity fields were imposed. The generator already
+      // validated its own output, but what is about to be PERSISTED is this object, not that one.
+      const shapeError = validateWorkflowShape(candidate);
+      if (shapeError) return reply(422, { error: shapeError });
+      // 14.6/14.7 — persisted immediately as a draft and returned editable, so the draft survives a
+      // reload. A generated definition held only in the browser is lost by the first refresh, and the
+      // person has no way to know that until it happens.
+      const saved = await saveWorkflowWithVersion(candidate);
+      // 14.10 — the generation is its own audit event, distinct from the save. "This workflow was
+      // drafted from a description" is a fact a reviewer needs and cannot recover from a WORKFLOW_SAVE.
+      await logActivity(targetOrg, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: "WORKFLOW_GENERATED_FROM_SOP",
+        summary: `Drafted "${saved.name}" from a plain-language description`,
+        details: {
+          workflowId: saved.id,
+          version: saved.version,
+          // The description's LENGTH, not the description. It is the customer's own process
+          // documentation and does not belong in an audit summary that other people read.
+          descriptionLength: body.sop.trim().length,
+          steps: (saved.steps || []).length,
+        },
+      });
+      return reply(201, saved);
     }
     if (route === "GET /leads") {
       {
@@ -6088,10 +6653,29 @@ exports.handler = async (e) => {
       if (!workflow) return reply(404, { error: "Workflow not found" });
       // Assignment is now step 6 of can(), applied by the workflow:run guard below. This copy
       // compared the COARSE group against assignedRoles, which a fine role cannot satisfy.
-      if (workflow.status !== "active")
+      //
+      // 13.4 — `active` and `testing` are the two runnable statuses. Everything else is a state
+      // conflict, and the message names the status so the person is not left guessing which of draft,
+      // archived or a legacy `paused` record they are looking at.
+      if (!isRunnableWorkflowStatus(workflow.status))
         return reply(409, {
-          error: "This workflow is not published for execution",
+          error:
+            workflow.status === "draft"
+              ? "This workflow is still a draft, so it cannot run yet."
+              : "This workflow is archived, so it can no longer run.",
         });
+      // 13.5 — a testing-status workflow is runnable ONLY by someone who can edit or publish it. It
+      // exists so a builder can try a workflow against real systems before anyone else can, so
+      // admitting an operator would defeat the whole point of the status.
+      const isTestRun = workflow.status === "testing";
+      if (
+        isTestRun &&
+        !can(p, "workflow:edit", { orgId: workflow.tenantId }).allow &&
+        !can(p, "workflow:publish", { orgId: workflow.tenantId }).allow
+      ) {
+        const denied = await guardIn(p, "workflow:edit", { orgId: workflow.tenantId });
+        if (denied) return denied;
+      }
       // Organization-level gates, checked before anything else because being paused is not a
       // problem an operator can fix by plugging in an agent.
       // Starting a run is a permission, and it carries the engine's assignment rule with it: step 6
@@ -6142,7 +6726,7 @@ exports.handler = async (e) => {
         return reply(400, {
           error: "Tell us what you need done before starting.",
         });
-      return reply(201, await runWorkflow(workflow, body, a));
+      return reply(201, await runWorkflow(workflow, body, a, { isTest: isTestRun }));
     }
     // Sign out everywhere: revokes every session this user holds at the identity provider, not
     // just the one that made the call. Self-service, so no role check beyond having a session --

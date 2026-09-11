@@ -367,3 +367,41 @@ test("the MFA setup route is honestly disabled and accepts no input", () => {
 test("legacy account settings now resolve to the live personal security route", () => {
   assert.equal(pathToView(CUSTOMER_ROUTE_TABLE, "/console/account/").routeId, "settings-security");
 });
+
+
+test("workflow statuses render through the shared label mapping, not as stored values", () => {
+  // Task 14.1 / requirements 13.2 and 13.3. Two claims, and they fail differently.
+  //
+  // `active` shown as "active" is a surface speaking the database's language: the product calls that
+  // state Published everywhere else, so the person reading the list has to learn a second vocabulary
+  // for the same thing.
+  //
+  // `paused` is worse. It is a RETIRED value that nothing writes any more, so a workflow displaying
+  // "Paused" invites somebody to look for the control that un-pauses it. There is none, and there never
+  // will be. It has to read as Archived, which is a state they can understand and act on.
+  const html = renderToStaticMarkup(
+    views.WorkflowsView({
+      principal: principal("ORG_ADMIN"),
+      navigate: () => {},
+      client: fakeClient,
+      session: storedSession,
+      refresh: async () => {},
+      slots: {
+        ...slotsIn("ready"),
+        workflows: slot("ready", [
+          { id: "wf_live", name: "Offboarding", status: "active" },
+          { id: "wf_old", name: "Retired process", status: "paused" },
+          { id: "wf_try", name: "Being tried out", status: "testing" },
+        ]),
+      },
+    }) as never,
+  );
+  assert.match(html, /Published/);
+  assert.match(html, /Testing/);
+  assert.match(html, /Archived/);
+  assert.doesNotMatch(html, />active</, "the stored value must not reach the screen");
+  assert.doesNotMatch(html, /Paused/, "the retired value must not be presented as an actionable state");
+  // And the label is not the whole answer: what the status means for whether work can start is stated
+  // alongside it, so nobody has to infer that Draft is not runnable.
+  assert.match(html, /It cannot run/);
+});
