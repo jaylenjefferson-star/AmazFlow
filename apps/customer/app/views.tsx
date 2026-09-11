@@ -429,7 +429,10 @@ export function ExceptionsView({ slots, navigate }: ViewProps) {
 }
 
 export function AgentsView({ slots }: ViewProps) {
-  const agents = list<{ id: string; name: string; connectionStatus?: string }>(slots, "agents");
+  const agents = list<{
+    id: string; name?: string; agentType?: string; platform?: string; version?: string;
+    connectionStatus?: string; capabilities?: string[]; permissions?: string[]; lastSeenAt?: string;
+  }>(slots, "agents");
   return (
     <Page title="Agents" lead="The browsers and computers AmazFlow can act through.">
       <Resource
@@ -437,18 +440,7 @@ export function AgentsView({ slots }: ViewProps) {
         emptyTitle="No agents connected"
         emptyBody="Install the AmazFlow extension or desktop app to let a workflow act on your systems."
       >
-        {(value) => (
-          <ul className="ops-list">
-            {value.map((agent) => (
-              <li key={agent.id}>
-                <span>{agent.name}</span>
-                <Pill tone={agent.connectionStatus === "connected" ? "good" : "bad"}>
-                  {agent.connectionStatus ?? "unknown"}
-                </Pill>
-              </li>
-            ))}
-          </ul>
-        )}
+        {(value) => <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Agent</th><th>Surface</th><th>Platform</th><th>Version</th><th>Connectivity</th><th>Capabilities</th><th>Permissions</th><th>Last seen</th></tr></thead><tbody>{value.map((agent) => <tr key={agent.id}><td>{agent.name ?? agent.id}</td><td>{agent.agentType === "DESKTOP_AGENT" ? "Desktop App" : agent.agentType === "CHROME_EXTENSION" ? "Chrome Extension" : "Not recorded"}</td><td>{agent.platform ?? "Not recorded"}</td><td>{agent.version ?? "Not recorded"}</td><td><Pill tone={agent.connectionStatus === "connected" ? "good" : agent.connectionStatus === "revoked" ? "bad" : "waiting"}>{agent.connectionStatus ?? "Not recorded"}</Pill></td><td>{agent.capabilities?.length ? agent.capabilities.join(", ") : "Not recorded"}</td><td>{agent.permissions?.length ? agent.permissions.join(", ") : "Not recorded"}</td><td>{agent.lastSeenAt ? relativeTime(agent.lastSeenAt) : "Not recorded"}</td></tr>)}</tbody></table></div>}
       </Resource>
     </Page>
   );

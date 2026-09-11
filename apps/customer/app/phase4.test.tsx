@@ -569,6 +569,21 @@ test("refinement is identity-stable when nothing changed, so polling cannot chur
   assert.deepEqual(refinePrincipal(fromClaims, { teamIds: ["team_1"] }).teamIds, ["team_1"]);
 });
 
+test("agents show derived connectivity and the two execution surfaces without invented values", () => {
+  const html = render(views.AgentsView, props({
+    agents: slot([
+      { id: "chrome_1", agentType: "CHROME_EXTENSION", platform: "macOS", version: "1.4.0", connectionStatus: "connected", capabilities: ["CLICK"], permissions: [], lastSeenAt: new Date().toISOString() },
+      { id: "desktop_1", agentType: "DESKTOP_AGENT", platform: "macOS", version: "2.0.0", connectionStatus: "offline", capabilities: ["desktop.click"], permissions: ["accessibility"], lastSeenAt: null },
+    ]),
+  }));
+  assert.match(html, /Chrome Extension/);
+  assert.match(html, /Desktop App/);
+  assert.match(html, /connected/);
+  assert.match(html, /offline/);
+  assert.match(html, /accessibility/);
+  assert.match(html, /Not recorded/, "a missing heartbeat or capability must not become a fake value");
+});
+
 /* ======================================================= 4. the markup is styled, not invented = */
 
 test("every class name the customer surface renders has a rule in the shared stylesheet", () => {

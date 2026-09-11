@@ -1064,10 +1064,13 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
 
 - [ ] 17. Phase 7 — Execution surfaces and agents
 
-  - [ ] 17.1 Build the agents view on heartbeat-derived status
+  - [x] 17.1 Build the agents view on heartbeat-derived status
     - Exactly two execution surfaces; connectivity derived from heartbeat recency against the two-minute
       interval with no separately stored flag; show type, platform, version, advertised capabilities, and
       reported operating-system permissions for desktop agents
+    - The customer table now renders the derived connection status, Chrome Extension and Desktop App
+      surfaces, platform, version, advertised capabilities, reported permissions, and the last-seen
+      time, with absent telemetry stated as "Not recorded".
     - _Requirements: 15.1, 15.2, 15.3_
 
   - [ ] 17.2 Wire agent authorization, credential exchange, re-registration, and revocation with audit
