@@ -585,6 +585,26 @@ test("agents show derived connectivity and the two execution surfaces without in
   assert.match(html, /Not recorded/, "a missing heartbeat or capability must not become a fake value");
 });
 
+test("the owner onboarding checklist adapts to required surfaces and stays hidden from non-admin roles", () => {
+  const slots = {
+    organization: slot({ onboardingStatus: "in_progress" }),
+    workflows: slot([{ id: "wf_1", status: "draft", steps: [
+      { type: "action", provider: "browser", executionTarget: "browser_extension" },
+      { type: "action", provider: "desktop", executionTarget: "desktop_agent" },
+    ] }]),
+    agents: slot([{ agentType: "CHROME_EXTENSION", connectionStatus: "connected" }]),
+    connections: slot([]),
+    runs: slot([]),
+  };
+  const owner = render(views.HomeView, props(slots, "ORG_OWNER"));
+  assert.match(owner, /Getting started/);
+  assert.match(owner, /Connect the Chrome Extension/);
+  assert.match(owner, /Connect the Desktop App/);
+  assert.match(owner, /Nothing is required from you for this step/);
+  const operator = render(views.HomeView, props(slots, "OPERATOR"));
+  assert.doesNotMatch(operator, /Getting started/);
+});
+
 test("only an approver is offered the server-verified approval controls", () => {
   const runs = slot([{ id: "run_waiting", status: "WAITING_APPROVAL", currentStepId: "approval_step" }]);
   const approver = render(views.ApprovalsView, props({ runs }, "APPROVER"));

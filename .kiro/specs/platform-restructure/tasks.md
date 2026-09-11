@@ -1258,10 +1258,13 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       checklist transitions are audited
     - _Requirements: 24.19, 24.20, 24.24_
 
-  - [ ] 22.5 Render the adaptive checklist on the customer home view
+  - [x] 22.5 Render the adaptive checklist on the customer home view
     - Shown to owners and administrators; includes only the steps the organization actually requires, derived
       from the execution surfaces its workflows require; a step awaiting AmazFlow is labelled as requiring
       nothing from the customer
+    - The customer home now derives Chrome Extension, Desktop App, and connection steps from saved workflow
+      action targets; it is visible only to organization owners and administrators, and clearly identifies
+      publishing as an AmazFlow-owned step until the workflow is published.
     - _Requirements: 24.16, 24.17, 24.18_
 
   - [ ] 22.6 Render the same onboarding record at staff depth with notes and internal owner
