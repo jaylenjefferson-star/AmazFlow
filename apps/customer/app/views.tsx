@@ -277,7 +277,7 @@ function OnboardingChecklist({
   return <Panel title="Getting started" sub={onboarding?.status ? `Onboarding status: ${onboarding.status.replace(/_/g, " ")}` : organization?.onboardingStatus ? `Onboarding status: ${organization.onboardingStatus.replace(/_/g, " ")}` : "Complete the steps your organization actually needs."}>
     <div className="ops-col ops-gap-sm">
       <p className="ops-muted">{completed} of {steps.length} steps complete. Steps appear only when the workflow definitions require them.</p>
-      <ul className="ops-list">{visibleSteps.map((step) => <li key={step.label}><span><strong>{step.label}</strong><br /><span className="ops-muted">{step.skipped ? "Skipped by your team." : step.detail}</span></span>{step.done ? <Pill tone="good">Complete</Pill> : step.skipped ? <Pill tone="waiting">Skipped</Pill> : <button type="button" className="ops-button" onClick={() => void skip(step.key)}>Skip</button>}</li>)}</ul>
+      <ul className="ops-list">{visibleSteps.map((step) => <li key={step.label}><span><strong>{step.label}</strong><br /><span className="ops-muted">{step.skipped ? "Skipped by your team." : step.detail}</span></span>{step.done ? <Pill tone="good">Complete</Pill> : step.skipped ? <Pill tone="waiting">Skipped</Pill> : <button type="button" className="ops-btn" onClick={() => void skip(step.key)}>Skip</button>}</li>)}</ul>
     </div>
   </Panel>;
 }

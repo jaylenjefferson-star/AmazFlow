@@ -234,6 +234,48 @@ const staffOnly = () => [
 // here so that the completeness check above cannot be satisfied by silence.
 const specialCase = () => [
   {
+    route: "GET /organizations/{slug}/onboarding",
+    why:
+      "Onboarding depth is an internal staff surface. Customer callers receive only an error for " +
+      "either tenant, and the response cannot disclose the requested organization's onboarding state.",
+    async assertIt() {
+      const own = await call({
+        ...sessionEvent(A.principals.ORG_OWNER, "GET /organizations/{slug}/onboarding", {
+          pathParameters: { slug: A.tenantId },
+        }),
+      });
+      const foreign = await call({
+        ...sessionEvent(A.principals.ORG_OWNER, "GET /organizations/{slug}/onboarding", {
+          pathParameters: { slug: B.tenantId },
+        }),
+      });
+      assert.ok(own.status >= 400 && foreign.status >= 400, "customer onboarding reads are refused");
+      assert.ok(!leaksOrgB(own.body) && !leaksOrgB(foreign.body), "onboarding errors leak no tenant data");
+    },
+  },
+  {
+    route: "PUT /organizations/{slug}/onboarding",
+    why:
+      "Onboarding updates are an internal staff surface. Customer callers cannot update either " +
+      "tenant, and the response cannot disclose the requested organization's onboarding state.",
+    async assertIt() {
+      const own = await call({
+        ...sessionEvent(A.principals.ORG_OWNER, "PUT /organizations/{slug}/onboarding", {
+          pathParameters: { slug: A.tenantId },
+          body: { checklist: {} },
+        }),
+      });
+      const foreign = await call({
+        ...sessionEvent(A.principals.ORG_OWNER, "PUT /organizations/{slug}/onboarding", {
+          pathParameters: { slug: B.tenantId },
+          body: { checklist: {} },
+        }),
+      });
+      assert.ok(own.status >= 400 && foreign.status >= 400, "customer onboarding writes are refused");
+      assert.ok(!leaksOrgB(own.body) && !leaksOrgB(foreign.body), "onboarding errors leak no tenant data");
+    },
+  },
+  {
     route: "GET /organizations/{slug}/branding",
     why:
       "Deliberately unauthenticated for any slug (recorded as ISO-28). A sign-in page has to brand " +
