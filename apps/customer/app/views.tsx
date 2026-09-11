@@ -320,7 +320,7 @@ export function WorkflowsView({ slots, navigate, client, principal }: ViewProps)
 }
 
 export function RunsView({ slots, navigate }: ViewProps) {
-  const runs = list<{ id: string; status: string; startedAt?: string }>(slots, "runs");
+  const runs = list<{ id: string; status: string; workflowName?: string; workflowId?: string; createdAt?: string; startedAt?: string; isTest?: boolean }>(slots, "runs");
   return (
     <Page title="Runs" lead="Every run in your organization that you may see.">
       <Resource
@@ -336,7 +336,9 @@ export function RunsView({ slots, navigate }: ViewProps) {
                 <li key={run.id}>
                   <button type="button" onClick={() => navigate({ routeId: "runs", entityId: run.id })}>
                     <Pill tone={status.tone}>{status.label}</Pill>
-                    <span>{run.id}</span>
+                    <span>{run.workflowName ?? run.workflowId ?? run.id}</span>
+                    {run.isTest && <Pill tone="neutral">Test run</Pill>}
+                    {(run.startedAt ?? run.createdAt) && <span className="ops-muted">{relativeTime(run.startedAt ?? run.createdAt!)}</span>}
                   </button>
                 </li>
               );

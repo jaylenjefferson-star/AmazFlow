@@ -57,6 +57,7 @@ import {
   type ViewProps,
 } from "./views";
 import { WorkflowWorkspace } from "./workflow-workspace";
+import { RunWorkspace } from "./run-workspace";
 import {
   clientFor,
   principalOf,
@@ -244,7 +245,7 @@ function renderRoute(view: ResolvedView, props: ViewProps) {
     case "workflows":
       return view.entityId ? <WorkflowWorkspace key={view.entityId} {...props} workflowId={view.entityId} /> : <WorkflowsView {...props} />;
     case "runs":
-      return <RunsView {...props} />;
+      return view.entityId ? <RunWorkspace key={view.entityId} {...props} runId={view.entityId} /> : <RunsView {...props} />;
     case "tasks":
       return <TasksView {...props} />;
     case "approvals":

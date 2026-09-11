@@ -990,42 +990,56 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
 
 - [ ] 15. Phase 6 — Runs, status presentation, and evidence
 
-  - [ ] 15.1 Make the run status label mapping total and honest
+  - [x] 15.1 Make the run status label mapping total and honest
     - A label for every persisted status; running displayed as in progress; awaiting confirmation displayed
       as awaiting a human action; timed out given its own label rather than merged with failed; no queued
       state displayed, because a run is running from creation
+    - The shared mapping is exhaustive for the eight persisted statuses and renders an unexpected value
+      as "Unknown status", never as an invented queue.
     - _Requirements: 16.1, 16.2, 16.3, 16.4, 16.5_
 
-  - [ ] 15.2 Build the customer run list with permission-scoped rows
+  - [x] 15.2 Build the customer run list with permission-scoped rows
     - Own-records form of the read permission returns only runs the principal created
+    - The list consumes the policy-scoped run response and renders only returned workflow identity,
+      customer status, start time, and test-run markers.
     - _Requirements: 16.6, 16.7_
 
-  - [ ] 15.3 Render run detail from the shared run-narrative model
+  - [x] 15.3 Render run detail from the shared run-narrative model
     - Step progression including the projected remaining path, timeline from recorded audit entries with
       elapsed intervals, per-step tool calls, decision records with confidence against the configured
       threshold, gates encountered, and the scopes of issued grants
+    - RunWorkspace loads the pinned workflow version and composes progression, timeline, tool calls,
+      decisions, gates, and grant scopes exclusively through the shared run model.
     - _Requirements: 16.8_
 
-  - [ ] 15.4 Render per-step evidence
+  - [x] 15.4 Render per-step evidence
     - Which agent acted, under which grant identifier, on which page or application, and whether the
       platform independently verified the result
+    - The evidence panel renders the recorded agent, grant identifier, page/application, and independent
+      verification outcome per completed step; absent attributes read as "Not recorded".
     - _Requirements: 16.9, 31.13_
 
-  - [ ] 15.5 Render a plain-language explanation of why a run ended in its current state
+  - [x] 15.5 Render a plain-language explanation of why a run ended in its current state
+    - The shared diagnosis is rendered first, including reconciliation guidance where retry would be unsafe.
     - _Requirements: 16.10_
 
-  - [ ] 15.6 Keep absent execution telemetry honest
+  - [x] 15.6 Keep absent execution telemetry honest
     - State that retry attempts are not recorded rather than displaying a count; state that recordings are
       not available rather than presenting an empty player
+    - The surface explicitly says retry attempts are not recorded and recordings are not available.
     - _Requirements: 16.11, 16.12, 29.12, 33.7_
 
-  - [ ] 15.7 Wire cancellation and pre-action confirmation
+  - [x] 15.7 Wire cancellation and pre-action confirmation
     - Cancel a run in the cancellable set and record it in the run's audit entries; respond with a state
       conflict for a terminal run; record a granted confirmation and resume the run
+    - Customer controls are permission-filtered and call the inventoried cancellation and confirmation
+      routes; the control plane remains authoritative for state conflicts and own-record scope.
     - _Requirements: 16.13, 16.14, 16.15_
 
-  - [ ] 15.8 Make run detail reachable by direct link across a hard reload
+  - [x] 15.8 Make run detail reachable by direct link across a hard reload
     - Resolves the shareable-run-link limitation the previous customer console documented
+    - The /runs/:id route resolves through the customer route table and the static-hosting deep-link
+      rewrite already committed in Phase 3.
     - _Requirements: 16.16, 1.6_
 
   - [ ] 15.9 Property tests for run status transition validity (Property 3) with fast-check

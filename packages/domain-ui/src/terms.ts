@@ -78,7 +78,10 @@ export const isTerminal = (status: string) =>
 export function runStatus(status: string, register: LabelRegister = "operator") {
   const labels = register === "customer" ? CUSTOMER_RUN_STATUS_LABEL : RUN_STATUS_LABEL;
   return {
-    label: labels[status] ?? humanize(status),
+    // A run becomes RUNNING immediately; there is no queued state in the engine. More generally, an
+    // unrecognised persisted value is not a product state we can name honestly, so do not humanize it
+    // into a plausible-looking label (for example, QUEUED -> "Queued").
+    label: labels[status] ?? "Unknown status",
     tone: RUN_STATUS_TONE[status] ?? "neutral",
   };
 }

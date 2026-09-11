@@ -96,6 +96,16 @@ export const generateWorkflow = (): Endpoint => ({
   path: "/workflows/generate",
 });
 
+/** Run lifecycle actions. The server re-checks both the state and the caller's own-record scope. */
+export const cancelRun = (id: string): Endpoint => ({
+  route: "POST /runs/{id}/cancel",
+  path: `/runs/${e(id)}/cancel`,
+});
+export const confirmRunAction = (id: string, stepId: string): Endpoint => ({
+  route: "POST /runs/{id}/confirmations/{stepId}/confirm",
+  path: `/runs/${e(id)}/confirmations/${e(stepId)}/confirm`,
+});
+
 /** Personal settings (task 11.14). The target account always comes from the verified session. */
 export const saveOwnProfile = (): Endpoint => ({ route: "PUT /me/profile", path: "/me/profile" });
 export const saveOwnPreferences = (): Endpoint => ({
@@ -164,6 +174,8 @@ export const ALL_ENDPOINTS: readonly Endpoint[] = [
   saveWorkflowDraft("new"),
   saveWorkflowDraft("wf_1"),
   generateWorkflow(),
+  cancelRun("run_1"),
+  confirmRunAction("run_1", "step_1"),
   saveOwnProfile(),
   saveOwnPreferences(),
   ownPasswordChanged(),
