@@ -37,8 +37,8 @@ applications:
           - '**/*'
       cache:
         paths:
-          - ../../node_modules/**/*
-          - ../../.pnpm-store/**/*
+          - node_modules/**/*
+          - .pnpm-store/**/*
 
   - appRoot: apps/customer
     frontend:
@@ -59,8 +59,8 @@ applications:
           - '**/*'
       cache:
         paths:
-          - ../../node_modules/**/*
-          - ../../.pnpm-store/**/*
+          - node_modules/**/*
+          - .pnpm-store/**/*
 
   - appRoot: apps/internal
     frontend:
@@ -81,5 +81,5 @@ applications:
           - '**/*'
       cache:
         paths:
-          - ../../node_modules/**/*
-          - ../../.pnpm-store/**/*
+          - node_modules/**/*
+          - .pnpm-store/**/*
