@@ -1479,7 +1479,9 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
 
 - [ ] 27. Phase 14 — Full verification before deployment
 
-  - [ ] 27.1 Run the complete suite as the cutover gate with no skipped tests
+  - [x] 27.1 Run the complete suite as the cutover gate with no skipped tests
+    - Rebuilt the browser and desktop agent artifacts, then ran the complete workspace suite successfully:
+      application, package, control-plane, inventory, guardrail, behaviour, property, and parity tests.
     - Two-organization isolation, all six roles, both agent surfaces, all webhook cases, all six correctness
       properties, all preservation guardrails
     - _Requirements: 34.21, 34.1, 34.2_
