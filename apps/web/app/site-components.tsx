@@ -5,11 +5,14 @@ import { useEffect, useState } from "react";
 
 export function LogoMark({ size = 20 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M4.5 18.5V14.8Q4.5 11.8 7.5 11.8H14Q17 11.8 17 8.8V5.2" stroke="#1d211d" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx="4.5" cy="19.8" r="2.4" fill="#1d211d" />
-      <circle cx="17" cy="4" r="2.4" fill="#1d211d" />
-    </svg>
+    <img
+      src="/brand/amazflow-icon.png"
+      alt=""
+      width={size}
+      height={size}
+      aria-hidden="true"
+      style={{ width: size, height: size, display: "block" }}
+    />
   );
 }
 
@@ -17,7 +20,7 @@ export function Logo() {
   return (
     <Link className="site-logo" href="/" aria-label="AmazFlow home">
       <span><LogoMark /></span>
-      <b>AmazFlow</b>
+      <b>Amaz<span className="brand-flow">Flow</span></b>
     </Link>
   );
 }

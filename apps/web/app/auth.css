@@ -10,7 +10,7 @@
   .auth-left { display: flex; }
 }
 .auth-left .auth-brand { display: flex; align-items: center; gap: 10px; font: 800 20px var(--font-display); color: var(--cream); text-decoration: none; margin-bottom: var(--space-6); }
-.auth-left .auth-brand > span { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: var(--coral); }
+.auth-left .auth-brand > span { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; }
 .auth-left h1 { font: 800 clamp(34px, 4vw, 46px)/1.28 var(--font-display); letter-spacing: -.03em; margin: 0 0 20px; max-width: 480px; }
 .auth-left h1 mark { background: var(--auth-accent, var(--mint)); color: var(--ink); padding: 3px 8px 5px; border-radius: 6px; font-style: normal; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 /* Set only when an org's own branding is loaded (see login/page.tsx's ?org= handling) --
@@ -24,7 +24,7 @@
 .auth-right { display: flex; align-items: center; justify-content: center; padding: var(--space-5) var(--space-4); }
 .auth-card { width: min(400px, 100%); }
 .auth-card-mobile-brand { display: flex; align-items: center; gap: 10px; font: 800 18px var(--font-display); color: var(--ink); text-decoration: none; margin-bottom: var(--space-5); }
-.auth-card-mobile-brand > span { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; background: var(--coral); }
+.auth-card-mobile-brand > span { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; }
 @media (min-width: 900px) {
   .auth-card-mobile-brand { display: none; }
 }
@@ -37,10 +37,10 @@
 .auth-field input { font: inherit; font-size: 15px; padding: 12px 14px; border: 1.5px solid var(--line); border-radius: 12px; min-height: 46px; width: 100%; background: var(--paper); color: var(--ink); }
 .auth-field input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; border-color: var(--ink); }
 
-.auth-error { background: #fff0e8; border: 1.5px solid var(--coral-dark); color: var(--ink); border-radius: 12px; padding: 12px 14px; font-size: 13px; font-weight: 600; margin-bottom: var(--space-3); line-height: 1.5; }
+.auth-error { background: var(--danger-soft); border: 1.5px solid var(--danger-dark); color: var(--ink); border-radius: 12px; padding: 12px 14px; font-size: 13px; font-weight: 600; margin-bottom: var(--space-3); line-height: 1.5; }
 .auth-success { background: var(--mint); border: 1.5px solid var(--ink); color: var(--ink); border-radius: 12px; padding: 12px 14px; font-size: 13px; font-weight: 700; margin-bottom: var(--space-3); line-height: 1.5; }
 
-.auth-submit { width: 100%; min-height: 48px; border-radius: 12px; border: 1.5px solid var(--ink); background: var(--coral); color: var(--ink); font-weight: 800; font-size: 15px; cursor: pointer; box-shadow: 3px 3px 0 var(--ink); margin-top: 4px; transition: transform .1s; }
+.auth-submit { width: 100%; min-height: 48px; border-radius: 12px; border: 1.5px solid var(--ink); background: var(--accent); color: var(--ink); font-weight: 800; font-size: 15px; cursor: pointer; box-shadow: 3px 3px 0 var(--ink); margin-top: 4px; transition: transform .1s; }
 .auth-submit:disabled { opacity: .6; cursor: wait; }
 .auth-submit:not(:disabled):active { transform: translateY(2px); box-shadow: 1px 1px 0 var(--ink); }
 
@@ -52,7 +52,7 @@
 .auth-footer-links a:hover { text-decoration: underline; }
 
 .auth-status-card { width: min(440px, 100%); background: var(--paper); border: 1.5px solid var(--ink); border-radius: 24px; padding: 40px 32px; box-shadow: 8px 8px 0 var(--ink); text-align: center; }
-.auth-status-icon { width: 52px; height: 52px; margin: 0 auto 20px; display: grid; place-items: center; border-radius: 16px; background: var(--coral); }
+.auth-status-icon { width: 52px; height: 52px; margin: 0 auto 20px; display: grid; place-items: center; border-radius: 16px; }
 .auth-status-card h1 { font: 800 clamp(24px, 4vw, 30px)/1.25 var(--font-display); margin: 0 0 12px; letter-spacing: -.02em; }
 .auth-status-card p { color: var(--muted); line-height: 1.55; font-size: 15px; margin: 0 0 24px; }
 .auth-standalone { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: var(--cream); }

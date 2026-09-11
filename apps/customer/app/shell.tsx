@@ -77,7 +77,7 @@ export function Shell({
       <aside className="ops-sidebar">
         <div className="ops-sidebar-head">
           <span className="ops-logo" aria-hidden="true">
-            A
+            <img src="/brand/amazflow-icon.png" alt="" />
           </span>
           <span className="ops-wordmark">
             <b>AmazFlow</b>

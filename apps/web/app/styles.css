@@ -1,7 +1,7 @@
 /* Fonts are self-hosted via next/font in app/layout.tsx -- see the comment there. There is
    deliberately no @import to fonts.googleapis.com: it leaked every visitor's IP to a third party
    and serialised the font request behind this stylesheet. */
-:root{color-scheme:light;--ink:#1d211d;--cream:#f8f5ec;--paper:#fffdf7;--coral:#ff765c;--coral-dark:#e5523a;--mint:#bde3cc;--blue:#c7d6ff;--yellow:#f3d97f;--line:#dcd7c9;--muted:#565b54;--font-body:var(--font-dm-sans),ui-sans-serif,system-ui,sans-serif;--font-display:var(--font-manrope),ui-sans-serif,system-ui,sans-serif;--space-1:8px;--space-2:12px;--space-3:16px;--space-4:24px;--space-5:32px;--space-6:48px;--space-7:64px;--space-8:96px;
+:root{color-scheme:light;--ink:#14162b;--cream:#f6f6fb;--paper:#fffffe;--accent:#4f46e5;--accent-dark:#3730a6;--accent-2:#9333ea;--brand-gradient:linear-gradient(135deg,#1ea7ff 0%,#4f46e5 45%,#9333ea 75%,#d626c9 100%);--danger:#dc2626;--danger-dark:#b91c1c;--danger-soft:#fdecec;--mint:#bde3cc;--blue:#c7d6ff;--yellow:#f3d97f;--line:#dcdcec;--muted:#54586b;--font-body:var(--font-dm-sans),ui-sans-serif,system-ui,sans-serif;--font-display:var(--font-manrope),ui-sans-serif,system-ui,sans-serif;--space-1:8px;--space-2:12px;--space-3:16px;--space-4:24px;--space-5:32px;--space-6:48px;--space-7:64px;--space-8:96px;
 /* Motion. One easing curve for the whole site: decelerating, so movement settles rather than
    stopping dead. The browser default (ease) is symmetrical and reads as mechanical at these
    short durations. */
@@ -10,7 +10,7 @@
    Pairing each one with a faint ambient shadow keeps that character but lets the element sit in
    the page instead of floating on top of it. */
 --shadow-ambient:0 1px 2px rgb(30 33 29 / .04),0 8px 24px rgb(30 33 29 / .06);
---shadow-lift:0 2px 4px rgb(30 33 29 / .05),0 14px 34px rgb(30 33 29 / .09)}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--cream);color:var(--ink);font-family:var(--font-body);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;font-synthesis-weight:none}a{color:inherit}button,input,textarea,select{font:inherit}::selection{background:var(--coral);color:#fff}[id]{scroll-margin-top:96px}
+--shadow-lift:0 2px 4px rgb(30 33 29 / .05),0 14px 34px rgb(30 33 29 / .09)}*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--cream);color:var(--ink);font-family:var(--font-body);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;font-synthesis-weight:none}a{color:inherit}button,input,textarea,select{font:inherit}::selection{background:var(--accent);color:#fff}[id]{scroll-margin-top:96px}
 :focus{outline:none}
-:focus-visible{outline:2px solid var(--coral-dark);outline-offset:2px;border-radius:4px}
+:focus-visible{outline:2px solid var(--accent-dark);outline-offset:2px;border-radius:4px}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}

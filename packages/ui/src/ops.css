@@ -37,12 +37,14 @@
   --text-3: #858c99;
   --text-inverse: #ffffff;
 
-  /* the one brand accent, used for selection/primary action only */
-  --accent: #d2452a;
-  --accent-hover: #b93a21;
-  --accent-soft: #fdf0ed;
-  --accent-line: #f3cfc6;
-  --accent-text: #a8331c;
+  /* the one brand accent, used for selection/primary action only. Sky-blue rather than the
+     marketing site's indigo -- --running and --ai already occupy the indigo/violet range in
+     this palette, and an accent that close to a status colour reads as a status colour. */
+  --accent: #0284c7;
+  --accent-hover: #0369a1;
+  --accent-soft: #eaf6fd;
+  --accent-line: #bae6fd;
+  --accent-text: #0369a1;
 
   /* status palette — the only other colour in the product */
   --good: #147a3d;
@@ -108,11 +110,12 @@ html[data-theme="dark"] .ops {
   --text-3: #697080;
   --text-inverse: #0b0c0f;
 
-  --accent: #ff7a5f;
-  --accent-hover: #ff8f78;
-  --accent-soft: #2a1611;
-  --accent-line: #4a2418;
-  --accent-text: #ff9b86;
+  --accent: #38bdf8;
+  --accent-hover: #7dd3fc;
+  --accent-soft: #0c2433;
+  --accent-line: #164e63;
+  --accent-text: #7dd3fc;
+
 
   --good: #4ec97d;
   --good-soft: #0f2418;
@@ -312,14 +315,15 @@ html[data-theme="light"] body { background: #f7f8f9; }
   width: 22px;
   height: 22px;
   border-radius: var(--r-sm);
-  background: var(--accent);
   display: grid;
   place-items: center;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
   flex-shrink: 0;
-  letter-spacing: -0.02em;
+}
+
+.ops-logo img {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .ops-wordmark {
@@ -339,6 +343,38 @@ html[data-theme="light"] body { background: #f7f8f9; }
   font-size: 10px;
   color: var(--text-3);
   letter-spacing: 0.02em;
+}
+
+.ops-sidebar-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 9px;
+  height: var(--topbar-h);
+  padding: 0 12px 0 14px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.ops-brand-mark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--text);
+}
+
+.ops-brand-mark::before {
+  content: "";
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  background-image: url("./brand/amazflow-icon.png");
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
 }
 
 .ops-sidebar-scroll {

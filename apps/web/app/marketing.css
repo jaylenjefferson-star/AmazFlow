@@ -7,27 +7,28 @@
    the shape looks chosen. Explicit <br> in the markup still wins, which is why the deliberate
    two-line headlines keep their breaks. */
 .section h2{font:800 clamp(38px,4.6vw,66px)/1.05 var(--font-display);letter-spacing:-.045em;margin:16px 0 40px;text-wrap:balance}
-.section h2 i{font-style:normal;color:var(--coral-dark)}
+.section h2 i{font-style:normal;color:var(--accent-dark)}
 .section-label{display:flex;align-items:center;gap:9px;font-size:10px;font-weight:800;letter-spacing:.16em;color:var(--muted)}
 .section-label.light{color:#c3c9c0}
 .kicker{display:flex;align-items:center;gap:9px;font-size:10px;font-weight:800;letter-spacing:.16em;color:var(--muted)}
-.kicker>span{width:9px;height:9px;border-radius:50%;background:var(--coral-dark);box-shadow:0 0 0 5px #e5523a1f}
+.kicker>span{width:9px;height:9px;border-radius:50%;background:var(--accent-dark);box-shadow:0 0 0 5px #4f46e51f}
 .skip-link{position:absolute;left:12px;top:-60px;z-index:100;background:var(--ink);color:#fff;padding:12px 18px;border-radius:10px;font-weight:800;font-size:13px;text-decoration:none;transition:top .15s ease}
 .skip-link:focus{top:12px}
 
 /* ===== Nav ===== */
-.site-nav{position:sticky;top:0;z-index:40;padding:16px 0;border-bottom:1px solid #ddd8ca;background:rgba(248,245,236,.94);backdrop-filter:blur(16px)}
+.site-nav{position:sticky;top:0;z-index:40;padding:16px 0;border-bottom:1px solid #e2e2ee;background:rgba(246,246,251,.94);backdrop-filter:blur(16px)}
 .nav-inner{display:flex;align-items:center;justify-content:space-between;gap:24px}
 .site-logo{display:flex;align-items:center;gap:10px;text-decoration:none;font:800 21px var(--font-display);color:var(--ink)}
-.site-logo>span{width:36px;height:36px;display:grid;place-items:center;border-radius:11px;background:var(--coral);box-shadow:inset 0 -2px 0 #c94531}
+.site-logo>span{width:36px;height:36px;display:grid;place-items:center;border-radius:11px}
+.brand-flow{background:var(--brand-gradient);-webkit-background-clip:text;background-clip:text;color:transparent}
 .nav-desktop{display:flex;gap:28px}
 .nav-desktop a{font-size:13px;font-weight:700;text-decoration:none;color:var(--ink)}
-.nav-desktop a:hover{color:var(--coral-dark)}
+.nav-desktop a:hover{color:var(--accent-dark)}
 .nav-actions{display:flex;align-items:center;gap:16px}
 .nav-signin{font-size:13px;font-weight:700;text-decoration:none;color:var(--ink)}
-.nav-signin:hover{color:var(--coral-dark)}
+.nav-signin:hover{color:var(--accent-dark)}
 .nav-demo.button.quiet{min-height:42px;padding:0 16px;font-size:12px}
-.nav-cta.button{min-height:42px;padding:0 16px;font-size:12px;background:var(--coral);border-color:var(--ink);color:var(--ink);box-shadow:3px 3px 0 var(--ink)}
+.nav-cta.button{min-height:42px;padding:0 16px;font-size:12px;background:var(--accent);border-color:var(--ink);color:var(--ink);box-shadow:3px 3px 0 var(--ink)}
 .nav-toggle{display:none;width:42px;height:42px;align-items:center;justify-content:center;border:1.5px solid var(--ink);border-radius:11px;background:var(--paper);cursor:pointer}
 .nav-toggle-bars{display:flex;flex-direction:column;gap:4px;width:18px}
 .nav-toggle-bars i{display:block;height:2px;border-radius:1px;background:var(--ink)}
@@ -53,7 +54,7 @@
 .button{display:inline-flex;align-items:center;justify-content:center;gap:14px;min-height:50px;padding:0 22px;border:1.5px solid var(--ink);border-radius:12px;text-decoration:none;font-weight:800;font-size:14px;letter-spacing:-.005em;color:var(--ink);background:transparent;cursor:pointer;transition:transform .22s var(--ease),box-shadow .22s var(--ease),background-color .18s var(--ease)}
 .button:hover{transform:translateY(-2px)}
 .button:active{transform:translateY(0)}
-.button.primary{background:var(--coral);border-color:var(--ink);box-shadow:3px 3px 0 var(--ink)}
+.button.primary{background:var(--accent);border-color:var(--ink);box-shadow:3px 3px 0 var(--ink)}
 .button.primary:hover{box-shadow:5px 5px 0 var(--ink)}
 .button.primary:active{box-shadow:2px 2px 0 var(--ink)}
 .button.quiet{background:transparent}
@@ -64,13 +65,13 @@
 .button.quiet.on-dark:hover{background:rgba(255,255,255,.1);box-shadow:none}
 /* The underline animates from the text's own baseline rather than appearing, so the affordance
    reads as part of the link instead of decoration attached on hover. */
-.text-link{display:inline-block;font-weight:800;text-decoration:none;color:var(--ink);margin-top:30px;padding-bottom:4px;background-image:linear-gradient(var(--coral-dark),var(--coral-dark));background-repeat:no-repeat;background-position:0 100%;background-size:100% 2px;transition:background-size .28s var(--ease),color .18s var(--ease)}
-.text-link:hover{color:var(--coral-dark);background-size:100% 3px}
+.text-link{display:inline-block;font-weight:800;text-decoration:none;color:var(--ink);margin-top:30px;padding-bottom:4px;background-image:linear-gradient(var(--accent-dark),var(--accent-dark));background-repeat:no-repeat;background-position:0 100%;background-size:100% 2px;transition:background-size .28s var(--ease),color .18s var(--ease)}
+.text-link:hover{color:var(--accent-dark);background-size:100% 3px}
 
 /* ===== Hero ===== */
 .hero{min-height:min(740px,92vh);display:grid;grid-template-columns:.92fr 1.08fr;align-items:center;gap:52px;padding-block:64px 76px}
 .hero h1,.page-hero h1{font:800 clamp(50px,7vw,100px)/.92 var(--font-display);letter-spacing:-.07em;margin:22px 0 26px;text-wrap:balance}
-.hero h1 em,.page-hero h1 em{font-style:normal;color:var(--coral-dark)}
+.hero h1 em,.page-hero h1 em{font-style:normal;color:var(--accent-dark)}
 .hero-copy>p{font-size:19px;line-height:1.58;max-width:585px;color:var(--muted);text-wrap:pretty}
 .hero-actions{display:flex;gap:12px;margin-top:28px;flex-wrap:wrap}
 .hero-note{display:block;margin-top:16px;color:var(--muted);font-size:13px}
@@ -90,7 +91,7 @@
 .route-line{position:absolute;top:25px;left:9%;right:9%;height:2px;background:repeating-linear-gradient(90deg,#aaa89f 0 5px,transparent 5px 10px)}
 .route-node{z-index:1;text-align:center;position:relative}
 .route-node>span{width:52px;height:52px;margin:auto;display:grid;place-items:center;border:1px solid var(--line);border-radius:16px;background:#fff;font:800 16px var(--font-display);box-shadow:0 5px 13px #4f4b4015}
-.route-node.core>span{background:var(--coral);border-color:var(--ink)}
+.route-node.core>span{background:var(--accent);border-color:var(--ink)}
 .route-node b{display:block;font-size:9px;margin-top:8px}
 .route-node i{position:absolute;top:-5px;right:calc(50% - 31px);width:17px;height:17px;border-radius:50%;background:#55b871;color:#fff;font:normal 10px/17px sans-serif}
 .visual-result{display:grid;grid-template-columns:repeat(3,1fr) auto;gap:14px;align-items:end;border-top:1px solid var(--line);margin-top:34px;padding-top:18px}
@@ -109,7 +110,7 @@
 .expansion-row>span{font-weight:800;font-size:13px}
 .expansion-chips{display:flex;flex-wrap:wrap;gap:10px}
 .expansion-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:#fff;border-radius:99px;padding:9px 14px;font-size:12px;font-weight:700;text-decoration:none;color:var(--ink);transition:border-color .15s,transform .15s}
-.expansion-chip:hover{border-color:var(--coral-dark);transform:translateY(-1px)}
+.expansion-chip:hover{border-color:var(--accent-dark);transform:translateY(-1px)}
 
 /* ===== Interactive demo component ===== */
 .demo{background:#fff;border:1.5px solid var(--ink);border-radius:26px;box-shadow:10px 10px 0 var(--mint),var(--shadow-ambient);overflow:hidden}
@@ -118,7 +119,7 @@
 .demo-head h3{font:800 26px var(--font-display);margin:0;letter-spacing:-.02em}
 .demo-step-count{font-size:11px;font-weight:800;color:var(--muted);white-space:nowrap}
 .demo-progress{height:5px;background:var(--line);margin:20px 28px 0;border-radius:99px;overflow:hidden}
-.demo-progress span{display:block;height:100%;background:var(--coral-dark);border-radius:99px}
+.demo-progress span{display:block;height:100%;background:var(--accent-dark);border-radius:99px}
 .demo-body{padding:26px 28px 6px;min-height:220px}
 
 .demo-ticket{display:grid;gap:12px;background:#f3f0e7;border:1px solid var(--line);border-radius:16px;padding:20px}
@@ -173,7 +174,7 @@
 .demo-nav{display:flex;align-items:center;justify-content:space-between;padding:18px 28px 26px;border-top:1px solid var(--line);margin-top:18px}
 .demo-nav-btn{border:1.5px solid var(--line);background:#fff;border-radius:10px;min-height:42px;padding:0 18px;font-weight:800;font-size:13px;cursor:pointer}
 .demo-nav-btn:disabled{opacity:.4;cursor:not-allowed}
-.demo-nav-btn-primary{border-color:var(--ink);background:var(--coral)}
+.demo-nav-btn-primary{border-color:var(--ink);background:var(--accent)}
 .demo-nav-hint{font-size:12px;color:var(--muted);font-weight:600}
 
 .demo-page-section{padding-block:20px 90px}
@@ -241,7 +242,7 @@
 .pilot-action strong{font:800 20px/1.35 var(--font-display)}
 
 /* ===== Final CTA ===== */
-.final-cta{background:var(--coral);border-block:1px solid var(--ink);padding:110px 0;text-align:center}
+.final-cta{background:var(--accent);border-block:1px solid var(--ink);padding:110px 0;text-align:center}
 .final-cta :focus-visible{outline-color:var(--ink)}
 .final-cta h2{font:800 clamp(48px,7vw,92px)/.95 var(--font-display);letter-spacing:-.06em;margin:0}
 .final-cta h2 i{font-style:normal;color:var(--ink)}
@@ -255,7 +256,7 @@
 .footer-grid>div:first-child p{color:var(--muted);max-width:260px}
 .footer-grid b{font-size:11px;letter-spacing:.08em}
 .footer-grid a:not(.site-logo){font-size:12px;text-decoration:none;color:var(--muted)}
-.footer-grid a:not(.site-logo):hover{color:var(--coral-dark)}
+.footer-grid a:not(.site-logo):hover{color:var(--accent-dark)}
 .footer-grid small{color:#95988f}
 
 /* ===== Subpage shared ===== */
@@ -284,15 +285,15 @@
 .legal-copy{max-width:820px;padding-block:56px 120px}
 .legal-copy p,.legal-copy li{font-size:16.5px;line-height:1.78;color:var(--muted);text-wrap:pretty}
 .legal-copy b{color:var(--ink)}
-.legal-copy a{color:var(--ink);text-decoration-color:var(--coral-dark);text-decoration-thickness:1.5px;text-underline-offset:3px}
-.legal-copy a:hover{color:var(--coral-dark)}
+.legal-copy a{color:var(--ink);text-decoration-color:var(--accent-dark);text-decoration-thickness:1.5px;text-underline-offset:3px}
+.legal-copy a:hover{color:var(--accent-dark)}
 
 .legal-head{padding-bottom:30px;border-bottom:1px solid var(--line)}
 .legal-copy h1{font:800 clamp(38px,5.2vw,54px)/1.02 var(--font-display);letter-spacing:-.045em;margin:14px 0 12px;text-wrap:balance}
 .legal-copy .updated{color:var(--muted);font-size:12.5px;font-variant-numeric:tabular-nums;margin:0}
 
 /* Plain-language framing above the document. The document still governs, and says so. */
-.legal-summary{margin-top:26px;padding:20px 22px;background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--coral-dark);border-radius:4px 14px 14px 4px}
+.legal-summary{margin-top:26px;padding:20px 22px;background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--accent-dark);border-radius:4px 14px 14px 4px}
 .legal-summary p{font-size:15.5px;line-height:1.7;margin:0}
 .legal-summary p+p{margin-top:10px}
 
@@ -302,11 +303,11 @@
 .legal-toc li{counter-increment:toc;break-inside:avoid;margin-bottom:7px}
 .legal-toc li::before{content:counter(toc) ".";display:inline-block;width:22px;font-size:12px;font-weight:800;color:var(--muted);font-variant-numeric:tabular-nums}
 .legal-toc a{font-size:14px;font-weight:600;color:var(--ink);text-decoration:none;border-bottom:1px solid transparent}
-.legal-toc a:hover{border-bottom-color:var(--coral-dark);color:var(--coral-dark)}
+.legal-toc a:hover{border-bottom-color:var(--accent-dark);color:var(--accent-dark)}
 
 .legal-section{padding-top:38px;scroll-margin-top:110px}
 .legal-copy h2{font:800 23px var(--font-display);letter-spacing:-.02em;margin:0 0 14px;color:var(--ink);text-wrap:balance}
-.legal-copy h2>span{color:var(--coral-dark);font-variant-numeric:tabular-nums;margin-right:2px}
+.legal-copy h2>span{color:var(--accent-dark);font-variant-numeric:tabular-nums;margin-right:2px}
 .legal-copy h3{font:800 16px var(--font-display);letter-spacing:-.01em;margin:28px 0 8px;color:var(--ink)}
 .legal-body>.legal-section+.legal-section{border-top:1px solid var(--line)}
 
@@ -384,7 +385,7 @@
 .faq-item{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:4px 20px}
 .faq-item summary{cursor:pointer;list-style:none;padding:16px 0;font-weight:700;font-size:14px;position:relative}
 .faq-item summary::-webkit-details-marker{display:none}
-.faq-item summary::after{content:'+';position:absolute;right:0;top:14px;font:800 18px var(--font-display);color:var(--coral-dark)}
+.faq-item summary::after{content:'+';position:absolute;right:0;top:14px;font:800 18px var(--font-display);color:var(--accent-dark)}
 .faq-item[open] summary::after{content:'–'}
 .faq-item p{margin:0 0 18px;color:var(--muted);line-height:1.65;font-size:14px}
 
@@ -393,7 +394,7 @@
 .contact-card h2{font:800 36px var(--font-display);letter-spacing:-.03em}
 .contact-options{display:grid;gap:12px}
 .contact-options a{padding:18px;border:1px solid var(--line);border-radius:14px;text-decoration:none;display:flex;justify-content:space-between;font-weight:800}
-.contact-options a:hover{background:#fff0eb;border-color:var(--coral-dark)}
+.contact-options a:hover{background:#eeecfd;border-color:var(--accent-dark)}
 .contact-intro h2{margin-bottom:16px}
 .contact-intro>p{color:var(--muted);line-height:1.65;margin-bottom:28px}
 .contact-form-title{font:800 30px var(--font-display);letter-spacing:-.03em;margin:12px 0 20px}
@@ -403,20 +404,20 @@
 .lead-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .lead-form label{display:grid;gap:7px;font-size:11px;font-weight:800;letter-spacing:.04em;color:var(--muted)}
 .lead-form input,.lead-form textarea{font:400 14px/1.5 var(--font-body);color:var(--ink);background:#fff;border:1.5px solid var(--line);border-radius:11px;padding:13px 14px;width:100%;transition:border-color .18s,box-shadow .18s}
-.lead-form input::placeholder,.lead-form textarea::placeholder{color:#a5a89f}
-.lead-form input:focus-visible,.lead-form textarea:focus-visible{border-color:var(--coral-dark);box-shadow:0 0 0 3px #e5523a30}
+.lead-form input::placeholder,.lead-form textarea::placeholder{color:#9b9eb0}
+.lead-form input:focus-visible,.lead-form textarea:focus-visible{border-color:var(--accent-dark);box-shadow:0 0 0 3px #4f46e530}
 .lead-form textarea{resize:vertical;min-height:92px}
 .lead-trap{position:absolute;left:-9999px;width:1px;height:1px;opacity:0}
 .lead-submit{width:100%;margin-top:4px;cursor:pointer}
 .lead-submit:disabled{opacity:.6;cursor:progress;transform:none;box-shadow:3px 3px 0 var(--ink)}
-.lead-error{background:#fff0eb;border:1px solid var(--coral-dark);border-radius:11px;padding:12px 14px;font-size:13px;line-height:1.5;margin:0}
+.lead-error{background:var(--danger-soft);border:1px solid var(--danger-dark);border-radius:11px;padding:12px 14px;font-size:13px;line-height:1.5;margin:0}
 .lead-error a{color:var(--ink);font-weight:800;text-decoration:underline}
 .lead-note{color:var(--muted);font-size:11px;line-height:1.5}
 .lead-done{text-align:center;padding:34px 20px;background:#fff;border:1.5px solid var(--ink);border-radius:18px;box-shadow:6px 6px 0 var(--mint);justify-items:center}
 .lead-check{width:52px;height:52px;margin:0 auto 16px;display:grid;place-items:center;border-radius:50%;background:var(--mint);border:1.5px solid var(--ink);font-size:24px;font-weight:800}
 .lead-done h3{font:800 27px var(--font-display);letter-spacing:-.03em;margin:0 0 10px}
 .lead-done p{color:var(--muted);line-height:1.6;max-width:360px;margin:0 auto}
-.lead-again{margin-top:20px;background:none;border:0;border-bottom:2px solid var(--coral-dark);padding:0 0 3px;font:800 13px var(--font-body);color:var(--ink);cursor:pointer}
+.lead-again{margin-top:20px;background:none;border:0;border-bottom:2px solid var(--accent-dark);padding:0 0 3px;font:800 13px var(--font-body);color:var(--ink);cursor:pointer}
 
 /* ===== Premium craft: cohesive surfaces, links, and life =====
    The design language is intentionally flat, with hard offset shadows reserved for the hero
@@ -439,7 +440,7 @@
 /* Nav links: an underline that grows from the baseline, matching the .text-link treatment, so the
    whole site shares one link gesture instead of two. */
 .nav-desktop a{
-  background-image:linear-gradient(var(--coral-dark),var(--coral-dark));
+  background-image:linear-gradient(var(--accent-dark),var(--accent-dark));
   background-repeat:no-repeat;
   background-position:0 100%;
   background-size:0 2px;
