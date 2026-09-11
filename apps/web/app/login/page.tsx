@@ -5,18 +5,10 @@ import Link from "next/link";
 import { LogoMark, WorkflowVisual } from "../site-components";
 import type { AmazFlowRole } from "@amazflow/workflow-schema";
 import { API, AuthError, completeNewPassword, guardBFCacheRestore, loadSession, loginPathFor, saveSession, signIn } from "../lib/cognito-auth";
+import { isSafeNext } from "../lib/safe-next";
 import "../auth.css";
 
 type OrgBranding = { displayName?: string; logoUrl?: string; accent?: string; loginMessage?: string };
-
-// A safe `next` is any same-origin relative path -- "/foo", never "//foo" (protocol-relative,
-// resolves to an external host) or anything containing "://". This previously allowlisted "/app"
-// and "/console" by name, which silently dropped every other real deep link: a not-yet-signed-in
-// user bounced through /login lost their destination and landed in their normal console instead,
-// with no sign anything had gone wrong.
-function isSafeNext(next: string | null): next is string {
-  return !!next && next.startsWith("/") && !next.startsWith("//") && !next.includes("://");
-}
 
 function redirectAfterSignIn(role: AmazFlowRole, next: string | null) {
   window.location.assign(isSafeNext(next) ? next : loginPathFor(role));
