@@ -1432,10 +1432,15 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       explicitly superseded historical context.
     - _Requirements: 33.10, 33.12_
 
-  - [ ] 26.6 Add error boundaries and the support-referenceable error code
-    - One boundary per route module plus an application-level fallback; a throwing view leaves the shell
-      rendering and the failure confined; display a code derived from the request's correlation identifier in
-      an unambiguous character set; display a control-plane human-readable refusal reason as written
+  - [x] 26.6 Add error boundaries and the support-referenceable error code
+    - `apps/customer/app/error-boundary.tsx`: one boundary per route module, keyed on the route so a
+      throwing view is given a fresh mount on navigation rather than staying permanently tripped, plus
+      an application-level fallback around the whole gate/shell tree
+    - A caught `ApiError`'s existing correlation identifier drives the same `ERR-XXXXXX` support code
+      `views.tsx` already derives for mutation failures; a render error with no request behind it still
+      gets a freshly generated one rather than no code at all
+    - The control plane's message is displayed as written, matching the existing mutation-feedback and
+      resource-load error paths
     - _Requirements: 29.1, 29.2, 29.3, 29.4, 29.5_
 
   - [ ] 26.7 Implement the loading and mutation discipline

@@ -28,6 +28,7 @@ import {
 import { PrincipalError, type Principal } from "@amazflow/permissions";
 import { ToastProvider } from "@amazflow/ui";
 import { CUSTOMER_ROUTE_TABLE, customerResourceSpecs } from "./routes";
+import { ErrorBoundary } from "./error-boundary";
 import { Shell } from "./shell";
 import {
   AgentsView,
@@ -81,7 +82,18 @@ import "./workflow-builder.css";
  */
 
 
+// The application-level fallback (requirement 29.1): whatever goes wrong above the route dispatch --
+// the gate, the shell, the resource wiring -- this is the one thing standing between that and a blank
+// tab.
 export default function CustomerApp() {
+  return (
+    <ErrorBoundary variant="application">
+      <CustomerAppGate />
+    </ErrorBoundary>
+  );
+}
+
+function CustomerAppGate() {
   const [session, setSession] = useState<StoredSession | null>(null);
   const [gate, setGate] = useState<"checking" | "ready" | "no-organization" | "invitation">("checking");
   const [principal, setPrincipal] = useState<Principal | null>(null);
@@ -226,7 +238,12 @@ function SignedIn({
         void signOutSession(session);
       }}
     >
-      {renderRoute(view, props)}
+      {/* Requirement 29.1/29.2: one boundary per route module. Keyed on the route so a view that just
+          threw is given a fresh mount, not a permanently tripped boundary, the moment the person
+          navigates to it again -- including navigating to the same route with a different entity. */}
+      <ErrorBoundary variant="route" resetKey={`${view.routeId}:${view.entityId ?? ""}`}>
+        {renderRoute(view, props)}
+      </ErrorBoundary>
     </Shell>
   );
 }
