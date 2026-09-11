@@ -18,6 +18,8 @@ import {
   type ApiSession,
 } from "@amazflow/api-client";
 import {
+  COARSE_GROUP_FOR_ROLE,
+  PLATFORM_ROLES,
   groupFromClaims,
   principalFromClaims,
   type PlatformRole,
@@ -92,24 +94,90 @@ export function principalOf(idToken: string, membershipRole?: PlatformRole | nul
 
 export const groupOf = (idToken: string) => groupFromClaims(claimsOf(idToken));
 
-/** Refresh against Cognito's plain REST API — no SDK, no hosted UI, no AWS branding. */
-async function refreshTokens(session: StoredSession): Promise<StoredSession> {
+/** What `GET /me` reports about the signed-in account. */
+export type MeResponse = {
+  userId?: string;
+  email?: string | null;
+  tenantId?: string;
+  organizationId?: string;
+  organizationName?: string | null;
+  role?: string;
+  /** The fine-grained membership role. Absent for a response that predates task 7.13. */
+  platformRole?: string;
+  teamIds?: string[];
+  sections?: string[];
+  lastLoginAt?: string | null;
+  accountStatus?: string;
+};
+
+/**
+ * Narrow or widen the claims-derived principal to the membership role the control plane holds.
+ *
+ * A Cognito token carries only the COARSE group, so `principalFromClaims` can do no better than the
+ * default for that group — `CLIENT_ADMIN → ORG_ADMIN`, `FRONTLINE → OPERATOR`. That was harmless while
+ * no fine role could be assigned. Phase 4 ships `POST /tenants/{t}/users/{username}/role`, so a person
+ * can genuinely be an APPROVER or a VIEWER now, and a surface that keeps guessing from the group would
+ * offer an APPROVER the whole administration section and offer a VIEWER controls the API refuses. That
+ * is precisely the navigation-versus-enforcement disagreement task 9.5 exists to make impossible.
+ *
+ * A stored role its group cannot reach is NOT believed, which is the same rule the control plane
+ * applies when it resolves a membership: the group is authoritative because it is the thing the
+ * identity provider signed, and a membership record claiming `ORG_OWNER` for a `FRONTLINE` account is
+ * a record that disagrees with the token. `STAFF_ADMIN` is unreachable here for the same reason — no
+ * customer group maps to it — so no `/me` response can turn this surface into a staff console.
+ *
+ * None of this is a security control. The control plane re-derives the same claim on every request.
+ * It is what stops the surface offering a door the API will not open.
+ */
+export function refinePrincipal(principal: Principal, me: MeResponse | null | undefined): Principal {
+  if (!me) return principal;
+  const claimed = me.platformRole;
+  const believable =
+    !!claimed &&
+    (PLATFORM_ROLES as readonly string[]).includes(claimed) &&
+    COARSE_GROUP_FOR_ROLE[claimed as PlatformRole] === principal.group;
+  const role = believable ? (claimed as PlatformRole) : principal.role;
+  const teamIds = Array.isArray(me.teamIds) ? me.teamIds : principal.teamIds;
+  const sameTeams =
+    teamIds.length === principal.teamIds.length &&
+    teamIds.every((id, index) => id === principal.teamIds[index]);
+  if (role === principal.role && sameTeams) return principal;
+  return { ...principal, role, teamIds };
+}
+
+/** Plain identity-provider request. Control-plane traffic always goes through @amazflow/api-client. */
+async function cognito<T = unknown>(action: string, body: Record<string, unknown>): Promise<T> {
   const response = await fetch(COGNITO_IDP_ENDPOINT, {
     method: "POST",
     headers: {
       "content-type": "application/x-amz-json-1.1",
-      "x-amz-target": "AWSCognitoIdentityProviderService.InitiateAuth",
+      "x-amz-target": `AWSCognitoIdentityProviderService.${action}`,
     },
-    body: JSON.stringify({
-      AuthFlow: "REFRESH_TOKEN_AUTH",
-      ClientId: COGNITO_CLIENT_ID,
-      AuthParameters: { REFRESH_TOKEN: session.refreshToken },
-    }),
+    body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error("refresh failed");
-  const data = (await response.json()) as {
-    AuthenticationResult?: { IdToken?: string; AccessToken?: string; ExpiresIn?: number };
+  const payload = (await response.json().catch(() => ({}))) as T & {
+    message?: string;
+    __type?: string;
   };
+  if (!response.ok) {
+    const error = new Error(payload.message || "The identity provider refused the request") as Error & {
+      code?: string;
+    };
+    error.code = payload.__type?.split("#").pop();
+    throw error;
+  }
+  return payload;
+}
+
+/** Refresh against Cognito's plain REST API — no SDK, no hosted UI, no AWS branding. */
+async function refreshTokens(session: StoredSession): Promise<StoredSession> {
+  const data = await cognito<{
+    AuthenticationResult?: { IdToken?: string; AccessToken?: string; ExpiresIn?: number };
+  }>("InitiateAuth", {
+    AuthFlow: "REFRESH_TOKEN_AUTH",
+    ClientId: COGNITO_CLIENT_ID,
+    AuthParameters: { REFRESH_TOKEN: session.refreshToken },
+  });
   const result = data.AuthenticationResult;
   if (!result?.IdToken) throw new Error("refresh returned no token");
   return {
@@ -140,4 +208,55 @@ export function clientFor(session: StoredSession, onRenewed: (session: StoredSes
       onRenewed(renewed);
     },
   });
+}
+
+
+/** A client for the invitation-inspection route, which is intentionally unauthenticated. */
+let publicClient: ApiClient | null = null;
+export function publicClientFor(): ApiClient {
+  if (publicClient) return publicClient;
+  publicClient = createApiClient(
+    API,
+    { idToken: "public-invitation-inspection", tenantId: "public" },
+    {
+      refresh: async () => {
+        throw new Error("A public request cannot refresh a session");
+      },
+      endSession: async () => {
+        throw new Error("This public request requires authentication");
+      },
+    },
+  );
+  return publicClient;
+}
+
+/** Change only the signed-in person's password; Cognito validates the current password. */
+export async function changeOwnPassword(
+  session: StoredSession,
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  if (!session.accessToken)
+    throw new Error("Please sign in again before changing your password.");
+  await cognito("ChangePassword", {
+    AccessToken: session.accessToken,
+    PreviousPassword: currentPassword,
+    ProposedPassword: newPassword,
+  });
+}
+
+/** Revoke this browser's refresh token, clear local state, and leave the authenticated surface. */
+export async function signOutSession(session: StoredSession): Promise<void> {
+  if (session.refreshToken) {
+    try {
+      await cognito("RevokeToken", {
+        ClientId: COGNITO_CLIENT_ID,
+        Token: session.refreshToken,
+      });
+    } catch {
+      // Local sign-out still has to complete if the token already expired or was globally revoked.
+    }
+  }
+  clearStoredSession();
+  window.location.href = "https://amazflow.com/signed-out/";
 }

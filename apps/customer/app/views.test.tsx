@@ -17,11 +17,14 @@
 import "./jsx-global";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createElement, type ComponentType } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { ApiClient } from "@amazflow/api-client";
 import {
   CUSTOMER_ROUTES,
   CUSTOMER_ROUTE_TABLE,
   CUSTOMER_ALIASES,
+  customerResourceSpecs,
 } from "./routes";
 import {
   CUSTOMER_ROLES,
@@ -32,6 +35,7 @@ import {
 import { navigation, pathToView, routeAllowed, type ResourceSlot } from "@amazflow/domain-ui";
 import * as views from "./views";
 import type { ViewProps } from "./views";
+import type { StoredSession } from "./session";
 
 const principal = (role: PlatformRole, orgId = "acme"): Principal => ({
   kind: "user",
@@ -61,10 +65,37 @@ const slotsIn = (state: ResourceSlot<unknown>["state"], error: string | null = n
     "connections",
     "notifications",
     "permissionMatrix",
+    "organization",
+    "users",
+    "teams",
+    "securityFacts",
+    "audit",
+    "profile",
+    "preferences",
+    "supportTickets",
   ];
   const out: Record<string, ResourceSlot<unknown>> = {};
   for (const key of keys) out[key] = slot(state, [], error);
   return out;
+};
+
+const fakeClient: ApiClient = {
+  request: async <T,>() => null as T,
+  get: async <T,>() => null as T,
+  post: async <T,>() => null as T,
+  put: async <T,>() => null as T,
+  del: async <T,>() => null as T,
+  session: () => ({ idToken: "token", tenantId: "acme" }),
+};
+
+const storedSession: StoredSession = {
+  idToken: "token",
+  accessToken: "access",
+  refreshToken: "refresh",
+  tenantId: "acme",
+  sub: "user_owner",
+  email: "owner@acme.example",
+  expiresAt: Date.now() + 60_000,
 };
 
 /**
@@ -73,7 +104,7 @@ const slotsIn = (state: ResourceSlot<unknown>["state"], error: string | null = n
  * Kept as a map rather than a list so the completeness assertion below can name which route has no
  * module — "some view is missing a state" is not an actionable failure.
  */
-const MODULES: Record<string, (props: ViewProps) => unknown> = {
+const MODULES: Record<string, ComponentType<ViewProps>> = {
   home: views.HomeView,
   workflows: views.WorkflowsView,
   runs: views.RunsView,
@@ -83,17 +114,31 @@ const MODULES: Record<string, (props: ViewProps) => unknown> = {
   agents: views.AgentsView,
   connections: views.ConnectionsView,
   analytics: views.AnalyticsView,
+  "admin-organization": views.OrganizationView,
+  "admin-users": views.UsersView,
+  "admin-teams": views.TeamsView,
   "admin-roles": views.RolesView,
+  "admin-security": views.SecurityView,
+  "admin-audit": views.AuditView,
+  "admin-billing": views.BillingView,
+  "settings-profile": views.ProfileView,
+  "settings-security": views.PersonalSecurityView,
+  "settings-notifications": views.NotificationPreferencesView,
+  notifications: views.NotificationsView,
+  support: views.SupportView,
 };
 
 const render = (routeId: string, state: ResourceSlot<unknown>["state"], error: string | null = null) => {
   const Module = MODULES[routeId];
   return renderToStaticMarkup(
-    Module({
+    createElement(Module, {
       principal: principal("ORG_OWNER"),
       slots: slotsIn(state, error),
       navigate: () => {},
-    }) as never,
+      client: fakeClient,
+      session: storedSession,
+      refresh: async () => {},
+    }),
   );
 };
 
@@ -151,26 +196,12 @@ test("every navigable route in the table has a module or an honest disabled reas
   for (const route of CUSTOMER_ROUTES) {
     if (MODULES[route.id]) continue;
     if ((route as { disabledReason?: string }).disabledReason) continue;
-    // The remaining rows are Phase 4+ surfaces. They must be declared in the table (so navigation is
-    // complete and deep links resolve) and are wired to their views as those phases land. This
-    // assertion exists to make that list VISIBLE rather than to pass silently.
-    assert.ok(
-      [
-        "admin-organization",
-        "admin-users",
-        "admin-teams",
-        "admin-security",
-        "admin-audit",
-        "admin-billing",
-        "settings-profile",
-        "settings-security",
-        "settings-notifications",
-        "support",
-        "accept-invitation",
-        "notifications",
-      ].includes(route.id),
-      `route "${route.id}" has no view module, no disabled reason, and is not a known later-phase ` +
-        `section — it would render as Not found`,
+    // Invitation inspection is rendered before the signed-in shell because the recipient may not
+    // have an account session yet. It is still a real module; it simply is not dispatched here.
+    assert.equal(
+      route.id,
+      "accept-invitation",
+      `route "${route.id}" has no signed-in view module and no disabled reason`,
     );
   }
 });
@@ -232,4 +263,107 @@ test("a deep link with an entity identifier survives a hard reload", () => {
   assert.equal(resolved.entityId, "run_abc123");
   assert.equal(pathToView(CUSTOMER_ROUTE_TABLE, "/console/runs/run_abc123/").routeId, "runs");
   assert.equal(pathToView(CUSTOMER_ROUTE_TABLE, "/console/runs/run_abc123/").entityId, "run_abc123");
+});
+
+
+
+test("Phase 4 resources point at the real customer administration APIs", () => {
+  const specs = customerResourceSpecs("north/wind");
+  const paths = Object.fromEntries(specs.map((spec) => [spec.key, spec.path]));
+  assert.equal(paths.organization, "/organizations/north%2Fwind");
+  assert.equal(paths.users, "/tenants/north%2Fwind/users");
+  assert.equal(paths.teams, "/teams");
+  assert.equal(paths.securityFacts, "/security/facts");
+  assert.equal(paths.audit, "/audit");
+  assert.equal(paths.profile, "/me/profile");
+  assert.equal(paths.preferences, "/me/preferences");
+  assert.equal(paths.notifications, "/notifications");
+  assert.equal(paths.supportTickets, "/support/tickets");
+});
+
+test("user state is derived from Cognito and membership facts", () => {
+  const base = { username: "person", email: "person@example.com" };
+  assert.equal(views.deriveUserState({ ...base, enabled: true, userStatus: "FORCE_CHANGE_PASSWORD", membershipStatus: "invited" }), "invited");
+  assert.equal(views.deriveUserState({ ...base, enabled: true, userStatus: "CONFIRMED", membershipStatus: "active" }), "active");
+  assert.equal(views.deriveUserState({ ...base, enabled: false, userStatus: "CONFIRMED", membershipStatus: "active" }), "deactivated");
+  assert.equal(views.deriveUserState({ ...base, enabled: true, userStatus: "CONFIRMED", membershipStatus: "deactivated" }), "deactivated");
+});
+
+test("invitation HTTP states map to distinct expired, used, and error screens", () => {
+  assert.equal(views.invitationFailureForStatus(410), "expired");
+  assert.equal(views.invitationFailureForStatus(409), "used");
+  assert.equal(views.invitationFailureForStatus(404), "error");
+  assert.equal(views.invitationFailureForStatus(500), "error");
+});
+
+test("the organization view never renders internal commercial lifecycle data", () => {
+  const slots = slotsIn("ready");
+  slots.organization = slot("ready", {
+    name: "Acme Logistics",
+    slug: "acme",
+    status: "active",
+    plan: "pilot",
+    lifecycleStatus: "trial",
+    settings: { maxConcurrentRuns: 2, allowedEmailDomains: [], timezone: "UTC" },
+    branding: {},
+  });
+  const html = renderToStaticMarkup(views.OrganizationView({
+    principal: principal("ORG_OWNER"),
+    slots,
+    navigate: () => {},
+    client: fakeClient,
+    session: storedSession,
+    refresh: async () => {},
+  }) as never);
+  assert.match(html, /Acme Logistics/);
+  assert.doesNotMatch(html, /trial|lifecycle/i);
+});
+
+test("planned identity capabilities are explained without fake controls", () => {
+  const slots = slotsIn("ready");
+  slots.securityFacts = slot("ready", {
+    accessTokenMinutes: 60,
+    idTokenMinutes: 60,
+    refreshTokenDays: 7,
+    passwordPolicy: {
+      minimumLength: 12,
+      requireLowercase: true,
+      requireUppercase: true,
+      requireNumbers: true,
+      requireSymbols: true,
+    },
+    mfaEnrollmentAvailable: false,
+    singleSignOnAvailable: false,
+    directoryProvisioningAvailable: false,
+  });
+  slots.agents = slot("ready", []);
+  const html = renderToStaticMarkup(views.SecurityView({
+    principal: principal("ORG_OWNER"),
+    slots,
+    navigate: () => {},
+    client: fakeClient,
+    session: storedSession,
+    refresh: async () => {},
+  }) as never);
+  // The real session lifetime, rendered through the shared metric primitive: the value and its unit
+  // are separate elements, so this asserts both rather than a string that only held while the panel
+  // hand-rolled its own markup.
+  assert.match(html, /Access token/);
+  assert.match(html, />60<span class="ops-metric-unit">min<\/span>/);
+  assert.match(html, /12 characters minimum/);
+  assert.match(html, /Single sign-on/);
+  assert.match(html, /Directory provisioning/);
+  assert.match(html, /Not available in this release/);
+  assert.doesNotMatch(html, /type="checkbox"/);
+});
+
+test("the MFA setup route is honestly disabled and accepts no input", () => {
+  const html = renderToStaticMarkup(views.MfaSetupView() as never);
+  assert.match(html, /not available in this release/i);
+  assert.match(html, /enrolment and recovery flow/i);
+  assert.doesNotMatch(html, /<(input|select|textarea)/);
+});
+
+test("legacy account settings now resolve to the live personal security route", () => {
+  assert.equal(pathToView(CUSTOMER_ROUTE_TABLE, "/console/account/").routeId, "settings-security");
 });

@@ -332,6 +332,40 @@ export function Panel({
   );
 }
 
+/**
+ * The page header, promoted out of `/app`'s shell (task 9.1: page headers are shared, not per-surface).
+ *
+ * It lived in `apps/web/app/app/ops/shell.tsx` and was therefore unavailable to the customer surface,
+ * which is how that surface ended up inventing `ops-panel-title` and `ops-panel-lead` — two class
+ * names with no stylesheet behind them, so every customer page rendered its title as unstyled body
+ * text. One implementation, one set of class names, and `/app` keeps importing it from `./shell`
+ * through a re-export.
+ */
+export function PageHead({
+  title,
+  sub,
+  actions,
+  pills,
+}: {
+  title: ReactNode;
+  sub?: ReactNode;
+  actions?: ReactNode;
+  pills?: ReactNode;
+}) {
+  return (
+    <div className="ops-pagehead">
+      <div className="ops-pagehead-text">
+        <div className="ops-pagetitle">
+          <h1>{title}</h1>
+          {pills}
+        </div>
+        {sub && <p className="ops-pagesub">{sub}</p>}
+      </div>
+      {actions && <div className="ops-pagehead-actions">{actions}</div>}
+    </div>
+  );
+}
+
 export function SectionHead({
   title,
   actions,

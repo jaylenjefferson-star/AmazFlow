@@ -353,30 +353,10 @@ function IdentityMenu() {
 
 /* ============================================================================== page head = */
 
-export function PageHead({
-  title,
-  sub,
-  actions,
-  pills,
-}: {
-  title: ReactNode;
-  sub?: ReactNode;
-  actions?: ReactNode;
-  pills?: ReactNode;
-}) {
-  return (
-    <div className="ops-pagehead">
-      <div className="ops-pagehead-text">
-        <div className="ops-pagetitle">
-          <h1>{title}</h1>
-          {pills}
-        </div>
-        {sub && <p className="ops-pagesub">{sub}</p>}
-      </div>
-      {actions && <div className="ops-pagehead-actions">{actions}</div>}
-    </div>
-  );
-}
+// Promoted into `@amazflow/ui` so the customer surface renders the same header rather than a second
+// one with class names nothing styles. Re-exported here so every `/app` view keeps importing
+// `PageHead` from `./shell` unchanged (task 9.1's shim pattern; task 28.4 retires it).
+export { PageHead } from "./primitives";
 
 /** Banner shown when a collection failed to load, so a dead endpoint is visible not silent. */
 export function LoadErrors() {

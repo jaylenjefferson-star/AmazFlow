@@ -18,7 +18,7 @@
 //   * A row with `shownWhenDeniedBecause` is functional but not for this principal, and says so
 //     rather than vanishing (requirement 3.8).
 
-import type { RouteDef, RouteTable } from "@amazflow/domain-ui";
+import type { ResourceSpec, RouteDef, RouteTable } from "@amazflow/domain-ui";
 
 /** Rows carry a class so the shell can render the disabled ones honestly rather than per-page. */
 export type CustomerRoute = RouteDef & {
@@ -77,6 +77,15 @@ export const CUSTOMER_ROUTES: readonly CustomerRoute[] = [
 
   { id: "settings-profile", path: "/settings/profile/", label: "Your profile", permission: null, group: "You", glyph: "users" },
   { id: "settings-security", path: "/settings/security/", label: "Your security", permission: null, group: "You", glyph: "audit" },
+  {
+    id: "mfa-setup",
+    path: "/mfa-setup/",
+    label: "Two-factor authentication",
+    permission: null,
+    disabledReason: "Two-factor authentication setup is not available in this release.",
+    disabledDetail:
+      "Your account already supports software-token authentication at the identity-provider level, but AmazFlow has not shipped a safe enrolment and recovery flow yet. No setup control is shown until that complete flow exists.",
+  },
   { id: "settings-notifications", path: "/settings/notifications/", label: "Notifications", permission: "notification:read", group: "You", glyph: "attention" },
   { id: "support", path: "/support/", label: "Support", permission: null, group: "You", glyph: "support", key: "t" },
 
@@ -101,7 +110,7 @@ export const CUSTOMER_ALIASES: Readonly<Record<string, string>> = {
   "/console/team/": "admin-users",
   "/console/settings/": "admin-organization",
   "/console/support/": "support",
-  "/console/account/": "settings-profile",
+  "/console/account/": "settings-security",
 };
 
 export const CUSTOMER_ROUTE_TABLE: RouteTable = {
@@ -112,3 +121,36 @@ export const CUSTOMER_ROUTE_TABLE: RouteTable = {
 
 export const customerRoute = (id: string): CustomerRoute | undefined =>
   CUSTOMER_ROUTES.find((route) => route.id === id);
+
+
+
+/**
+ * Real control-plane reads used by the customer surface, keyed for the shared resource provider.
+ *
+ * `route` is the entry each read targets in the committed route inventory (task 1.1), and
+ * `endpoints.test.ts` asserts every one of them exists there as a `GET`. Without that, a read against
+ * a path no handler serves typechecks, renders, polls every fifteen seconds, and shows the person a
+ * failed resource that nothing in the codebase explains.
+ *
+ * The permission on each row is not a security control — the control plane is. It is what stops the
+ * surface asking for something it will be refused and then rendering that refusal as an error the
+ * person cannot act on: a resource whose permission the role lacks reports `unavailable` instead.
+ */
+export const customerResourceSpecs = (orgId: string) => [
+  { key: "me", route: "GET /me", path: "/me", permission: null, empty: null },
+  { key: "workflows", route: "GET /workflows", path: "/workflows", permission: "workflow:read", empty: [] },
+  { key: "runs", route: "GET /runs", path: "/runs", permission: "run:read", live: true, empty: [] },
+  { key: "agentTasks", route: "GET /agent-tasks", path: "/agent-tasks", permission: "task:read", live: true, empty: [] },
+  { key: "agents", route: "GET /agents", path: "/agents", permission: "agent:read", empty: [] },
+  { key: "connections", route: "GET /connections/browser", path: "/connections/browser", permission: "connection:read", empty: [] },
+  { key: "notifications", route: "GET /notifications", path: "/notifications", permission: "notification:read", live: true, empty: [] },
+  { key: "permissionMatrix", route: "GET /permissions/matrix", path: "/permissions/matrix", permission: null, empty: null },
+  { key: "organization", route: "GET /organizations/{slug}", path: `/organizations/${encodeURIComponent(orgId)}`, permission: "org:read", empty: null },
+  { key: "users", route: "GET /tenants/{tenantId}/users", path: `/tenants/${encodeURIComponent(orgId)}/users`, permission: "user:read", empty: [] },
+  { key: "teams", route: "GET /teams", path: "/teams", permission: "team:read", empty: null },
+  { key: "securityFacts", route: "GET /security/facts", path: "/security/facts", permission: null, empty: null },
+  { key: "audit", route: "GET /audit", path: "/audit", permission: "audit:read", empty: [] },
+  { key: "profile", route: "GET /me/profile", path: "/me/profile", permission: null, empty: null },
+  { key: "preferences", route: "GET /me/preferences", path: "/me/preferences", permission: null, empty: null },
+  { key: "supportTickets", route: "GET /support/tickets", path: "/support/tickets", permission: "support:read", empty: [] },
+] as const satisfies readonly (ResourceSpec<unknown> & { route: string })[];

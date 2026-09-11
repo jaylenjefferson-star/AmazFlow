@@ -113,7 +113,7 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
   - Both copies expose the same route set; the guardrail suites are green. No later backend task starts
     until this checkpoint holds.
 
-- [ ] 5. Phase 1 — Authentication and session lifecycle
+- [x] 5. Phase 1 — Authentication and session lifecycle
 
   - [x] 5.1 Replace the four copy-pasted auth gates with one shared session-gate component
     - Keep the passive session read and the redirecting access check as two distinct operations
@@ -167,8 +167,11 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
 - [x] 6. Checkpoint — auth hardened, both existing consoles unchanged
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 7. Phase 2 — Principal, centralized authorization, tenant scope, membership
-  - 11 of 13 sub-tasks complete. 7.5 and 7.6 are partial; the remainder is written into each
+- [x] 7. Phase 2 — Principal, centralized authorization, tenant scope, membership
+  - All 13 sub-tasks complete. 7.5 and 7.6 were the two partials and both were closed by Phase 4 rather
+    than by revisiting Phase 2: 7.5 needed the membership WRITE side (role assignment, team assignment,
+    `lastLoginAt`), and 7.6 needed requirement 27.11's per-route response allowlist. Each leaf records
+    which Phase 4 task closed it
 
   - [x] 7.1 Create the permissions package: permission union, role grants, decision function, throwing wrapper, navigation visibility
     - `packages/permissions` is the canonical copy; the deployed template carries an inline copy, kept
@@ -204,31 +207,45 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       module
     - _Requirements: 7.2, 27.4, 27.5, 6.9, 18.4_
 
-  - [ ] 7.5 Add membership records with lazy read-triggered creation and a default role derived from the coarse group
+  - [x] 7.5 Add membership records with lazy read-triggered creation and a default role derived from the coarse group
     - Backfill happens as a side effect of `principalFor()`, so the migration runs on normal use rather
       than as a batch job. `CLIENT_ADMIN → ORG_ADMIN` (not `ORG_OWNER`: nobody acquires ownership
       transfer by default) and `FRONTLINE → OPERATOR` (not `VIEWER`: that would *remove* access).
       Asserted end to end by the last three cases of the per-role suite, including that a stored role
       its group cannot reach is not believed
-    - NOT YET DONE, deferred to the user-management work in Phase 5: the write side. There is no
-      `POST /tenants/{t}/users/{username}/role` route yet, so a fine role cannot be *assigned* through
-      the API — only defaulted from the group or seeded. Team assignment and `lastLoginAt` are likewise
-      unwritten
+    - The write side, deferred here and completed by Phase 4, closes this task: `POST /tenants/{t}/users/{username}/role`
+      assigns a fine role and reconciles the coarse group (task 11.5), the team routes write team
+      assignment (task 11.8), and `GET /me` stamps `lastLoginAt` (task 11.7). So all three of the
+      membership record's own fields are now written by a route rather than only defaulted or seeded
+    - The frontend half landed with them and is the part that makes the fine role *visible*:
+      `refinePrincipal()` in `apps/customer/app/session.ts` narrows or widens the claims-derived
+      principal to the `platformRole` `GET /me` reports, so navigation reflects an assigned APPROVER or
+      VIEWER instead of the group's default. It applies the same rule the control plane does — a stored
+      role its coarse group cannot reach is NOT believed, and `STAFF_ADMIN` is unreachable from any
+      customer group, so no `/me` response can turn the customer surface into a staff console
     - Membership is the source of truth for fine-grained role, team assignments, and activity timestamps;
       the identity provider stays authoritative for credentials, enabled state, and coarse group, and wins
-      on disagreement with reconciliation on read
+      on disagreement with reconciliation on read — `listTenantUsers` performs that reconciliation as
+      part of the read and retains the fine role, teams and timestamps while doing it
     - Existing users retain their current access on day one
     - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 7.4, 7.14_
 
-  - [ ] 7.6 Enforce cross-organization 404 semantics and a per-route response field allowlist
+  - [x] 7.6 Enforce cross-organization 404 semantics and a per-route response field allowlist
     - 404 semantics: done, and this is what closed D-1 and D-2. One additional leak was found while
       testing and fixed — the `AUTHORIZATION_DENIED` audit record carried the foreign organization's
       identifier in `details`, and `GET /audit` makes that record readable by the customer, so the
       denial audit now records `crossOrganization: true` instead of the id
-    - PARTIAL on the *field allowlist*: the existing `privateResponseFields` strip is still a global
-      denylist rather than a per-route allowlist. The isolation suite asserts the property that matters
-      (no foreign value in any response body, on the complete returned set of every list route), but
-      requirement 27.11's per-route allowlist is not implemented and belongs with the route-spec work
+    - The field allowlist, partial here and completed by Phase 4, closes this task. `RESPONSE_FIELD_GROUPS`
+      plus `allowResponseFields()` give every route an explicit top-level response contract, and
+      `projectRouteResponse()` applies it in `reply()`. The inversion is the point: the old
+      `privateResponseFields` denylist removed three known names, so a newly added database field was
+      returned automatically — a new field is now ABSENT until the route that owns it names it
+    - It FAILS CLOSED, which is the half that makes it worth having: a successful response from a route
+      with no declared contract returns `{}` and logs `response allowlist missing`, rather than falling
+      back to returning everything. An error envelope still passes through its own small allowlist,
+      because an unrecognised route's error is still useful to the person reading it
+    - The nested replacer is retained on top rather than replaced: the allowlist is top-level, so
+      `managedProfileId` and the session identifiers stay server-only at every depth
     - Refuse a non-staff body naming another organization; exclude every foreign identifier and field value
       from responses; scope all enumerated entity types to the request's organization
     - _Requirements: 6.5, 6.6, 6.7, 6.8, 27.11, 27.13, 27.14_
@@ -304,7 +321,10 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
     - `GET /permissions/matrix` serializes the same `ROLE_GRANTS` the API enforces, reporting `"own"`
       where a role holds only the narrow form — "you can cancel runs" and "you can cancel your own
       runs" are different promises. `GET /me` also now returns `platformRole` and the visible sections
-    - Remaining: no frontend consumes it yet. `/admin/roles` is Phase 5's surface work
+    - The frontend now consumes it: `RolesView` renders the matrix response directly, so `/admin/roles`
+      cannot show a policy that is not the policy. It filters out the `internal:` permissions and the
+      `STAFF_ADMIN` column — neither is a customer's concern — and renders `"own"` as "Own only" rather
+      than collapsing it to a yes (task 11.11)
     - _Requirements: 7.17, 11.4_
 
 - [x] 8. Checkpoint — authorization centralized, behaviour identical for existing users
@@ -322,7 +342,7 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
     routes did change for customers, both deliberately and both listed in task 7.8: `POST /ai/execute`
     (previously any signed-in role) and the refusal *status* on cross-organization ids (403 → 404)
 
-- [ ] 9. Phase 3 — Shared packages, three surfaces, and hosting infrastructure
+- [x] 9. Phase 3 — Shared packages, three surfaces, and hosting infrastructure
 
   - [x] 9.1 Promote the staff design system into a shared user-interface package
     - Page headers, cards, tables, buttons, form fields, badges, status indicators, modals, drawers, toasts,
@@ -507,121 +527,268 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
     URLs (asserted), keep their origin on the CORS allowlist, keep their rewrite rules, and every path
     they serve resolves through the alias tables (asserted). The cutover is task 28.4
 
-- [ ] 11. Phase 4 — Organization, users, teams, invitations, personal settings
+- [x] 11. Phase 4 — Organization, users, teams, invitations, personal settings
 
-  - [ ] 11.1 Extend the organization record additively
+  - [x] 11.1 Extend the organization record additively
     - Retain existing fields unchanged; add primary domain, primary contact, billing contact, internal
       account owner, customer-relationship-management reference, activation timestamp, denormalized
       onboarding status, and the internal-only commercial lifecycle status; keep the logo location inside
       branding without duplicating it
+    - Every field is additive: nothing renames or moves an existing one, and the logo location stays inside
+      `branding` rather than being mirrored at the top level, because two places holding the same URL is
+      two places to disagree about which one the sign-in screen reads
+    - The commercial lifecycle status is a SEPARATE field from the execution status, and that separation is
+      the point of requirement 8: a sales stage must never gate execution. `canceled` commercially and
+      `active` operationally is a legitimate state — a customer in their notice period is still entitled to
+      have their work run
+    - `INTERNAL_ORG_FIELDS` are stripped by ENTITY rather than by route (`organizationFor`), so a new route
+      reading an organization cannot forget. An organization admin reading their own record must not receive
+      AmazFlow's internal note that they are commercially `canceled`, and the frontend half is asserted too:
+      a rendering test fails if the organization view emits `lifecycleStatus` or its value
     - Absent commercial lifecycle status reads as commercially active
     - _Requirements: 8.1, 8.2, 8.3, 8.5, 8.6, 8.12_
 
-  - [ ] 11.2 Enforce slug immutability and slug uniqueness without reuse
+  - [x] 11.2 Enforce slug immutability and slug uniqueness without reuse
     - The slug is the tenant identifier; reject any change; generate unique slugs that never reuse a former
       organization's slug
+    - Non-reuse needs a record that OUTLIVES the organization, so `SLUGRESERVED#` entries are written at
+      creation and never deleted. Checking the live organizations would let a deleted organization's slug be
+      handed to a new one, and every historical audit record, run and token carrying that slug would then
+      read as belonging to the new tenant
+    - The immutability half is refused with a stated reason rather than silently ignored, and the customer
+      surface offers no slug field at all — asserted, since a form that accepts a value the API refuses is
+      worse than one that never offered it
     - _Requirements: 8.14, 8.15_
 
-  - [ ] 11.3 Wire the execution-status gate, the concurrency ceiling, and lifecycle audit events
+  - [x] 11.3 Wire the execution-status gate, the concurrency ceiling, and lifecycle audit events
     - Paused or suspended refuses run creation with a stated reason while still admitting administration
       including invitation; returning to active restores run creation; exceeding the ceiling responds 429
       with the configured limit and the in-flight count; an unrecognized status is excluded from the count;
       status changes record previous and new values
+    - The gate is on run creation only. Administration stays open deliberately: an organization that cannot
+      run work can still need to remove somebody's access, and locking them out of that would make a pause
+      into an incident. Invitation is the one exception, and only for `suspended`
+    - The 429 carries `limit` and `inFlight` because "try again later" without a number is not actionable —
+      a person needs to know whether to wait a minute or ask for the ceiling to be raised
+    - The customer surface states the ceiling and names it as staff-set, and offers NO control for it:
+      `maySetConcurrencyLimit` is staff-only, and an organization that can raise its own ceiling has no
+      ceiling. A zero reads as "No configured ceiling" rather than as a limit of zero
     - _Requirements: 8.4, 8.7, 8.8, 8.9, 8.10, 8.11, 8.16_
 
-  - [ ] 11.4 Build the organization administration view with branding validation
+  - [x] 11.4 Build the organization administration view with branding validation
     - Read and update profile, settings, and branding; validate the accent colour as a six-digit hexadecimal
       value; accept a logo location only over a secure scheme and reject unsafe locations
+    - Three separate writes to three separate routes (`/profile`, `/settings`, `/branding`) rather than one
+      save button over one merged body. They have different permissions (`org:settings` vs `org:branding`)
+      and different failure modes, and a single save that half-succeeds leaves a person unable to tell which
+      half
+    - Validation is client-side AND server-side, and the client-side half exists to give the reason before
+      the round trip, not instead of it: an accent must be `#` plus six hexadecimal digits, and a logo
+      location must parse as a URL whose protocol is `https:` — a stated refusal, not a silently dropped field
+    - Every stored value is rendered into its field, asserted field by field. A field rendered empty while a
+      value is stored is one save away from erasing it, and that is the failure mode a form over a partial
+      read has
     - _Requirements: 11.1, 11.2, 11.3_
 
-  - [ ] 11.5 Add the user role-change, invitation resend, and pending-invitation revoke routes
+  - [x] 11.5 Add the user role-change, invitation resend, and pending-invitation revoke routes
     - Role change writes the membership role and reconciles the coarse group; refuses the staff group;
       refuses leaving the organization without an owner. Revoke applies only before the initial password
       challenge completes and disables rather than deletes. Preserve the existing invitation guards
       verbatim: allowed email domains, duplicate member, address in another organization, suspended
       organization refused, paused organization allowed, group-add failure reported as retry-the-invitation
+    - The two-system write is ordered so that failure is recoverable: the new coarse group is ADDED before
+      the old one is removed, and a failed removal rolls the addition back and preserves the fine role. The
+      other order leaves a person in no group at all, which means unable to sign in — asserted by a fault
+      injection case rather than reasoned about
     - Remediates H-8 (no route existed to change a role)
     - _Requirements: 9.6, 9.7, 9.8, 9.9, 9.10, 9.11, 9.12, 9.13, 9.14, 9.15, 9.16, 9.17, 9.18, 9.19, 9.20, 9.24, 33.11_
 
-  - [ ] 11.6 Build the users view with derived states and honest absent values
+  - [x] 11.6 Build the users view with derived states and honest absent values
     - Derive invited, active, or deactivated from identity-provider status, the enabled flag, and membership;
       state that removal is performed by deactivation to retain audit attribution; display that last sign-in
       is not recorded rather than a zero or a placeholder date
+    - The control plane already derives the state AND reconciles the membership as part of the read, so the
+      surface prefers the server's `state` and keeps its own derivation only as the fallback for a response
+      that predates the field. Two places deciding who is deactivated is two places to disagree about whose
+      access was removed
+    - Search over address and username, plus filters on account state and on role. The role options come
+      from `CUSTOMER_ROLES` in `@amazflow/permissions`, not from a list written into the view, so the filter
+      cannot offer a role the policy does not have. A filtered-to-empty list says how many people exist
+      rather than reading as an empty organization
+    - The role control is offered for ACTIVE accounts only: a role assigned before the initial password
+      challenge completes is a role on an account that may never exist. Resend and revoke are offered for
+      invited accounts only; deactivate and reactivate are mutually exclusive by state
+    - Absent last sign-in renders the words "Not recorded". Most accounts genuinely have none, because
+      `lastLoginAt` is only written from task 11.7 onward, and a placeholder date is a lie a support
+      conversation gets built on. Asserted, along with the absence of any delete control
+    - Every mutation control is asserted ABSENT for a VIEWER — which holds `user:read` and nothing else
+      about users — in the same render that asserts them present for an administrator. A control the API
+      refuses is worse than a missing one: it reads as a broken product rather than as a boundary
     - _Requirements: 9.16, 9.21, 9.22, 29.12_
 
-  - [ ] 11.7 Record the sign-in timestamp on the membership record
+  - [x] 11.7 Record the sign-in timestamp on the membership record
+    - Stamped in `GET /me` rather than on every authenticated route. `/me` is the first call every surface
+      makes, and a write per request would make the membership record the hottest key in the table in order
+      to record a value nobody reads more precisely than "today"
     - _Requirements: 9.23_
 
-  - [ ] 11.8 Add team records, team routes, and the teams view
+  - [x] 11.8 Add team records, team routes, and the teams view
     - Create, rename, delete, add and remove members, all organization-scoped, all audited; the policy
       accepts a team identifier without any grant depending on it; the view states that team membership
       grants no permissions in this release and presents no team permission control
+    - `GET /teams` returns `grantsPermissions: false` and its reason IN THE PAYLOAD, not only in interface
+      copy, so any client rendering this cannot present teams as an access control by omission. The view
+      states it too, and a test asserts both the statement and the absence of any per-team permission control
+    - Team membership is offered from the real people list, so a team cannot be given a member who is not in
+      the organization. Delete and remove confirm first, because both silently change what somebody sees
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7_
 
-  - [ ] 11.9 Add the invitation record and the tokenized acceptance entry point
+  - [x] 11.9 Add the invitation record and the tokenized acceptance entry point
     - High-entropy token stored only as a hash; organization, invited address, granted role, inviting user,
       creation and expiry timestamps, and state persisted; seven-day default expiry; unauthenticated
       inspection returns only the organization display name and invited address, with expired returning 410
       and already-accepted returning a state conflict
+    - Inspection is unauthenticated because the recipient has no session yet, which is exactly why its
+      response is two fields: the organization's display name and the address it was sent to. Anything more
+      turns a leaked link into a directory of who was invited to what
+    - 410 rather than 404 for expired, and this distinction is load-bearing on the surface as well as the
+      wire: "this existed and has expired" sends a person to ask for a new one, while "no such invitation"
+      sends them to hunt for a typo that is not there. The three outcomes render as three different screens
+      with three different next actions, asserted
     - _Requirements: 26.1, 26.2, 26.3, 26.4, 26.5, 26.6, 26.7, 4.20_
 
-  - [ ] 11.10 Make acceptance single-use, server-resolved, and rate-limited
+  - [x] 11.10 Make acceptance single-use, server-resolved, and rate-limited
     - Verify token hash, state, expiry, and that the authenticated caller's address matches the record;
       transition by conditional write on the pending state so concurrent accepts yield one winner; resolve
       organization and role from the stored record and ignore any supplied in the body; resend issues a new
       token and revokes the previous one; rate-limit inspection and acceptance; audit every transition
+    - Server-resolved is visible in the client shape: acceptance is a POST with NO body at all, because
+      there is nothing a client could send that the server would believe. The surface also refuses to let a
+      signed-in person accept an invitation addressed to somebody else, and says which account to use
     - _Requirements: 26.8, 26.9, 26.10, 26.11, 26.12, 26.13, 26.14, 26.15, 26.16, 26.17, 26.18, 26.19_
 
-  - [ ] 11.11 Build the roles view from the real permission matrix, with custom role editing honestly disabled
+  - [x] 11.11 Build the roles view from the real permission matrix, with custom role editing honestly disabled
     - Custom role creation is not offered in this release; the panel states its reason rather than accepting
       input
+    - Rendered from `GET /permissions/matrix`, which serializes the same `ROLE_GRANTS` the API enforces, so
+      this screen cannot show a policy that is not the policy. `"own"` is rendered as "Own only" rather than
+      as a yes: "you can cancel runs" and "you can cancel your own runs" are different promises, and
+      collapsing them is how a person discovers the difference by being refused
+    - The `internal:` permissions and the `STAFF_ADMIN` column are filtered out — neither is a customer's
+      concern, and showing a column nobody in the organization can hold invites the question of who can
+    - No input of any kind, asserted. A custom-role form would accept a role nothing enforces
     - _Requirements: 11.4, 11.5, 7.19, 30.3, 30.4_
 
-  - [ ] 11.12 Build the security view and ship the honest disabled states for planned identity capabilities
+  - [x] 11.12 Build the security view and ship the honest disabled states for planned identity capabilities
     - Display the platform's actual session lifetime, password policy, and registered agent credentials;
       present the multi-factor setup page and the single-sign-on and directory-provisioning panels as
       intentionally disabled with stated reasons; present no control that accepts input without effect
+    - The facts come from `GET /security/facts`, which reports the lifetimes and password rules the platform
+      actually enforces rather than the ones a settings page would claim. The registered agent list shows
+      what is registered and never a credential value
+    - Each disabled capability states a SPECIFIC reason, not "coming soon": multi-factor because the
+      identity provider supports software tokens but AmazFlow has not shipped the enrolment and recovery
+      flow; single sign-on because federated first sign-in has nowhere to get the organization claim and
+      coarse group from; directory provisioning because it depends on a membership synchronisation flow that
+      does not exist. A vague reason is indistinguishable from a stalled feature
+    - Asserted to render no checkbox at all. A greyed-out toggle still tells a person their input nearly
+      counts, which is the impression the `plan` field (H-3) left for months
     - _Requirements: 11.6, 5.3, 5.4, 5.5, 5.6, 5.7, 30.3, 30.4, 30.9_
 
-  - [ ] 11.13 Build the organization-scoped audit view and the honestly disabled billing view
+  - [x] 11.13 Build the organization-scoped audit view and the honestly disabled billing view
     - Audit reads through the organization-scoped route; billing states that no billing system exists,
       displays the recorded plan value and the commercial contact route, and presents no control that
       accepts input
+    - Audit reads `GET /audit`, which reads the caller's OWN partition — that route exists so this screen
+      never needs the cross-organization `GET /activity` widened to serve it (requirement 6.14). The action
+      filter's options are DERIVED from the records that came back, because a hardcoded list offers filters
+      matching nothing and omits actions the platform has started recording, and both read as a broken trail
+    - Billing shows the recorded plan and the recorded commercial contact, and states plainly that the plan
+      value is reporting-only with no runtime limit reading it. An absent plan and an absent contact are
+      each stated as absent rather than filled with a plausible default — an invented `billing@` address is
+      a dead end somebody sends an invoice query to. No input, asserted
     - _Requirements: 11.7, 11.8, 11.9, 30.3, 30.4, 30.9_
 
-  - [ ] 11.14 Build personal settings: profile, security, and notification preferences
+  - [x] 11.14 Build personal settings: profile, security, and notification preferences
     - Every accepted preference is persisted; no setting is presented whose value is not stored; the
       notification view states that email delivery is not offered in this release and presents no email
       toggle
+    - Profile writes `PUT /me/profile`, which takes the target account from the verified session. The
+      sign-in email is rendered read-only and is not changed from this route
+    - Password change goes to the identity provider with the access token and the current password, and only
+      then calls the self-scoped `POST /me/password-changed` to record the audit event. That split is
+      requirement 4.8 made structural: there is no route on the control plane that sets a customer password,
+      so no operator path can exist. The unmet policy rules are named as the person types rather than after
+      they submit
+    - "Sign out everywhere" revokes every session including this browser and says so before it is used. The
+      surface also states that a device-by-device session list is NOT recorded, rather than rendering an
+      empty table that reads as "you have no other sessions"
+    - Preference toggles are generated from the `keys` the API returns, so the page cannot present a setting
+      the platform does not store. There is no email toggle and the absence is stated — asserted as the
+      absence of any email control, not as the absence of the word
     - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5, 12.6, 12.7, 22.9_
 
-  - [ ] 11.15 Property tests for invitation single-use and expiry (Property 5) with fast-check
+  - [x] 11.15 Property tests for invitation single-use and expiry (Property 5) with fast-check
     - **Property 5: Invitation single-use and expiry** — accepted at most once under any interleaving; an
       expired invitation is never accepted; organization and role come from the stored record even when the
       request body claims otherwise; resending invalidates the previous token
     - **Validates: Requirements 26.8, 26.9, 26.10, 26.11, 26.12, 26.13, 26.14, 26.15, 26.17, 34.14**
 
-  - [ ] 11.16 Add the time-to-live attribute to notification, customer-relationship-management event, and expired invitation records
+  - [x] 11.16 Add the time-to-live attribute to notification, customer-relationship-management event, and expired invitation records
     - Applies Q-8's conservative assumption: the attribute exists so a decided retention value needs no
       data-model change; no retention period is asserted
+    - The retention values default to 0, which means no time-to-live attribute is written at all. That is the
+      conservative direction: a wrong non-zero default silently deletes a customer's audit-adjacent records,
+      while a wrong zero costs storage and is reversible by setting one environment variable
     - _Requirements: 22.1, 25.17, 26.2_
 
 - [ ] 12. Notifications
+  - 3 of 4 sub-tasks complete. 12.4's cross-organization scoping half is outstanding; see that leaf
 
-  - [ ] 12.1 Persist notifications and per-user read state within the organization they concern
+  - [x] 12.1 Persist notifications and per-user read state within the organization they concern
     - Audience, kind, title, body, deep link, creation timestamp; the eight required kinds; read state per
       user and per notification
+    - Read state is a separate `NOTIFREAD#{username}#` record rather than a field on the notification, so a
+      notification addressed to a role or a team can be read by one person without being marked read for
+      everyone. Audience is a string, not a user id, so one notification can address a person, a role, a
+      team, or the whole organization
+    - Scoping holds by CONSTRUCTION rather than by a filter somebody has to remember: the list is a
+      `tenantRead`, so it is partitioned on the principal's own organization before any filtering happens
     - _Requirements: 22.1, 22.3, 22.6, 22.8_
 
-  - [ ] 12.2 Create notifications only where the corresponding platform event is also recorded
+  - [x] 12.2 Create notifications only where the corresponding platform event is also recorded
     - So no notification can exist for an event that did not occur
+    - Enforced as a coupling, not a rule: there is no `notify()` to call on its own. The only way to produce
+      a notification is `logActivity(tenantId, entry, notification)`, which writes the audit record first
+      and the notification second. The notification is best effort while the audit record is not, and that
+      asymmetry is deliberate — an event recorded without its notification is a missed nudge, while a
+      notification with no event sends somebody looking for work that never happened
     - _Requirements: 22.2_
 
-  - [ ] 12.3 Build the notification indicator, list, and read routes
+  - [x] 12.3 Build the notification indicator, list, and read routes
     - Unread count, creation time, deep link navigation, mark one read, mark all read; no email delivery
+    - The indicator renders the count only once it is KNOWN. An unloaded count shown as 0 is a claim that
+      nothing is waiting, which is a different statement from "not known yet" — so `null` renders no badge
+      at all rather than a zero
+    - Opening a notification marks it read and only then follows its deep link, and the link is resolved
+      through the one route table, so `/console/runs/{id}/` from an older record still lands on the run
+      rather than on Home with the identifier mistaken for something else. Asserted for every deep link shape
+    - "Mark all read" is disabled when nothing is unread rather than issuing a write with nothing to write.
+      Both states are asserted, since an always-enabled control and an always-disabled one both pass a test
+      that only looks for the label
+    - No email delivery anywhere, and the preferences page states that rather than offering a dead toggle
     - _Requirements: 22.4, 22.5, 22.7, 22.9_
 
   - [ ] 12.4* Notification scoping and read-state tests
+    - READ-STATE (22.6) is done: `phase4-administration.test.cjs` asserts that the list honours audience and
+      stored preferences, that every visible notification starts unread, and that mark-all writes a read
+      record for exactly the visible, preference-enabled notifications and no others
+    - OUTSTANDING (22.8): there is no route-level cross-organization assertion for notifications. Property 1
+      covers `tenantRead` generally and the notification list is built on it, so the scoping holds
+      structurally — but `GET /notifications` is absent from the enumerated list-route set in
+      `isolation-api.test.cjs`, so a future change that swapped `tenantRead` for a scan would not fail there.
+      Closing this is two entries in that enumeration (`GET /notifications` and `GET /teams`) plus seeding
+      notifications for Org B, and it is backend test work rather than surface work
     - _Requirements: 22.8, 22.6_
 
 - [ ] 13. Checkpoint — organization and user administration complete

@@ -27,21 +27,32 @@ import {
 } from "@amazflow/domain-ui";
 import { PrincipalError, type Principal } from "@amazflow/permissions";
 import { ToastProvider } from "@amazflow/ui";
-import { CUSTOMER_ROUTE_TABLE } from "./routes";
+import { CUSTOMER_ROUTE_TABLE, customerResourceSpecs } from "./routes";
 import { Shell } from "./shell";
 import {
   AgentsView,
   AnalyticsView,
   ApprovalsView,
+  AuditView,
   BillingView,
   ConnectionsView,
   ExceptionsView,
   HomeView,
+  InvitationAcceptance,
+  MfaSetupView,
   NotFoundView,
-  Resource,
+  NotificationPreferencesView,
+  NotificationsView,
+  OrganizationView,
+  PersonalSecurityView,
+  ProfileView,
   RolesView,
   RunsView,
+  SecurityView,
+  SupportView,
   TasksView,
+  TeamsView,
+  UsersView,
   WorkflowsView,
   type ViewProps,
 } from "./views";
@@ -49,7 +60,10 @@ import {
   clientFor,
   principalOf,
   readStoredSession,
+  refinePrincipal,
+  signOutSession,
   toLogin,
+  type MeResponse,
   type StoredSession,
 } from "./session";
 import "@amazflow/ui/ops.css";
@@ -62,28 +76,30 @@ import "@amazflow/ui/ops.css";
  * whose permission the role lacks reports `unavailable`, which the views render as "not available to
  * your role" rather than as an error.
  */
-const RESOURCES = [
-  { key: "me", path: "/me", permission: null, empty: null },
-  { key: "workflows", path: "/workflows", permission: "workflow:read", empty: [] },
-  { key: "runs", path: "/runs", permission: "run:read", live: true, empty: [] },
-  { key: "agentTasks", path: "/agent-tasks", permission: "task:read", live: true, empty: [] },
-  { key: "agents", path: "/agents", permission: "agent:read", empty: [] },
-  { key: "connections", path: "/connections/browser", permission: "connection:read", empty: [] },
-  { key: "notifications", path: "/notifications", permission: "notification:read", live: true, empty: [] },
-  { key: "permissionMatrix", path: "/permissions/matrix", permission: null, empty: null },
-] as const satisfies readonly ResourceSpec<unknown>[];
+
 
 export default function CustomerApp() {
   const [session, setSession] = useState<StoredSession | null>(null);
-  const [gate, setGate] = useState<"checking" | "ready" | "no-organization">("checking");
+  const [gate, setGate] = useState<"checking" | "ready" | "no-organization" | "invitation">("checking");
   const [principal, setPrincipal] = useState<Principal | null>(null);
   const [view, setView] = useState<ResolvedView>({ routeId: "home" });
 
   // The gate. One place decides whether the person in front of this surface may be here, which is the
   // arrangement Phase 1 established after four copies of this effect had already drifted.
   useEffect(() => {
-    const stored = readStoredSession();
     const here = `${window.location.pathname}${window.location.search}`;
+    const requested = pathToView(CUSTOMER_ROUTE_TABLE, window.location.pathname, window.location.search);
+    const stored = readStoredSession();
+
+    // Inspection is public by design: the person opening an invitation may not have an AmazFlow
+    // session yet. Acceptance itself still uses the authenticated client and is enforced server-side.
+    if (requested.routeId === "accept-invitation") {
+      setView(requested);
+      setSession(stored && (!stored.expiresAt || stored.expiresAt >= Date.now() || !!stored.refreshToken) ? stored : null);
+      setGate("invitation");
+      return;
+    }
+
     if (!stored) {
       toLogin(here, false);
       return;
@@ -120,6 +136,15 @@ export default function CustomerApp() {
     window.scrollTo({ top: 0 });
   }, []);
 
+  if (gate === "invitation") {
+    const parameters = typeof window === "undefined" ? null : new URLSearchParams(window.location.search);
+    const token = parameters?.get("token") ?? parameters?.get("t") ?? "";
+    return (
+      <ToastProvider>
+        <InvitationAcceptance token={token} session={session} onRenewed={setSession} />
+      </ToastProvider>
+    );
+  }
   if (gate === "no-organization") return <NoOrganization />;
   if (gate !== "ready" || !session || !principal) return <Booting />;
 
@@ -132,7 +157,7 @@ export default function CustomerApp() {
 
 function SignedIn({
   session,
-  principal,
+  principal: fromClaims,
   view,
   navigate,
   onRenewed,
@@ -144,20 +169,44 @@ function SignedIn({
   onRenewed: (session: StoredSession) => void;
 }) {
   const client = useMemo(() => clientFor(session, onRenewed), [session.idToken, onRenewed]);
-  const resources = useResources(client, principal, RESOURCES as readonly ResourceSpec<unknown>[]);
+  const specs = useMemo(() => customerResourceSpecs(fromClaims.orgId), [fromClaims.orgId]);
+  const [me, setMe] = useState<MeResponse | null>(null);
+
+  /**
+   * The principal the surface actually renders from.
+   *
+   * The token carries only the coarse group, so the gate can do no better than that group's default
+   * role. `GET /me` reports the FINE membership role, and Phase 4 is the release in which that role
+   * became assignable — so a surface still guessing from the group would show an APPROVER the whole
+   * administration section and show a VIEWER controls the API refuses. Refined once `/me` lands, and
+   * memoized on the role and team identifiers rather than on the response object so a poll that
+   * returns the same facts does not churn the read pass.
+   */
+  const teamKey = (me?.teamIds ?? []).join(",");
+  const principal = useMemo(
+    () => refinePrincipal(fromClaims, me),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [fromClaims, me?.platformRole, teamKey],
+  );
+
+  const resources = useResources(client, principal, specs as readonly ResourceSpec<unknown>[]);
 
   const slots = useMemo(() => {
     const out: Record<string, ResourceSlot<unknown>> = {};
-    for (const spec of RESOURCES) out[spec.key] = resources.read(spec as ResourceSpec<unknown>);
+    for (const spec of specs) out[spec.key] = resources.read(spec as ResourceSpec<unknown>);
     return out;
-  }, [resources]);
+  }, [resources, specs]);
 
-  const me = slots.me?.value as { organizationName?: string; organizationId?: string } | null;
+  const meSlot = slots.me;
+  useEffect(() => {
+    if (meSlot?.state === "ready" && meSlot.value) setMe(meSlot.value as MeResponse);
+  }, [meSlot?.state, meSlot?.value]);
+
   const notifications = (slots.notifications?.value ?? []) as { read?: boolean }[];
   const unread =
     slots.notifications?.state === "ready" ? notifications.filter((n) => !n.read).length : null;
 
-  const props: ViewProps = { principal, slots, navigate };
+  const props: ViewProps = { principal, slots, navigate, client, session, refresh: resources.refresh };
 
   return (
     <Shell
@@ -167,8 +216,11 @@ function SignedIn({
       navigate={navigate}
       unread={unread}
       lastLoadedAt={resources.lastLoadedAt}
+      refresh={() => {
+        void resources.refresh();
+      }}
       signOut={() => {
-        window.location.href = "https://amazflow.com/signed-out/";
+        void signOutSession(session);
       }}
     >
       {renderRoute(view, props)}
@@ -203,10 +255,32 @@ function renderRoute(view: ResolvedView, props: ViewProps) {
       return <ConnectionsView {...props} />;
     case "analytics":
       return <AnalyticsView {...props} />;
+    case "admin-organization":
+      return <OrganizationView {...props} />;
+    case "admin-users":
+      return <UsersView {...props} />;
+    case "admin-teams":
+      return <TeamsView {...props} />;
     case "admin-roles":
       return <RolesView {...props} />;
+    case "admin-security":
+      return <SecurityView {...props} />;
+    case "admin-audit":
+      return <AuditView {...props} />;
     case "admin-billing":
-      return <BillingView />;
+      return <BillingView {...props} />;
+    case "settings-profile":
+      return <ProfileView {...props} />;
+    case "settings-security":
+      return <PersonalSecurityView {...props} />;
+    case "settings-notifications":
+      return <NotificationPreferencesView {...props} />;
+    case "mfa-setup":
+      return <MfaSetupView />;
+    case "notifications":
+      return <NotificationsView {...props} />;
+    case "support":
+      return <SupportView {...props} />;
     default:
       return <NotFoundView />;
   }

@@ -373,6 +373,63 @@ export const PLATFORM_ROLE_DESCRIPTION: Record<string, string> = {
   STAFF_ADMIN: "AmazFlow staff. Not assignable to a member of your organization.",
 };
 
+/** Customer-visible organization execution state. Commercial lifecycle state is internal-only. */
+export const ORGANIZATION_STATUS_LABEL: Record<string, string> = {
+  active: "Active",
+  paused: "Paused",
+  suspended: "Suspended",
+};
+
+export const ORGANIZATION_STATUS_TONE: Record<string, Tone> = {
+  active: "good",
+  paused: "waiting",
+  suspended: "bad",
+};
+
+/** Membership state derived from the identity provider plus the stored membership record. */
+export const USER_STATE_LABEL: Record<string, string> = {
+  invited: "Invited",
+  active: "Active",
+  deactivated: "Deactivated",
+};
+
+export const USER_STATE_TONE: Record<string, Tone> = {
+  invited: "waiting",
+  active: "good",
+  deactivated: "muted",
+};
+
+/**
+ * The eight in-app notification kinds the control plane persists (requirement 22.3).
+ *
+ * Exactly the eight keys `NOTIFICATION_KINDS` in the handler accepts, in the same spelling. An earlier
+ * draft also carried upper-case aliases for each one "in case" the wire format differed — that is a
+ * fabricated contract, and it would have silently hidden a real mismatch by labelling a key the API
+ * never sends. A kind absent from this table falls back to its stored key, which is visible and
+ * fixable, rather than to a guess.
+ */
+export const NOTIFICATION_KINDS = [
+  "approval_required",
+  "run_failed",
+  "run_timed_out",
+  "agent_offline",
+  "connection_error",
+  "exception_raised",
+  "invitation_accepted",
+  "onboarding_step_ready",
+] as const;
+
+export const NOTIFICATION_KIND_LABEL: Record<string, string> = {
+  approval_required: "Approval required",
+  run_failed: "Run failed",
+  run_timed_out: "Run timed out",
+  agent_offline: "Agent offline",
+  connection_error: "Connection error",
+  exception_raised: "Exception raised",
+  invitation_accepted: "Invitation accepted",
+  onboarding_step_ready: "Onboarding step ready",
+};
+
 export const WORKFLOW_STATUS_LABEL: Record<string, string> = {
   active: "Published",
   draft: "Draft",
