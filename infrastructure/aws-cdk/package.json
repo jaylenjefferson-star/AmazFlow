@@ -8,9 +8,9 @@
     "test": "pnpm run test:inventory && pnpm run test:guardrails && pnpm run test:behaviour && pnpm run test:properties && pnpm run test:parity",
     "test:inventory": "node test/route-inventory.test.cjs",
     "test:guardrails": "node test/guardrail-state-machine.test.cjs && node test/guardrail-grants.test.cjs && node test/guardrail-leases.test.cjs && node test/guardrail-verification.test.cjs && node test/guardrail-capabilities.test.cjs && node test/guardrail-heartbeat-audit.test.cjs && node test/guardrail-concurrency-retry.test.cjs",
-    "test:behaviour": "node test/critical-path.test.cjs && node test/org-settings.test.cjs && node test/onboarding.test.cjs && node test/browser-connections.test.cjs && node test/auth-session.test.cjs && node test/isolation-baseline.test.cjs && node test/isolation-api.test.cjs && node test/per-role-permissions.test.cjs",
+    "test:behaviour": "node test/critical-path.test.cjs && node test/org-settings.test.cjs && node test/onboarding.test.cjs && node test/phase4-administration.test.cjs && node test/browser-connections.test.cjs && node test/auth-session.test.cjs && node test/isolation-baseline.test.cjs && node test/isolation-api.test.cjs && node test/per-role-permissions.test.cjs",
     "record:route-inventory": "node test/record-route-inventory.cjs",
-    "test:properties": "node test/property-tenant-isolation.test.cjs && node test/property-rbac.test.cjs",
+    "test:properties": "node test/property-tenant-isolation.test.cjs && node test/property-rbac.test.cjs && node test/property-invitations.test.cjs",
     "test:parity": "node test/source-parity.test.cjs && node --test test/provider-parity.test.cjs",
     "synth": "cdk synth"
   },

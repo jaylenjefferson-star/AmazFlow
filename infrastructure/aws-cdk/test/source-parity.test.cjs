@@ -143,7 +143,7 @@ const invariants = [
   ["a missing organization is reported distinctly from a missing role", /code:'NO_ORGANIZATION'/, /code: "NO_ORGANIZATION"/],
   ["a disabled account is refused on its next call", /code:'ACCOUNT_DISABLED'/, /code: "ACCOUNT_DISABLED"/],
   ["the account-status lookup fails open rather than signing everyone out", /return 'unknown';/, /return "unknown";/],
-  ["the current-user route reports organization, role and account status", /organizationId:a\.tenantId,role:a\.role,[\s\S]{0,120}accountStatus/, /organizationId: a\.tenantId,\s*role: a\.role,[\s\S]{0,200}accountStatus/],
+  ["the current-user route reports organization, role and account status", /organizationId:a\.tenantId,(organizationName:[^,]+,)?role:a\.role,[\s\S]{0,200}accountStatus/, /organizationId: a\.tenantId,[\s\S]{0,400}role: a\.role,[\s\S]{0,700}accountStatus/],
   ["sign-out-everywhere is exposed", /POST \/me\/sessions\/revoke/, /POST \/me\/sessions\/revoke/],
   ["sign-out-everywhere revokes at the identity provider", /AdminUserGlobalSignOutCommand/, /AdminUserGlobalSignOutCommand/],
   ["sign-out-everywhere is audited", /SESSIONS_REVOKED_SELF/, /SESSIONS_REVOKED_SELF/],
@@ -206,6 +206,92 @@ const invariants = [
   ["the response varies by origin, so no cache serves one surface another's body", /'vary':'origin'/, /vary: "origin"/],
   ["the requesting origin is resolved once per invocation", /requestOrigin=allowedOriginFor\(e\)/, /requestOrigin = allowedOriginFor\(e\)/],
   ["the permissive wildcard cross-origin header is gone", /^(?![\s\S]*access-control-allow-origin':'\*')[\s\S]*$/, /^(?![\s\S]*"access-control-allow-origin": "\*")[\s\S]*$/],
+
+  // Phase 4 -- organization, users, teams, invitations, notifications, personal settings. Same
+  // standing rule.
+  //
+  // The invitation half is where the asymmetric risk lives. A copy that carried the acceptance route
+  // but not its conditional write would accept the same invitation twice under concurrency; a copy
+  // that read the organization out of the request body would let a token holder join any tenant they
+  // could name. Neither failure is visible from the outside until it has already happened.
+  ["the commercial lifecycle status is separate from the execution status", /const COMMERCIAL_STATUSES=/, /const COMMERCIAL_STATUSES = /],
+  ["no recorded commercial status reads as commercially active", /const lifecycleStatusOf=/, /const lifecycleStatusOf = /],
+  ["internal-only organization fields never reach a customer surface", /const INTERNAL_ORG_FIELDS=\['lifecycleStatus','accountOwnerUserId','crmRecordId'\]/, /const INTERNAL_ORG_FIELDS = \["lifecycleStatus", "accountOwnerUserId", "crmRecordId"\]/],
+  ["the organization projection strips internal fields before a customer response", /const organizationFor=/, /const organizationFor = /],
+  ["every successful route response has an explicit allowlist", /const RESPONSE_FIELDS_BY_ROUTE=new Map/, /const RESPONSE_FIELDS_BY_ROUTE = new Map/],
+  ["a missing successful response contract fails closed", /response allowlist missing/, /response allowlist missing/],
+  ["private response fields are stripped at every nesting depth", /privateResponseFields\.has\(key\)/, /privateResponseFields\.has\(key\)/],
+  ["a customer cannot set its own execution status or plan", /is set by AmazFlow, not from this route/, /is set by AmazFlow, not from this route/],
+  ["an internal field is refused by name rather than dropped", /is an internal AmazFlow field and cannot be set by an organization/, /is an internal AmazFlow field and cannot be set by an organization/],
+  ["the activation timestamp is derived and never caller-supplied", /activatedAt is derived from the first completed production run/, /activatedAt is derived from the first completed production run/],
+  ["a status change is its own audit event carrying previous and new values", /ORG_STATUS_CHANGED/, /ORG_STATUS_CHANGED/],
+  ["a slug is reserved permanently, so it is never reused by a later organization", /const slugReservationKey=slug=>`SLUGRESERVED#\$\{slug\}`/, /const slugReservationKey = \(slug\) => `SLUGRESERVED#\$\{slug\}`/],
+  ["slug reservation is atomic under concurrent organization creation", /ConditionExpression:'attribute_not_exists\(pk\)'/, /ConditionExpression: "attribute_not_exists\(pk\)"/],
+  ["a derived slug is disambiguated against live and retired slugs", /const uniqueSlugFrom=/, /const uniqueSlugFrom = /],
+  ["a derived slug retries after losing a concurrent reservation race", /err\.name!=='ConditionalCheckFailedException'/, /err\.name !== "ConditionalCheckFailedException"/],
+  ["an explicitly requested slug that is taken is an error rather than a silent rename", /is not available/, /is not available/],
+
+  // 7.5/11.5 -- membership write-side and the role-change route (H-8).
+  ["the user list reconciles identity-provider state into membership state", /const state=!u\.Enabled\?'deactivated'/, /const state = !u\.Enabled/],
+  ["the user list returns the stored fine-grained role", /platformRole:membership\.role/, /platformRole: membership\.role/],
+  ["the user list returns membership team assignments", /teamIds:membership\.teamIds\|\|\[\]/, /teamIds: membership\.teamIds \|\| \[\]/],
+  ["the user list reports absent last sign-in honestly", /lastLoginAt:membership\.lastLoginAt\|\|null/, /lastLoginAt: membership\.lastLoginAt \|\| null/],
+  ["status changes reconcile the membership record", /status:body\.enabled\?'active':'deactivated'/, /status: body\.enabled \? "active" : "deactivated"/],
+  ["the role-change route is exposed", /POST \/tenants\/\{tenantId\}\/users\/\{username\}\/role/, /POST \/tenants\/\{tenantId\}\/users\/\{username\}\/role/],
+  ["a role change reconciles the coarse group", /AdminRemoveUserFromGroupCommand/, /AdminRemoveUserFromGroupCommand/],
+  ["a role change refuses the staff group", /AmazFlow staff access is not granted through this route/, /AmazFlow staff access is not granted through this route/],
+  ["a role change refuses to leave the organization without an owner", /const wouldOrphanOwnership=/, /const wouldOrphanOwnership = /],
+  ["a role change is audited with the previous and new role", /TEAM_MEMBER_ROLE_CHANGED/, /TEAM_MEMBER_ROLE_CHANGED/],
+  ["the invitation resend route is exposed", /POST \/tenants\/\{tenantId\}\/users\/\{username\}\/invitation\/resend/, /POST \/tenants\/\{tenantId\}\/users\/\{username\}\/invitation\/resend/],
+  ["the invitation revoke route is exposed", /DELETE \/tenants\/\{tenantId\}\/users\/\{username\}\/invitation/, /DELETE \/tenants\/\{tenantId\}\/users\/\{username\}\/invitation/],
+  ["revoke applies only before the initial password challenge completes", /has already signed in, so this is no longer a pending invitation/, /has already signed in, so this is no longer a pending invitation/],
+  ["revoke disables rather than deletes", /INVITATION_REVOKED/, /INVITATION_REVOKED/],
+
+  // 11.9/11.10 -- the invitation record and its single-use acceptance.
+  ["only the invitation token's hash is stored", /tokenHash:hashToken\(token\)/, /tokenHash: hashToken\(token\)/],
+  ["the invitation token is high-entropy", /crypto\.randomBytes\(32\)\.toString\('base64url'\)/, /crypto\.randomBytes\(32\)\.toString\("base64url"\)/],
+  ["the invitation expiry default is seven days", /const INVITATION_TTL_DAYS=7/, /const INVITATION_TTL_DAYS = 7/],
+  ["unauthenticated inspection is exposed", /GET \/invitations\/\{token\}/, /GET \/invitations\/\{token\}/],
+  ["an expired invitation answers 410 rather than 404", /This invitation has expired\. Ask your AmazFlow contact/, /This invitation has expired/],
+  ["an already-accepted invitation answers a state conflict", /already been accepted/, /already been accepted/],
+  ["acceptance is exposed", /POST \/invitations\/\{token\}\/accept/, /POST \/invitations\/\{token\}\/accept/],
+  ["acceptance is a conditional write on the pending state, so concurrent accepts yield one winner", /attribute_exists\(pk\) AND #state = :pending/, /attribute_exists\(pk\) AND #state = :pending/],
+  ["the conditional state alias is supplied to the database", /ExpressionAttributeNames=condition\.names/, /ExpressionAttributeNames = condition\.names/],
+  ["the caller's own address must match the invited address", /This invitation was sent to a different email address/, /This invitation was sent to a different email address/],
+  ["the accepted membership takes its organization and role from the stored record", /role:invitation\.role/, /role: invitation\.role/],
+  ["a resend invalidates the previously issued token", /superseded_by_resend/, /superseded_by_resend/],
+  ["invitation inspection and acceptance are rate-limited", /const RATE_LIMITS=\{invitation_inspect/, /const RATE_LIMITS = \{\s*invitation_inspect/],
+  ["the rate limit is keyed on the caller rather than on the token", /const callerAddress=/, /const callerAddress = /],
+  ["every invitation transition is audited", /INVITATION_ACCEPTED/, /INVITATION_ACCEPTED/],
+
+  // 11.8 -- teams, and the constraint that they grant nothing.
+  ["the team routes are exposed", /GET \/teams['"]/, /GET \/teams"/],
+  ["team membership is written to the membership record", /const syncTeamMembership=/, /const syncTeamMembership = /],
+  ["no grant anywhere depends on a team identifier", /^(?![\s\S]*resource\.teamId)[\s\S]*$/, /^(?![\s\S]*resource\.teamId)[\s\S]*$/],
+  ["team changes are audited", /TEAM_CREATED/, /TEAM_CREATED/],
+
+  // 12.1/12.2 -- notifications, and the coupling that keeps them honest.
+  ["the eight notification kinds are a closed set", /const NOTIFICATION_KINDS=\['approval_required','run_failed','run_timed_out','agent_offline','connection_error','exception_raised','invitation_accepted','onboarding_step_ready'\]/, /const NOTIFICATION_KINDS = \[\s*"approval_required",\s*"run_failed",\s*"run_timed_out",\s*"agent_offline",\s*"connection_error",\s*"exception_raised",\s*"invitation_accepted",\s*"onboarding_step_ready",?\s*\]/],
+  ["a notification can only be created alongside a recorded event", /const logActivity=async\(tenantId,entry,notification\)/, /const logActivity = async \(tenantId, entry, notification\)/],
+  ["a notification links back to the event that created it", /eventId:id/, /eventId: id/],
+  ["read state is per user and per notification", /const notificationReadKey=\(username,notificationId\)/, /const notificationReadKey = \(username, notificationId\)/],
+  ["the notification read is partitioned on the principal's own organization", /tenantRead\('NOTIFICATION#',p\)/, /tenantRead\("NOTIFICATION#", p\)/],
+  ["notification delivery filters by user, role, or team audience", /const audienceMatches=audience=>/, /const audienceMatches = \(audience\) =>/],
+  ["disabled notification kinds are omitted using stored preferences", /preferences\.values\[`notify\.\$\{n\.kind\}`\]!==false/, /preferences\.values\[`notify\.\$\{n\.kind\}`\] !== false/],
+  ["mark-all applies only to notifications visible to that principal", /const items=await notificationsFor\(p,username\)/, /const items = await notificationsFor\(p, username\)/],
+  ["the notification routes are exposed", /GET \/notifications['"]/, /GET \/notifications"/],
+  ["no email delivery path exists", /^(?![\s\S]*SendEmailCommand[\s\S]{0,200}notification)[\s\S]*$/, /^(?![\s\S]*SendEmailCommand[\s\S]{0,200}notification)[\s\S]*$/],
+
+  // 11.14 -- personal preferences, and 11.16's retention attribute.
+  ["the preference key set is an allowlist", /const PREFERENCE_KEYS=/, /const PREFERENCE_KEYS = /],
+  ["an unknown preference key is refused rather than dropped", /is not a preference this platform stores/, /is not a preference this platform stores/],
+  ["the personal preference routes are exposed", /GET \/me\/preferences/, /GET \/me\/preferences/],
+  ["the retention attribute exists without asserting a retention period", /const RETENTION_DAYS=/, /const RETENTION_DAYS = /],
+  ["no retention period is asserted by default", /if\(!Number\.isFinite\(days\)\|\|days<=0\)return undefined/, /if \(!Number\.isFinite\(days\) \|\| days <= 0\) return undefined/],
+
+  // 11.7 -- the sign-in timestamp, and 9.22's honest absence.
+  ["the sign-in timestamp is recorded on the membership record", /const touchMembershipLogin=/, /const touchMembershipLogin = /],
+  ["an unrecorded sign-in is reported as absent rather than as a date", /lastLoginAt:\(meMembership&&meMembership\.lastLoginAt\)\|\|null/, /lastLoginAt: \(meMembership && meMembership\.lastLoginAt\) \|\| null/],
 ];
 
 let pass = 0, fail = 0;

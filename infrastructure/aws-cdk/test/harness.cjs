@@ -24,7 +24,9 @@ class AdminEnableUserCommand extends Cmd {}
 class AdminDisableUserCommand extends Cmd {}
 class AdminCreateUserCommand extends Cmd {}
 class AdminAddUserToGroupCommand extends Cmd {}
+class AdminRemoveUserFromGroupCommand extends Cmd {}
 class AdminGetUserCommand extends Cmd {}
+class AdminUpdateUserAttributesCommand extends Cmd {}
 class AdminUserGlobalSignOutCommand extends Cmd {}
 
 class UsernameExists extends Error { constructor() { super("User already exists"); this.name = "UsernameExistsException"; } }
@@ -36,8 +38,8 @@ const users = new Map();
 const globallySignedOut = new Set();
 /** group name -> Set<username> */
 const groups = new Map();
-/** Set on the harness to make the next AdminAddUserToGroup fail, for the partial-failure test. */
-const cognitoFaults = { failNextAddToGroup: false };
+/** Set on the harness to make the next group mutation fail, for partial-failure tests. */
+const cognitoFaults = { failNextAddToGroup: false, failNextRemoveFromGroup: false };
 
 const attrList = (obj) => Object.entries(obj).map(([Name, Value]) => ({ Name, Value }));
 
@@ -45,7 +47,10 @@ const cognito = {
   async send(cmd) {
     if (cmd instanceof AdminCreateUserCommand) {
       const username = cmd.input.Username;
-      if (users.has(username)) throw new UsernameExists();
+      if (users.has(username)) {
+        if (cmd.input.MessageAction === "RESEND") return { User: users.get(username) };
+        throw new UsernameExists();
+      }
       const record = {
         Username: username,
         Attributes: cmd.input.UserAttributes || [],
@@ -67,6 +72,16 @@ const cognito = {
       groups.get(GroupName).add(Username);
       return {};
     }
+    if (cmd instanceof AdminRemoveUserFromGroupCommand) {
+      if (cognitoFaults.failNextRemoveFromGroup) {
+        cognitoFaults.failNextRemoveFromGroup = false;
+        throw new Error("harness: simulated AdminRemoveUserFromGroup failure");
+      }
+      const { Username, GroupName } = cmd.input;
+      if (!users.has(Username)) throw new UserNotFound();
+      groups.get(GroupName)?.delete(Username);
+      return {};
+    }
     if (cmd instanceof ListUsersCommand) {
       return { Users: [...users.values()] };
     }
@@ -77,7 +92,16 @@ const cognito = {
     if (cmd instanceof AdminGetUserCommand) {
       const found = users.get(cmd.input.Username);
       if (!found) throw new UserNotFound();
-      return found;
+      return { ...found, UserAttributes: found.Attributes, UserLastModifiedDate: found.UserLastModifiedDate };
+    }
+    if (cmd instanceof AdminUpdateUserAttributesCommand) {
+      const found = users.get(cmd.input.Username);
+      if (!found) throw new UserNotFound();
+      const byName = Object.fromEntries((found.Attributes || []).map((x) => [x.Name, x.Value]));
+      for (const attr of cmd.input.UserAttributes || []) byName[attr.Name] = attr.Value;
+      found.Attributes = attrList(byName);
+      found.UserLastModifiedDate = new Date();
+      return {};
     }
     if (cmd instanceof AdminUserGlobalSignOutCommand) {
       const found = users.get(cmd.input.Username);
@@ -115,6 +139,7 @@ const resetPool = () => {
   groups.clear();
   globallySignedOut.clear();
   cognitoFaults.failNextAddToGroup = false;
+  cognitoFaults.failNextRemoveFromGroup = false;
 };
 
 function evalCondition(expr, existing, values) {
@@ -126,6 +151,8 @@ function evalCondition(expr, existing, values) {
     const lease = Number(existing.leaseExpiresAtMs?.N ?? "0");
     return lease < Number(values[":nowMs"].N);
   }
+  if (expr === "attribute_exists(pk) AND #state = :pending")
+    return !!existing && existing.state?.S === values[":pending"]?.S;
   throw new Error("harness: unsupported ConditionExpression " + expr);
 }
 
@@ -184,8 +211,8 @@ const stubs = {
       }
     },
     ListUsersCommand, ListUsersInGroupCommand, AdminEnableUserCommand, AdminDisableUserCommand,
-    AdminCreateUserCommand, AdminAddUserToGroupCommand, AdminGetUserCommand,
-    AdminUserGlobalSignOutCommand,
+    AdminCreateUserCommand, AdminAddUserToGroupCommand, AdminRemoveUserFromGroupCommand,
+    AdminGetUserCommand, AdminUpdateUserAttributesCommand, AdminUserGlobalSignOutCommand,
   },
   "@aws-sdk/client-bedrock-agentcore": { BedrockAgentCoreClient: class { async send() { throw new Error("no agentcore in harness"); } }, InvokeHarnessCommand: Cmd },
 };

@@ -1,0 +1,9 @@
+{
+  "pbtResults": {
+    "11.15 Property tests for invitation single-use and expiry (Property 5) with fast-check": {
+      "status": "passed",
+      "lastRunTimestamp": 1789086169804
+    }
+  },
+  "executionHistory": {}
+}

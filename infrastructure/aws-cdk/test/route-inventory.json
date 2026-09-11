@@ -11,6 +11,33 @@
       "orgScope": "entity-identifier-scoped"
     },
     {
+      "route": "DELETE /teams/{id}",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "DELETE /teams/{id}/members/{username}",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "DELETE /tenants/{tenantId}/users/{username}/invitation",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
       "route": "GET /activity",
       "copies": [
         "deployed",
@@ -92,6 +119,15 @@
       "orgScope": "unauthenticated"
     },
     {
+      "route": "GET /invitations/{token}",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "unauthenticated",
+      "orgScope": "unauthenticated"
+    },
+    {
       "route": "GET /leads",
       "copies": [
         "deployed",
@@ -102,6 +138,33 @@
     },
     {
       "route": "GET /me",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /me/preferences",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /me/profile",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /notifications",
       "copies": [
         "deployed",
         "canonical"
@@ -155,6 +218,15 @@
       "orgScope": "session-scoped"
     },
     {
+      "route": "GET /security/facts",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
       "route": "GET /settings",
       "copies": [
         "deployed",
@@ -165,6 +237,15 @@
     },
     {
       "route": "GET /support/tickets",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /teams",
       "copies": [
         "deployed",
         "canonical"
@@ -353,6 +434,15 @@
       "orgScope": "session-scoped"
     },
     {
+      "route": "POST /invitations/{token}/accept",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
       "route": "POST /leads",
       "copies": [
         "deployed",
@@ -362,6 +452,15 @@
       "orgScope": "unauthenticated"
     },
     {
+      "route": "POST /me/password-changed",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
       "route": "POST /me/sessions/revoke",
       "copies": [
         "deployed",
@@ -369,6 +468,24 @@
       ],
       "authMode": "cognito-session",
       "orgScope": "session-scoped"
+    },
+    {
+      "route": "POST /notifications/read-all",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "POST /notifications/{id}/read",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
     },
     {
       "route": "POST /organizations",
@@ -381,6 +498,15 @@
     },
     {
       "route": "POST /organizations/{slug}/branding",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "POST /organizations/{slug}/profile",
       "copies": [
         "deployed",
         "canonical"
@@ -461,7 +587,43 @@
       "orgScope": "entity-identifier-scoped"
     },
     {
+      "route": "POST /teams",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "POST /teams/{id}/members",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
       "route": "POST /tenants/{tenantId}/users",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "POST /tenants/{tenantId}/users/{username}/invitation/resend",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "POST /tenants/{tenantId}/users/{username}/role",
       "copies": [
         "deployed",
         "canonical"
@@ -515,6 +677,24 @@
       "orgScope": "entity-identifier-scoped"
     },
     {
+      "route": "PUT /me/preferences",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "PUT /me/profile",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
       "route": "PUT /organizations/{slug}",
       "copies": [
         "deployed",
@@ -522,6 +702,15 @@
       ],
       "authMode": "cognito-session",
       "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "PUT /teams/{id}",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
     }
   ]
 }

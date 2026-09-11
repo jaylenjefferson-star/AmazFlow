@@ -8,6 +8,7 @@ const {
   QueryCommand,
   PutItemCommand,
   GetItemCommand,
+  DeleteItemCommand,
   TransactWriteItemsCommand,
 } = require("@aws-sdk/client-dynamodb");
 const {
@@ -42,6 +43,7 @@ const {
   ROLE_GRANTS,
   STAFF_GRANTS,
   PLATFORM_ROLES,
+  CUSTOMER_ROLES,
   PERMISSIONS,
 } = require("@amazflow/permissions");
 const { ExecutionGrantService, WorkflowEngine } = require("@amazflow/engine");
@@ -54,7 +56,9 @@ const {
   AdminDisableUserCommand,
   AdminCreateUserCommand,
   AdminAddUserToGroupCommand,
+  AdminRemoveUserFromGroupCommand,
   AdminGetUserCommand,
+  AdminUpdateUserAttributesCommand,
   AdminUserGlobalSignOutCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
 const db = new DynamoDBClient({});
@@ -98,6 +102,89 @@ const privateResponseFields = new Set([
   "agentSessionId",
   "browserSessionId",
 ]);
+
+// Requirement 27.11: every route has an explicit top-level response contract. The previous global
+// denylist only removed three known-sensitive names, which meant a newly-added database field was
+// returned automatically. These allowlists invert that default: a new field is absent until the route
+// that owns it names it here. Nested values are still passed through the private-field replacer below,
+// so identifiers such as managedProfileId remain server-only at every depth.
+const RESPONSE_FIELD_GROUPS = {
+  ack: ["ok", "id", "username", "email", "enabled", "deleted", "read", "revoked", "revokedInvitations", "invitationId", "acceptUrl", "previousRole", "role", "coarseGroup"],
+  health: ["ok", "service", "boundary", "aiRuntime"],
+  me: ["userId", "tenantId", "organizationId", "organizationName", "email", "role", "platformRole", "teamIds", "sections", "lastLoginAt", "accountStatus"],
+  profile: ["email", "displayName", "givenName", "familyName", "updatedAt"],
+  security: ["accessTokenMinutes", "idTokenMinutes", "refreshTokenDays", "passwordPolicy", "mfaEnrollmentAvailable", "singleSignOnAvailable", "directoryProvisioningAvailable"],
+  organization: ["id", "tenantId", "name", "slug", "status", "plan", "createdAt", "updatedAt", "branding", "settings", "primaryDomain", "primaryContact", "billingContact", "accountOwnerUserId", "crmRecordId", "activatedAt", "onboardingStatus", "lifecycleStatus"],
+  user: ["username", "email", "role", "platformRole", "teamIds", "enabled", "userStatus", "state", "membershipStatus", "invitedAt", "invitedBy", "activatedAt", "lastLoginAt", "createdAt", "updatedAt"],
+  team: ["id", "tenantId", "name", "memberUsernames", "createdAt", "updatedAt", "deleted"],
+  teams: ["teams", "grantsPermissions", "grantsPermissionsReason"],
+  invitation: ["organizationName", "organizationId", "email", "role", "acceptUrl", "invitationId", "username", "enabled", "userStatus", "createdAt"],
+  notification: ["id", "tenantId", "audience", "kind", "title", "body", "deepLink", "createdAt", "read", "eventId"],
+  preferences: ["username", "values", "updatedAt", "keys"],
+  workflow: ["id", "tenantId", "name", "description", "version", "status", "startAt", "steps", "assignedRoles", "inputSchema", "manualMinutesEstimate", "createdAt", "updatedAt", "requiredTargets", "targets", "ready", "checks"],
+  run: ["id", "tenantId", "workflowId", "workflowVersion", "workflowName", "status", "currentStepId", "createdBy", "createdAt", "startedAt", "updatedAt", "completedAt", "input", "context", "audit", "steps", "output", "error", "testRun", "resumedFromRunId", "grant", "result", "usage", "traceId", "aiRuntimeLabel", "ok", "runId", "stepId", "recordedAt"],
+  task: ["id", "tenantId", "runId", "stepId", "operation", "status", "executionTarget", "requiredCapabilities", "createdBy", "createdAt", "updatedAt", "claimedBy", "claimExpiresAt", "grant", "result"],
+  agent: ["id", "tenantId", "name", "status", "connectionStatus", "agentType", "capabilities", "platform", "version", "permissions", "lastHeartbeatAt", "createdAt", "updatedAt", "code", "expiresAt", "installationId", "agent", "token", "agentId", "agentName", "userId", "userRole", "ok"],
+  connection: ["id", "tenantId", "name", "baseUrl", "allowedOrigins", "preferredMode", "status", "createdAt", "updatedAt", "loginSessionId", "expiresAt", "ready", "message"],
+  audit: ["id", "tenantId", "at", "actor", "actorLabel", "action", "summary", "details"],
+  ticket: ["id", "tenantId", "subject", "message", "status", "createdBy", "createdAt", "updatedAt", "category", "priority"],
+  lead: ["id", "tenantId", "name", "email", "company", "role", "workflow", "volume", "message", "source", "status", "createdAt"],
+  settings: ["taskExpiryMs", "confirmationExpiryMs", "agentCodeExpiryMs", "aiRuntimeLabel", "dataBoundary", "updatedAt"],
+  matrix: ["roles", "permissions", "grants"],
+  copilot: ["id", "tenantId", "status", "messages", "actions", "role", "content", "createdAt", "updatedAt", "result", "usage", "traceId"],
+  summary: ["totalRunsCompleted", "totalMinutesSaved", "dollarEstimate"],
+};
+const RESPONSE_FIELDS_BY_ROUTE = new Map();
+const allowResponseFields = (routes, group) => {
+  const fields = new Set(RESPONSE_FIELD_GROUPS[group]);
+  for (const route of routes) RESPONSE_FIELDS_BY_ROUTE.set(route, fields);
+};
+allowResponseFields(["GET /health"], "health");
+allowResponseFields(["POST /leads", "POST /me/sessions/revoke", "POST /me/password-changed", "POST /notifications/{id}/read", "POST /notifications/read-all", "POST /tenants/{tenantId}/users/{username}/sessions/revoke", "POST /tenants/{tenantId}/users/{username}/status"], "ack");
+allowResponseFields(["GET /me"], "me");
+allowResponseFields(["GET /me/profile", "PUT /me/profile"], "profile");
+allowResponseFields(["GET /security/facts"], "security");
+allowResponseFields(["GET /me/preferences", "PUT /me/preferences"], "preferences");
+allowResponseFields(["GET /organizations", "POST /organizations", "GET /organizations/{slug}", "PUT /organizations/{slug}", "POST /organizations/{slug}/profile", "POST /organizations/{slug}/settings", "POST /organizations/{slug}/branding", "GET /organizations/{slug}/branding"], "organization");
+allowResponseFields(["GET /tenants/{tenantId}/users"], "user");
+allowResponseFields(["POST /tenants/{tenantId}/users/{username}/role", "POST /tenants/{tenantId}/users/{username}/invitation/resend", "DELETE /tenants/{tenantId}/users/{username}/invitation"], "ack");
+allowResponseFields(["POST /tenants/{tenantId}/users"], "invitation");
+allowResponseFields(["GET /invitations/{token}", "POST /invitations/{token}/accept"], "invitation");
+allowResponseFields(["GET /teams"], "teams");
+allowResponseFields(["POST /teams", "PUT /teams/{id}", "DELETE /teams/{id}", "POST /teams/{id}/members", "DELETE /teams/{id}/members/{username}"], "team");
+allowResponseFields(["GET /notifications"], "notification");
+allowResponseFields(["GET /permissions/matrix"], "matrix");
+allowResponseFields(["GET /workflows", "POST /workflows", "POST /workflows/generate", "GET /workflows/{id}/versions", "GET /workflows/{id}/preflight"], "workflow");
+allowResponseFields(["GET /runs", "POST /workflows/{id}/runs", "POST /runs/{id}/cancel", "POST /runs/{id}/confirmations/{stepId}/confirm", "POST /runs/{id}/approvals/{stepId}", "POST /runs/{id}/executor/invoke", "POST /agent-tasks/{id}/result", "POST /agent/tasks/{id}/result", "POST /agent/tools/record-step-result", "POST /ai/execute"], "run");
+allowResponseFields(["GET /agent-tasks", "GET /agent/tasks", "POST /agent/tasks/{id}/claim"], "task");
+allowResponseFields(["GET /agents", "POST /agent-authorizations", "POST /agent-authorizations/{code}/exchange", "POST /agents/{id}/revoke", "POST /agent/heartbeat"], "agent");
+allowResponseFields(["GET /connections/browser", "POST /connections/browser", "POST /connections/browser/{id}/login-session", "POST /connections/browser/{id}/login-session/complete", "DELETE /connections/browser/{id}"], "connection");
+allowResponseFields(["GET /audit", "GET /activity"], "audit");
+allowResponseFields(["GET /support/tickets", "POST /support/tickets", "POST /support/tickets/{id}/status"], "ticket");
+allowResponseFields(["GET /leads"], "lead");
+allowResponseFields(["GET /settings", "POST /settings"], "settings");
+allowResponseFields(["GET /copilot/actions", "GET /copilot/conversation", "POST /copilot/messages", "POST /copilot/actions/{id}/apply", "POST /copilot/actions/{id}/discard"], "copilot");
+allowResponseFields(["GET /tenants/{tenantId}/summary"], "summary");
+const ERROR_RESPONSE_FIELDS = new Set([
+  "error", "code", "message", "correlationId", "retryAfterSeconds", "allowedEmailDomains",
+  "organizationName", "email", "organizationStatus", "limit", "inFlight", "preflight",
+]);
+let responseRoute = "UNSET";
+const projectRouteResponse = (route, status, body) => {
+  if (body === null || body === undefined || typeof body !== "object") return body;
+  const fields = status >= 400 ? ERROR_RESPONSE_FIELDS : RESPONSE_FIELDS_BY_ROUTE.get(route);
+  // Fail closed for a successful response whose route forgot to declare a contract. Error envelopes
+  // remain useful even for an unknown route, but success data never leaves under an implicit schema.
+  if (!fields) {
+    console.error("response allowlist missing", { route, status });
+    return {};
+  }
+  const one = (value) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+    return Object.fromEntries(Object.entries(value).filter(([key]) => fields.has(key)));
+  };
+  return Array.isArray(body) ? body.map(one) : one(body);
+};
 // One correlation identifier per invocation, so a customer reporting "it said forbidden" can be
 // matched to the exact log line. Set once at the top of the handler; a Lambda container serves one
 // invocation at a time, so module scope is the right lifetime.
@@ -157,16 +244,19 @@ const allowedOriginFor = (e) => {
 };
 const corsHeaders = () =>
   requestOrigin ? { "access-control-allow-origin": requestOrigin, vary: "origin" } : {};
-const reply = (s, b) => ({
-  statusCode: s,
-  headers: {
-    "content-type": "application/json",
-    ...corsHeaders(),
-  },
-  body: JSON.stringify(withErrorEnvelope(s, b), (key, value) =>
-    privateResponseFields.has(key) ? undefined : value,
-  ),
-});
+const reply = (s, b) => {
+  const projected = projectRouteResponse(responseRoute, s, withErrorEnvelope(s, b));
+  return {
+    statusCode: s,
+    headers: {
+      "content-type": "application/json",
+      ...corsHeaders(),
+    },
+    body: JSON.stringify(projected, (key, value) =>
+      privateResponseFields.has(key) ? undefined : value,
+    ),
+  };
+};
 const emitApplicationMetric = (name, value = 1) =>
   console.log(
     JSON.stringify({
@@ -539,11 +629,12 @@ const resolveMembership = async (orgId, username, group) => {
   const stored = await readMembership(orgId, username).catch(() => null);
   if (stored && stored.role && roleIsReachableFromGroup(stored.role, group)) return stored;
   const membership = {
+    ...(stored || {}),
     orgId,
     username,
     role: defaultRoleForGroup(group),
     teamIds: stored && Array.isArray(stored.teamIds) ? stored.teamIds : [],
-    status: "active",
+    status: (stored && stored.status) || "active",
     createdAt: (stored && stored.createdAt) || now(),
     updatedAt: now(),
     backfilled: !stored,
@@ -2743,18 +2834,44 @@ const listTenantUsers = async (tenantId) => {
       const attrs = Object.fromEntries(
         (u.Attributes || []).map((x) => [x.Name, x.Value]),
       );
-      if (attrs["custom:tenant_id"] === tenantId && roleByUsername[u.Username])
-        users.push({
-          username: u.Username,
-          email: attrs.email || u.Username,
-          role: roleByUsername[u.Username],
-          enabled: !!u.Enabled,
-          // userStatus distinguishes an invitation nobody has accepted yet
-          // (FORCE_CHANGE_PASSWORD) from a working account (CONFIRMED). Without it the console
-          // cannot tell "invited last week and ignored it" from "signed in this morning".
-          userStatus: u.UserStatus || null,
-          createdAt: u.UserCreateDate ? new Date(u.UserCreateDate).toISOString() : null,
-        });
+      const group = roleByUsername[u.Username];
+      if (attrs["custom:tenant_id"] !== tenantId || !group) continue;
+      const email = attrs.email || u.Username;
+      let membership = await resolveMembership(tenantId, email, group);
+      // Cognito is authoritative for enabled state and completion of the initial challenge. Reconcile
+      // the membership as part of this read, while retaining its fine role, teams, and timestamps.
+      const state = !u.Enabled
+        ? "deactivated"
+        : u.UserStatus === "FORCE_CHANGE_PASSWORD"
+          ? "invited"
+          : "active";
+      if (membership.status !== state) {
+        const at = now();
+        membership = {
+          ...membership,
+          status: state,
+          ...(state === "active" && !membership.activatedAt ? { activatedAt: at } : {}),
+          updatedAt: at,
+        };
+        await saveMembership(membership);
+      }
+      users.push({
+        username: u.Username,
+        email,
+        role: group,
+        platformRole: membership.role,
+        teamIds: membership.teamIds || [],
+        enabled: !!u.Enabled,
+        userStatus: u.UserStatus || null,
+        state,
+        membershipStatus: membership.status,
+        invitedAt: membership.invitedAt || null,
+        invitedBy: membership.invitedBy || null,
+        activatedAt: membership.activatedAt || null,
+        lastLoginAt: membership.lastLoginAt || null,
+        createdAt: u.UserCreateDate ? new Date(u.UserCreateDate).toISOString() : membership.createdAt || null,
+        updatedAt: membership.updatedAt || null,
+      });
     }
     token = out.PaginationToken;
   } while (token);
@@ -2857,14 +2974,44 @@ const inviteTenantUser = async (tenantId, body, a) => {
     };
   }
 
+  // Requirement 9.6: a membership record with INVITED status, created with the invitation rather than
+  // lazily on first read. The lazy backfill in `resolveMembership` exists for accounts that predate
+  // this; a new invitation has no excuse to arrive without one, and the users view needs the invited
+  // state before the person has ever signed in.
+  const invitedRole = defaultRoleForGroup(role);
+  await saveMembership({
+    orgId: tenantId,
+    username: email,
+    role: invitedRole,
+    teamIds: [],
+    status: "invited",
+    invitedAt: now(),
+    invitedBy: a.userId,
+    createdAt: now(),
+    updatedAt: now(),
+  }).catch((err) => {
+    console.error("invite: membership record not written", { tenantId, email, error: err && err.message });
+  });
+  // Requirements 26.1-26.4: a high-entropy token, only its hash stored, seven-day expiry, and a link
+  // to the customer application's acceptance route. Best effort against the invitation RECORD only --
+  // the Cognito user already exists and can sign in through the password challenge, so failing the
+  // whole invitation here would leave an account nobody was told about.
+  let invitationLink = null;
+  try {
+    const issued = await createInvitationRecord(tenantId, email, invitedRole, a);
+    invitationLink = issued.acceptUrl;
+  } catch (err) {
+    console.error("invite: invitation record not created", { tenantId, email, error: err && err.message });
+  }
   await logActivity(tenantId, {
     actor: a.userId,
     actorLabel: actorLabelFor(asPrincipal(a)),
     action: "TEAM_MEMBER_INVITED",
     summary: `Invited ${email} as ${role === "CLIENT_ADMIN" ? "a team admin" : "a team member"}`,
-    details: { email, role },
+    details: { email, role, platformRole: invitedRole },
   });
   return {
+    acceptUrl: invitationLink,
     username,
     email,
     role,
@@ -3049,7 +3196,7 @@ const validateOrgSettings = (body) => {
 // Separate from a run's own audit[] (what an execution did). This records what an
 // ADMIN -- human or via Copilot -- did to the configuration itself, so every
 // Copilot-driven change is traceable to a named actor, never anonymous.
-const logActivity = async (tenantId, entry) => {
+const logActivity = async (tenantId, entry, notification) => {
   const id = `act_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const doc = { id, tenantId, at: now(), ...entry };
   await db.send(
@@ -3064,6 +3211,24 @@ const logActivity = async (tenantId, entry) => {
       },
     }),
   );
+  // Requirement 22.2, enforced as a COUPLING rather than as a rule somebody follows: this is the only
+  // way to create a notification, and it runs after the audit record is durable. So a notification
+  // cannot exist for an event that did not occur -- there is no `notify()` to call on its own.
+  //
+  // The notification is best effort while the audit record is not. That asymmetry is deliberate: an
+  // event recorded without its notification is a missed nudge, while a notification recorded without
+  // its event sends somebody looking for work that never happened.
+  if (notification) {
+    try {
+      await saveNotification(buildNotification(tenantId, { ...notification, eventId: id }));
+    } catch (err) {
+      console.error("notification not created for recorded event", {
+        tenantId,
+        action: entry.action,
+        error: err && err.message,
+      });
+    }
+  }
   return doc;
 };
 
@@ -4323,9 +4488,998 @@ const revokeBrowserConnection = async (a, id) => {
   return publicBrowserConnection(connection);
 };
 
+
+/* ============================ Phase 4: organization, users, teams, invitations, notifications = */
+
+// ---------- 11.1 Additive organization fields ----------
+//
+// Every field below is ADDITIVE. Requirement 8.1 asks that the existing identifier, name, slug,
+// execution status, plan, timestamps, branding, and settings be retained without modification, and
+// they are: nothing here renames or moves an existing field. In particular the logo location stays
+// inside `branding` and is NOT duplicated at the top level (requirement 8.3), because two places
+// holding the same URL is two places to disagree about which one the sign-in screen reads.
+//
+// The commercial lifecycle status is a SEPARATE field from the execution status, and that separation
+// is the whole point of requirement 8: a sales stage must never be able to gate execution. `canceled`
+// commercially and `active` operationally is a real, legitimate state -- a customer in their notice
+// period is still entitled to have their work run.
+const COMMERCIAL_STATUSES = [
+  "prospect",
+  "onboarding",
+  "trial",
+  "active",
+  "suspended",
+  "canceled",
+];
+// Requirement 8.12: an organization with no commercial status recorded reads as commercially active.
+// Every organization that exists today is in exactly that position, so the default has to be the
+// reading that changes nothing about them.
+const lifecycleStatusOf = (org) =>
+  org && COMMERCIAL_STATUSES.includes(org.lifecycleStatus) ? org.lifecycleStatus : "active";
+
+// Internal-only fields, never rendered on a customer surface (requirement 8.6). Stripped by
+// organization identifier rather than by route, so a new route reading an organization cannot forget.
+const INTERNAL_ORG_FIELDS = ["lifecycleStatus", "accountOwnerUserId", "crmRecordId"];
+
+/**
+ * The customer's view of an organization.
+ *
+ * A partial step toward requirement 27.11's per-route response allowlist: this is a per-ENTITY
+ * projection rather than a per-route one, which is the honest description of it. It closes the leak
+ * that matters here -- an organization admin reading their own organization must not receive
+ * AmazFlow's internal note that they are commercially `canceled`.
+ */
+const organizationFor = (org, p) => {
+  if (!org) return org;
+  const out = { ...org, settings: orgSettings(org) };
+  if (p && p.isStaff) return { ...out, lifecycleStatus: lifecycleStatusOf(org) };
+  for (const field of INTERNAL_ORG_FIELDS) delete out[field];
+  return out;
+};
+
+const validateContact = (label, value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const contact = typeof value === "object" ? value : { email: String(value) };
+  const email = String(contact.email || "").trim().toLowerCase();
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
+    throw { status: 400, message: `${label} must carry a valid email address` };
+  return {
+    name: String(contact.name || "").trim().slice(0, 120),
+    email,
+    phone: String(contact.phone || "").trim().slice(0, 40),
+  };
+};
+
+// A bare hostname, not a URL. `acme.com`, never `https://acme.com/`: this value is compared against
+// the domain half of an email address at invitation time, and a stored scheme would make every
+// comparison a parse.
+const validatePrimaryDomain = (value) => {
+  const v = String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  if (!v) return "";
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(v))
+    throw { status: 400, message: `"${value}" is not a valid domain` };
+  return v;
+};
+
+const ONBOARDING_STATUSES = ["not_started", "in_progress", "blocked", "complete"];
+
+/**
+ * The additive half of the organization profile, split by who may write it.
+ *
+ * `scope: "internal"` accepts the three internal-only fields; `scope: "customer"` refuses them by
+ * name rather than ignoring them. Silently dropping a field a caller sent is how a control that does
+ * nothing gets shipped: the request succeeds, the screen shows the old value, and nobody can tell
+ * whether the write or the read is wrong.
+ */
+const validateOrgExtendedProfile = (body, scope) => {
+  const out = {};
+  if ("primaryDomain" in body) out.primaryDomain = validatePrimaryDomain(body.primaryDomain);
+  if ("primaryContact" in body)
+    out.primaryContact = validateContact("primaryContact", body.primaryContact);
+  if ("billingContact" in body)
+    out.billingContact = validateContact("billingContact", body.billingContact);
+  if ("onboardingStatus" in body) {
+    const v = String(body.onboardingStatus || "").trim();
+    if (!ONBOARDING_STATUSES.includes(v))
+      throw {
+        status: 400,
+        message: `onboardingStatus must be one of ${ONBOARDING_STATUSES.join(", ")}`,
+      };
+    out.onboardingStatus = v;
+  }
+  for (const field of INTERNAL_ORG_FIELDS) {
+    if (!(field in body)) continue;
+    if (scope !== "internal")
+      throw {
+        status: 403,
+        message: `${field} is an internal AmazFlow field and cannot be set by an organization`,
+      };
+    if (field === "lifecycleStatus") {
+      const v = String(body.lifecycleStatus || "").trim();
+      if (!COMMERCIAL_STATUSES.includes(v))
+        throw {
+          status: 400,
+          message: `lifecycleStatus must be one of ${COMMERCIAL_STATUSES.join(", ")}`,
+        };
+      out.lifecycleStatus = v;
+    } else out[field] = String(body[field] || "").trim().slice(0, 200);
+  }
+  if ("activatedAt" in body)
+    throw {
+      status: 400,
+      message: "activatedAt is derived from the first completed production run and cannot be supplied",
+    };
+  return out;
+};
+
+/**
+ * Requirement 8.16: an execution-status or commercial-status change records previous and new values.
+ *
+ * Emitted as its own action rather than folded into ORG_UPDATED, because "who paused us, and when"
+ * is a question asked on its own and answering it should not require reading every profile edit.
+ * `activatedAt` is deliberately untouched here: requirement 24.14 derives it from the first
+ * completed production run, not from an administrative status change.
+ */
+const recordOrgLifecycle = async (before, after, actor) => {
+  const changes = [];
+  if (String(before.status || "") !== String(after.status || ""))
+    changes.push(["executionStatus", before.status || null, after.status || null]);
+  if (lifecycleStatusOf(before) !== lifecycleStatusOf(after))
+    changes.push(["lifecycleStatus", lifecycleStatusOf(before), lifecycleStatusOf(after)]);
+  if (!changes.length) return after;
+  for (const [field, previous, next] of changes)
+    await logActivity(after.slug, {
+      actor: actor.userId,
+      actorLabel: actorLabelFor(asPrincipal(actor)),
+      action: "ORG_STATUS_CHANGED",
+      summary: `${field} changed from ${previous} to ${next}`,
+      details: { field, previous, next },
+    });
+  return after;
+};
+
+// ---------- 11.2 Slug uniqueness without reuse ----------
+//
+// Immutability is already enforced by validateOrgProfile: the slug IS the tenant identifier, carried
+// in every Cognito claim and every partition key, so renaming it would orphan the tenant's data.
+//
+// Requirement 8.15's second half is the harder one: a slug must never be REUSED, including by a
+// former organization. So a reservation record is written at creation and never deleted. Checking
+// only `getOrganization(slug)` would let a deleted organization's slug come back around, and the new
+// tenant would then inherit every stale ACTIVITY# and RUN# record still sitting under
+// `TENANT#<slug>` -- one organization silently reading another's history, which is precisely the
+// class of defect Phase 2 spent itself closing.
+const slugReservationKey = (slug) => `SLUGRESERVED#${slug}`;
+const slugIsReserved = async (slug) => {
+  const out = await db.send(
+    new GetItemCommand({
+      TableName: table,
+      Key: { pk: { S: "PLATFORM" }, sk: { S: slugReservationKey(slug) } },
+    }),
+  );
+  return !!out.Item;
+};
+const reserveSlug = async (slug, reason) =>
+  db.send(
+    new PutItemCommand({
+      TableName: table,
+      Item: {
+        pk: { S: "PLATFORM" },
+        sk: { S: slugReservationKey(slug) },
+        document: { S: JSON.stringify({ slug, reservedAt: now(), reason }) },
+        updatedAt: { S: now() },
+      },
+      ConditionExpression: "attribute_not_exists(pk)",
+    }),
+  );
+/**
+ * Derive and atomically reserve a slug, appending an ordinal when another creator wins a race.
+ */
+const uniqueSlugFrom = async (base, reason = "generated organization slug") => {
+  const root = slugify(base);
+  if (!root) return null;
+  for (let n = 1; n <= 50; n += 1) {
+    const candidate = n === 1 ? root : `${root}-${n}`;
+    if (await getOrganization(candidate)) continue;
+    try {
+      await reserveSlug(candidate, reason);
+      return candidate;
+    } catch (err) {
+      if (!err || err.name !== "ConditionalCheckFailedException") throw err;
+    }
+  }
+  return null;
+};
+
+// ---------- 11.16 Retention attribute ----------
+//
+// Q-8's conservative assumption, as data. No retention period is asserted anywhere: what ships is the
+// ATTRIBUTE, so that a decided value later changes a number rather than a data model. `ttl` is left
+// UNSET when no period is configured, because a table with time-to-live enabled deletes anything
+// carrying a past timestamp -- writing a default here would be choosing a retention policy by
+// accident, which is the opposite of what Q-8 asks for.
+const RETENTION_DAYS = {
+  notification: Number(process.env.NOTIFICATION_RETENTION_DAYS || 0),
+  crmEvent: Number(process.env.CRM_EVENT_RETENTION_DAYS || 0),
+  invitation: Number(process.env.INVITATION_RETENTION_DAYS || 0),
+};
+const retentionTtl = (kind, fromIso) => {
+  const days = RETENTION_DAYS[kind];
+  if (!Number.isFinite(days) || days <= 0) return undefined;
+  const base = fromIso ? Date.parse(fromIso) : Date.now();
+  return Math.floor((base + days * 86400000) / 1000);
+};
+const withTtl = (item, ttl) => (ttl ? { ...item, ttl: { N: String(ttl) } } : item);
+
+// ---------- 12.1 / 12.2 Notifications ----------
+//
+// Requirement 22.2 is the interesting one, and it is a coupling rather than a check: a notification
+// may only be created at a point where the corresponding platform event is also recorded. Enforced
+// structurally -- `notify()` does not exist. The only way to produce a notification is
+// `logActivity(tenantId, entry, notification)`, which writes the audit record FIRST and the
+// notification second, so a notification cannot exist for an event that did not occur. A "you have an
+// approval waiting" that no audit trail corroborates is worse than no notification at all: the person
+// goes looking for work that was never there.
+const NOTIFICATION_KINDS = [
+  "approval_required",
+  "run_failed",
+  "run_timed_out",
+  "agent_offline",
+  "connection_error",
+  "exception_raised",
+  "invitation_accepted",
+  "onboarding_step_ready",
+];
+// Audience is a string rather than a user id so a notification can address a role, a team, or the
+// whole organization. "everyone" is the default because most of these concern the organization's work
+// rather than one person's inbox.
+const saveNotification = async (notification) => {
+  const ttl = retentionTtl("notification", notification.createdAt);
+  await db.send(
+    new PutItemCommand({
+      TableName: table,
+      Item: withTtl(
+        {
+          pk: { S: `TENANT#${notification.tenantId}` },
+          sk: { S: `NOTIFICATION#${String(Date.now()).padStart(14, "0")}_${notification.id}` },
+          tenantId: { S: notification.tenantId },
+          document: { S: JSON.stringify(notification) },
+          updatedAt: { S: now() },
+        },
+        ttl,
+      ),
+    }),
+  );
+  return notification;
+};
+const buildNotification = (tenantId, spec) => {
+  if (!NOTIFICATION_KINDS.includes(spec.kind))
+    throw new Error(`unknown notification kind ${spec.kind}`);
+  return {
+    id: `ntf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    tenantId,
+    audience: spec.audience || "everyone",
+    kind: spec.kind,
+    title: String(spec.title || "").slice(0, 160),
+    body: String(spec.body || "").slice(0, 600),
+    // The deep link is a path on the customer application, not an absolute URL: the surface that
+    // renders it knows its own origin, and storing one would bake today's domain into every record.
+    deepLink: String(spec.deepLink || "/"),
+    eventId: spec.eventId || null,
+    createdAt: now(),
+  };
+};
+// Read state is per user AND per notification (requirement 22.6), so it cannot live on the
+// notification: two people reading the same organization-wide notification must not overwrite each
+// other's inbox.
+const notificationReadKey = (username, notificationId) =>
+  `NOTIFREAD#${username}#${notificationId}`;
+const markNotificationRead = async (tenantId, username, notificationId) =>
+  db.send(
+    new PutItemCommand({
+      TableName: table,
+      Item: {
+        pk: { S: `TENANT#${tenantId}` },
+        sk: { S: notificationReadKey(username, notificationId) },
+        tenantId: { S: tenantId },
+        document: {
+          S: JSON.stringify({ username, notificationId, readAt: now() }),
+        },
+        updatedAt: { S: now() },
+      },
+    }),
+  );
+const notificationsFor = async (p, username) => {
+  // tenantRead, so requirement 22.8 holds by construction rather than by a filter somebody has to
+  // remember: the query is partitioned on the principal's own organization.
+  const [items, readRecords, preferences] = await Promise.all([
+    tenantRead("NOTIFICATION#", p),
+    tenantRead(`NOTIFREAD#${username}#`, p),
+    readPreferences(p.orgId, username),
+  ]);
+  const read = new Set(readRecords.map((r) => r.notificationId));
+  const audienceMatches = (audience) =>
+    !audience ||
+    audience === "everyone" ||
+    audience === username ||
+    audience === `user:${username}` ||
+    audience === p.role ||
+    audience === `role:${p.role}` ||
+    (Array.isArray(p.teamIds) && p.teamIds.some((id) => audience === id || audience === `team:${id}`));
+  return items
+    .filter((n) => audienceMatches(n.audience))
+    .filter((n) => preferences.values[`notify.${n.kind}`] !== false)
+    .map((n) => ({ ...n, read: read.has(n.id) }))
+    .sort((x, y) => String(y.createdAt).localeCompare(String(x.createdAt)));
+};
+
+// ---------- 11.14 Personal preferences ----------
+//
+// Requirement 12.4/12.5: every preference the view accepts is persisted, and no setting is presented
+// whose value is not stored. The allowlist below is the contract in both directions -- a key absent
+// from it is refused rather than dropped, and the surface renders only keys it can read back.
+//
+// There is deliberately NO email toggle. Requirement 22.9 says email delivery is not offered in this
+// release, so a per-kind email preference would be a control that accepts input and does nothing --
+// exactly the `plan`-field mistake (H-3) in a new place.
+const PREFERENCE_KEYS = [
+  ...NOTIFICATION_KINDS.map((kind) => `notify.${kind}`),
+  "display.timezone",
+  "display.density",
+];
+const preferencesKey = (username) => `PREFERENCES#${username}`;
+const readPreferences = async (orgId, username) => {
+  const out = await db.send(
+    new GetItemCommand({
+      TableName: table,
+      Key: { pk: { S: `TENANT#${orgId}` }, sk: { S: preferencesKey(username) } },
+    }),
+  );
+  const stored = out.Item && out.Item.document?.S ? JSON.parse(out.Item.document.S) : {};
+  const values = {};
+  for (const key of PREFERENCE_KEYS)
+    values[key] = key in (stored.values || {}) ? stored.values[key] : defaultPreference(key);
+  return { username, values, updatedAt: stored.updatedAt || null, keys: PREFERENCE_KEYS };
+};
+// In-app notification of everything is the honest default: the platform records these events either
+// way, so defaulting to off would hide work a person is accountable for.
+const defaultPreference = (key) =>
+  key.startsWith("notify.") ? true : key === "display.density" ? "comfortable" : "";
+const savePreferences = async (orgId, username, patch) => {
+  const current = await readPreferences(orgId, username);
+  const values = { ...current.values };
+  for (const [key, value] of Object.entries(patch)) {
+    if (!PREFERENCE_KEYS.includes(key))
+      throw { status: 400, message: `"${key}" is not a preference this platform stores` };
+    values[key] = key.startsWith("notify.")
+      ? !!value
+      : String(value || "").trim().slice(0, 60);
+  }
+  const doc = { username, values, updatedAt: now() };
+  await db.send(
+    new PutItemCommand({
+      TableName: table,
+      Item: {
+        pk: { S: `TENANT#${orgId}` },
+        sk: { S: preferencesKey(username) },
+        tenantId: { S: orgId },
+        document: { S: JSON.stringify(doc) },
+        updatedAt: { S: now() },
+      },
+    }),
+  );
+  return { ...doc, keys: PREFERENCE_KEYS };
+};
+
+// ---------- 11.7 Sign-in timestamp ----------
+//
+// Requirement 9.23. Written on `GET /me`, which is the first authenticated call every surface makes,
+// rather than on every request: a write per request would triple the cost of a page load to record a
+// value nothing reads more precisely than "today".
+//
+// Recorded ABSENT rather than zero when it has never happened (requirement 9.22). `null` is what the
+// users view renders as "not recorded", and a placeholder date would be a lie a support conversation
+// would eventually be built on.
+const touchMembershipLogin = async (p) => {
+  if (!p || !p.orgId || !p.userId) return;
+  const username = p.email || p.userId;
+  const membership = await readMembership(p.orgId, username).catch(() => null);
+  if (!membership) return;
+  const at = now();
+  // Coarse to the minute: a sign-in timestamp is not telemetry, and rewriting the record on every
+  // /me poll would make the membership record the hottest key in the table.
+  if (membership.lastLoginAt && at.slice(0, 16) === String(membership.lastLoginAt).slice(0, 16))
+    return;
+  await saveMembership({ ...membership, lastLoginAt: at, updatedAt: at }).catch(() => {});
+};
+
+// ---------- 11.5 Role change ----------
+//
+// Remediates H-8: no route existed to change a role at all, so a fine role could only be defaulted
+// from the coarse group or seeded. This closes the write side of task 7.5.
+const membershipsFor = async (p) => tenantRead("MEMBERSHIP#", p);
+/**
+ * Requirement 9.19: a role change must not leave the organization with no owner.
+ *
+ * Evaluated against the STORED memberships, not against the request, and it deliberately counts
+ * owners other than the target rather than counting owners after the change. Those differ when the
+ * target is being *given* ownership, and getting it wrong the other way would refuse the very change
+ * that fixes an ownerless organization.
+ *
+ * An organization with zero owners today (every organization, until an owner is assigned) is not
+ * blocked: there is nothing to preserve.
+ */
+const wouldOrphanOwnership = (memberships, username, nextRole) => {
+  if (nextRole === "ORG_OWNER") return false;
+  const owners = memberships.filter((m) => m.role === "ORG_OWNER");
+  if (!owners.length) return false;
+  const target = owners.find((m) => m.username === username);
+  if (!target) return false;
+  return owners.length === 1;
+};
+const changeMemberRole = async (tenantId, username, nextRole, actor, p) => {
+  if (!PLATFORM_ROLES.includes(nextRole))
+    throw { status: 400, message: `role must be one of ${CUSTOMER_ROLES.join(", ")}` };
+  // Requirement 9.18. Checked on the role being GRANTED, which is not an authorization decision
+  // about the caller -- the caller already passed `user:set_role`. Nobody grants staff through a
+  // customer route, including a staff member, because the audit story for that is
+  // "AmazFlow gave a customer account staff access" and it should require touching the user pool.
+  if (nextRole === "STAFF_ADMIN" || !isInvitableGroup(coarseOf(nextRole)))
+    throw {
+      status: 403,
+      message: "AmazFlow staff access is not granted through this route",
+    };
+  const users = await listTenantUsers(tenantId);
+  const target = users.find((u) => u.username === username || u.email === username);
+  if (!target) throw { status: 404, message: "Not found" };
+  const memberships = await membershipsFor({ ...p, orgId: tenantId });
+  if (wouldOrphanOwnership(memberships, target.email, nextRole))
+    throw {
+      status: 409,
+      message:
+        "This is the organization's only owner. Make somebody else an owner first, so the organization is never left without one.",
+    };
+  const previous =
+    (memberships.find((m) => m.username === target.email) || {}).role ||
+    defaultRoleForGroup(target.role);
+  const nextGroup = coarseOf(nextRole);
+  // Requirement 9.17: reconcile the coarse group when the mapped group differs. Order matters --
+  // ADD before REMOVE, so a failure between the two leaves the person in two groups (over-broad for
+  // a moment, still able to sign in) rather than in none (locked out). `auth()` picks the first
+  // matching group, so the transient state resolves deterministically rather than randomly.
+  if (nextGroup !== target.role) {
+    await cognito.send(
+      new AdminAddUserToGroupCommand({
+        UserPoolId: process.env.USER_POOL_ID,
+        Username: target.username,
+        GroupName: nextGroup,
+      }),
+    );
+    try {
+      await cognito.send(
+        new AdminRemoveUserFromGroupCommand({
+          UserPoolId: process.env.USER_POOL_ID,
+          Username: target.username,
+          GroupName: target.role,
+        }),
+      );
+    } catch (err) {
+      // Roll back the newly-added group when possible. Persisting the fine role while Cognito still
+      // reports the old coarse group would make the next read discard the requested role.
+      await cognito
+        .send(
+          new AdminRemoveUserFromGroupCommand({
+            UserPoolId: process.env.USER_POOL_ID,
+            Username: target.username,
+            GroupName: nextGroup,
+          }),
+        )
+        .catch(() => {});
+      console.error("role change: coarse-group reconciliation failed", {
+        tenantId,
+        username: target.username,
+        from: target.role,
+        to: nextGroup,
+        error: err && err.message,
+      });
+      throw {
+        status: 502,
+        message: "The role could not be reconciled at the identity provider. No membership change was saved; retry the role change.",
+      };
+    }
+  }
+  const membership = {
+    ...(memberships.find((m) => m.username === target.email) || {}),
+    orgId: tenantId,
+    username: target.email,
+    role: nextRole,
+    teamIds: (memberships.find((m) => m.username === target.email) || {}).teamIds || [],
+    status: "active",
+    createdAt:
+      (memberships.find((m) => m.username === target.email) || {}).createdAt || now(),
+    updatedAt: now(),
+  };
+  await saveMembership(membership);
+  await logActivity(tenantId, {
+    actor: actor.userId,
+    actorLabel: actorLabelFor(asPrincipal(actor)),
+    action: "TEAM_MEMBER_ROLE_CHANGED",
+    summary: `Changed ${target.email} from ${previous} to ${nextRole}`,
+    details: { username: target.email, previousRole: previous, role: nextRole, coarseGroup: nextGroup },
+  });
+  return { username: target.email, role: nextRole, previousRole: previous, coarseGroup: nextGroup };
+};
+
+// ---------- 11.9 / 11.10 Invitations ----------
+//
+// The token is high-entropy and only its hash is stored (requirement 26.1). That is the difference
+// between a leaked database and a leaked set of working invitation links: an attacker with the table
+// has hashes, and a hash cannot be presented to the acceptance route.
+const INVITATION_TTL_DAYS = 7;
+const newInvitationToken = () => crypto.randomBytes(32).toString("base64url");
+// The token index lives in the flat PLATFORM partition because the inspection route is
+// UNAUTHENTICATED: a bare token carries no organization until it is looked up, so there is no tenant
+// partition to query. The index holds the organization and invitation id and nothing else -- no
+// email, no role, no name -- so the unauthenticated lookup cannot become a disclosure by itself.
+const invitationIndexKey = (tokenHash) => `INVITETOKEN#${tokenHash}`;
+const saveInvitationIndex = async (tokenHash, orgId, invitationId, expiresAt) =>
+  db.send(
+    new PutItemCommand({
+      TableName: table,
+      Item: withTtl(
+        {
+          pk: { S: "PLATFORM" },
+          sk: { S: invitationIndexKey(tokenHash) },
+          document: { S: JSON.stringify({ orgId, invitationId }) },
+          updatedAt: { S: now() },
+        },
+        retentionTtl("invitation", expiresAt),
+      ),
+    }),
+  );
+const readInvitationIndex = async (tokenHash) => {
+  const out = await db.send(
+    new GetItemCommand({
+      TableName: table,
+      Key: { pk: { S: "PLATFORM" }, sk: { S: invitationIndexKey(tokenHash) } },
+    }),
+  );
+  return out.Item && out.Item.document?.S ? JSON.parse(out.Item.document.S) : null;
+};
+const invitationSk = (id) => `INVITATION#${id}`;
+const readInvitation = async (orgId, id) => {
+  const out = await db.send(
+    new GetItemCommand({
+      TableName: table,
+      Key: { pk: { S: `TENANT#${orgId}` }, sk: { S: invitationSk(id) } },
+    }),
+  );
+  return out.Item && out.Item.document?.S ? JSON.parse(out.Item.document.S) : null;
+};
+const saveInvitation = async (invitation, condition) => {
+  const input = {
+    TableName: table,
+    Item: withTtl(
+      {
+        pk: { S: `TENANT#${invitation.orgId}` },
+        sk: { S: invitationSk(invitation.id) },
+        tenantId: { S: invitation.orgId },
+        document: { S: JSON.stringify(invitation) },
+        state: { S: invitation.state },
+        updatedAt: { S: now() },
+      },
+      // Requirement 26.2 with Q-8: an EXPIRED invitation carries the retention attribute. A pending
+      // one does not -- expiring the record out from under a live invitation would turn a valid link
+      // into "no such invitation" rather than "this expired", and those read very differently to the
+      // person holding the link.
+      invitation.state === "expired" || invitation.state === "revoked"
+        ? retentionTtl("invitation", invitation.expiresAt)
+        : undefined,
+    ),
+  };
+  if (condition) {
+    input.ConditionExpression = condition.expression;
+    input.ExpressionAttributeNames = condition.names;
+    input.ExpressionAttributeValues = condition.values;
+  }
+  await db.send(new PutItemCommand(input));
+  return invitation;
+};
+const createInvitationRecord = async (orgId, email, role, actor) => {
+  const token = newInvitationToken();
+  const createdAt = now();
+  const invitation = {
+    id: `inv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    orgId,
+    tenantId: orgId,
+    email,
+    role,
+    invitedBy: actor.userId,
+    invitedByEmail: actor.email || null,
+    createdAt,
+    expiresAt: new Date(Date.parse(createdAt) + INVITATION_TTL_DAYS * 86400000).toISOString(),
+    state: "pending",
+    tokenHash: hashToken(token),
+  };
+  await saveInvitation(invitation);
+  await saveInvitationIndex(invitation.tokenHash, orgId, invitation.id, invitation.expiresAt);
+  // Requirement 26.4: the link points at the customer application's acceptance route. Returned to the
+  // caller rather than stored, so the only copy of the plaintext token is the one in flight.
+  return { invitation, token, acceptUrl: `${CUSTOMER_APP_ORIGIN}/accept-invitation/?token=${token}` };
+};
+const CUSTOMER_APP_ORIGIN = "https://app.amazflow.com";
+// Expiry is OBSERVED rather than swept: a record is marked expired the first time somebody looks at
+// it after its expiry. A sweep would be a second place that decides what expired means, and the two
+// would eventually disagree about the boundary second.
+const invitationExpired = (invitation) =>
+  !!invitation.expiresAt && Date.parse(invitation.expiresAt) <= Date.now();
+const observeInvitationExpiry = async (invitation, actor) => {
+  if (invitation.state !== "pending" || !invitationExpired(invitation)) return invitation;
+  const expired = { ...invitation, state: "expired", expiredAt: now() };
+  await saveInvitation(expired).catch(() => {});
+  await logActivity(invitation.orgId, {
+    actor: (actor && actor.userId) || "system",
+    actorLabel: "AmazFlow platform",
+    action: "INVITATION_EXPIRED",
+    summary: `Invitation for ${invitation.email} was observed expired`,
+    details: { invitationId: invitation.id, email: invitation.email },
+  }).catch(() => {});
+  return expired;
+};
+
+/**
+ * Requirement 26.18: the inspection and acceptance routes are rate-limited.
+ *
+ * Both are reachable with a token and no session, which makes them the only guessing surface on the
+ * platform. The counter is keyed on the caller's address rather than the token, because a token-keyed
+ * limit is no limit at all against somebody trying a different token every time -- which is the
+ * attack.
+ */
+const RATE_LIMITS = { invitation_inspect: { limit: 30, windowMs: 300000 }, invitation_accept: { limit: 10, windowMs: 300000 } };
+const rateLimitKey = (bucket, subject, windowStart) =>
+  `RATELIMIT#${bucket}#${subject}#${windowStart}`;
+const consumeRateLimit = async (bucket, subject) => {
+  const config = RATE_LIMITS[bucket];
+  if (!config || !subject) return { allowed: true };
+  const windowStart = Math.floor(Date.now() / config.windowMs) * config.windowMs;
+  const sk = rateLimitKey(bucket, subject, windowStart);
+  const existing = await db
+    .send(new GetItemCommand({ TableName: table, Key: { pk: { S: "PLATFORM" }, sk: { S: sk } } }))
+    .catch(() => ({}));
+  const count = existing.Item && existing.Item.document?.S ? JSON.parse(existing.Item.document.S).count : 0;
+  if (count >= config.limit)
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.ceil((windowStart + config.windowMs - Date.now()) / 1000),
+    };
+  await db
+    .send(
+      new PutItemCommand({
+        TableName: table,
+        Item: withTtl(
+          {
+            pk: { S: "PLATFORM" },
+            sk: { S: sk },
+            document: { S: JSON.stringify({ bucket, subject, windowStart, count: count + 1 }) },
+            updatedAt: { S: now() },
+          },
+          Math.floor((windowStart + config.windowMs * 2) / 1000),
+        ),
+      }),
+    )
+    .catch(() => {});
+  return { allowed: true };
+};
+const callerAddress = (e) =>
+  (e.requestContext && e.requestContext.http && e.requestContext.http.sourceIp) ||
+  (e.headers && (e.headers["x-forwarded-for"] || e.headers["X-Forwarded-For"])) ||
+  "unknown";
+
+/**
+ * Accept an invitation. Requirements 26.8 through 26.16.
+ *
+ * The two things that make this correct rather than merely working:
+ *
+ *   * The organization and role come from the STORED record and the body is not consulted at all
+ *     (requirements 26.13/26.14). Not "validated against" -- not read. A body that claims
+ *     `{"orgId":"someone-else","role":"ORG_OWNER"}` cannot influence the outcome, because there is no
+ *     code path in which it is looked at.
+ *   * The transition is a conditional write requiring the current state to be `pending`
+ *     (requirement 26.9), so two simultaneous accepts produce exactly one winner and the loser gets a
+ *     state conflict. A read-then-write would let both succeed under any real interleaving.
+ */
+const acceptInvitation = async (token, a) => {
+  const index = await readInvitationIndex(hashToken(token));
+  if (!index) throw { status: 404, message: "Not found" };
+  let invitation = await readInvitation(index.orgId, index.invitationId);
+  if (!invitation) throw { status: 404, message: "Not found" };
+  invitation = await observeInvitationExpiry(invitation, a);
+  if (invitation.state === "accepted")
+    throw { status: 409, message: "This invitation has already been accepted", code: "CONFLICT" };
+  if (invitation.state === "revoked")
+    throw { status: 409, message: "This invitation was withdrawn", code: "CONFLICT" };
+  if (invitation.state === "expired" || invitationExpired(invitation))
+    throw { status: 410, message: "This invitation has expired", code: "GONE" };
+  // Requirement 26.8: the authenticated caller's address must match the invitation. Without this a
+  // signed-in person who obtained somebody else's link would join in the invitee's place.
+  const callerEmail = String(a.email || "").trim().toLowerCase();
+  if (!callerEmail || callerEmail !== invitation.email)
+    throw {
+      status: 403,
+      message: "This invitation was sent to a different email address. Sign in as that address to accept it.",
+      code: "FORBIDDEN",
+    };
+  const accepted = { ...invitation, state: "accepted", acceptedAt: now(), acceptedBy: a.userId };
+  try {
+    await saveInvitation(accepted, {
+      expression: "attribute_exists(pk) AND #state = :pending",
+      names: { "#state": "state" },
+      values: { ":pending": { S: "pending" } },
+    });
+  } catch (err) {
+    if (err && err.name === "ConditionalCheckFailedException")
+      throw { status: 409, message: "This invitation has already been accepted", code: "CONFLICT" };
+    throw err;
+  }
+  // Requirement 26.15/26.16: the membership's organization and role EQUAL the invitation's.
+  await saveMembership({
+    orgId: invitation.orgId,
+    username: invitation.email,
+    role: invitation.role,
+    teamIds: [],
+    status: "active",
+    invitedAt: invitation.createdAt,
+    invitedBy: invitation.invitedBy,
+    activatedAt: accepted.acceptedAt,
+    createdAt: invitation.createdAt,
+    updatedAt: accepted.acceptedAt,
+  });
+  await logActivity(
+    invitation.orgId,
+    {
+      actor: a.userId,
+      actorLabel: "Team member",
+      action: "INVITATION_ACCEPTED",
+      summary: `${invitation.email} accepted their invitation as ${invitation.role}`,
+      details: { invitationId: invitation.id, email: invitation.email, role: invitation.role },
+    },
+    {
+      kind: "invitation_accepted",
+      title: `${invitation.email} joined`,
+      body: `${invitation.email} accepted their invitation and is now active as ${invitation.role}.`,
+      deepLink: "/admin/users/",
+    },
+  );
+  return { organizationId: invitation.orgId, role: invitation.role, email: invitation.email };
+};
+
+// Requirement 26.17: a resend issues a NEW token and revokes the previous record, so the previously
+// issued link stops working. Two live links for one invitation is one link too many -- the old one is
+// the one that leaked.
+const resendInvitation = async (tenantId, username, actor, p) => {
+  const users = await listTenantUsers(tenantId);
+  const target = users.find((u) => u.username === username || u.email === username);
+  if (!target) throw { status: 404, message: "Not found" };
+  if (target.userStatus !== "FORCE_CHANGE_PASSWORD")
+    throw {
+      status: 409,
+      message: `${target.email} has already signed in, so there is no pending invitation to resend.`,
+    };
+  const existing = (await tenantRead("INVITATION#", { ...p, orgId: tenantId })).filter(
+    (i) => i.email === target.email && i.state === "pending",
+  );
+  for (const invitation of existing)
+    await saveInvitation({ ...invitation, state: "revoked", revokedAt: now(), revokedReason: "superseded_by_resend" });
+  const role =
+    (existing[0] && existing[0].role) ||
+    defaultRoleForGroup(target.role);
+  const { invitation, acceptUrl } = await createInvitationRecord(
+    tenantId,
+    target.email,
+    role,
+    actor,
+  );
+  // Cognito owns the credential half: RESEND reissues the temporary password to the same address.
+  try {
+    await cognito.send(
+      new AdminCreateUserCommand({
+        UserPoolId: process.env.USER_POOL_ID,
+        Username: target.username,
+        MessageAction: "RESEND",
+        DesiredDeliveryMediums: ["EMAIL"],
+      }),
+    );
+  } catch (err) {
+    console.error("invitation resend: cognito message not reissued", {
+      tenantId,
+      username: target.username,
+      error: err && err.message,
+    });
+    throw {
+      status: 502,
+      message: "The invitation message could not be reissued. Retry the invitation.",
+    };
+  }
+  await logActivity(tenantId, {
+    actor: actor.userId,
+    actorLabel: actorLabelFor(asPrincipal(actor)),
+    action: "INVITATION_RESENT",
+    summary: `Resent the invitation for ${target.email}`,
+    details: { email: target.email, invitationId: invitation.id, supersededCount: existing.length },
+  });
+  return { email: target.email, invitationId: invitation.id, acceptUrl };
+};
+
+// Requirement 9.13 / 26.19: revoke applies only BEFORE the initial password challenge completes, and
+// disables rather than deletes. Requirement 9.16 has no delete route anywhere, because a deleted user
+// takes their audit attribution with them -- every "who approved this" becomes "somebody who no
+// longer exists".
+const revokeInvitation = async (tenantId, username, actor, p) => {
+  const users = await listTenantUsers(tenantId);
+  const target = users.find((u) => u.username === username || u.email === username);
+  if (!target) throw { status: 404, message: "Not found" };
+  if (target.userStatus !== "FORCE_CHANGE_PASSWORD")
+    throw {
+      status: 409,
+      message: `${target.email} has already signed in, so this is no longer a pending invitation. Deactivate the account instead.`,
+    };
+  await cognito.send(
+    new AdminDisableUserCommand({ UserPoolId: process.env.USER_POOL_ID, Username: target.username }),
+  );
+  const pending = (await tenantRead("INVITATION#", { ...p, orgId: tenantId })).filter(
+    (i) => i.email === target.email && i.state === "pending",
+  );
+  for (const invitation of pending)
+    await saveInvitation({ ...invitation, state: "revoked", revokedAt: now(), revokedReason: "revoked_by_admin" });
+  const membership = await readMembership(tenantId, target.email).catch(() => null);
+  if (membership)
+    await saveMembership({ ...membership, status: "deactivated", updatedAt: now() }).catch(() => {});
+  await logActivity(tenantId, {
+    actor: actor.userId,
+    actorLabel: actorLabelFor(asPrincipal(actor)),
+    action: "INVITATION_REVOKED",
+    summary: `Revoked the pending invitation for ${target.email}`,
+    details: { email: target.email, revokedInvitations: pending.length },
+  });
+  return { email: target.email, enabled: false, revokedInvitations: pending.length };
+};
+
+// ---------- 11.8 Teams ----------
+//
+// Requirement 10.6 is a constraint on what teams may NOT do, and it is enforced by absence: no grant
+// anywhere depends on a team identifier. The policy accepts a `teamIds` field on a principal and no
+// branch of `can()` reads it. That is what lets requirement 10.7's statement -- "team membership
+// grants no permissions in this release" -- be true rather than aspirational, and it is why the teams
+// view presents no permission control at all.
+const teamsFor = async (p) => tenantRead("TEAM#", p);
+const validateTeamName = (value) => {
+  const name = String(value || "").trim();
+  if (!name) throw { status: 400, message: "A team name is required" };
+  return name.slice(0, 80);
+};
+const saveTeam = async (team) => save("TEAM", team);
+const syncTeamMembership = async (orgId, username, teamId, present) => {
+  const membership = await readMembership(orgId, username).catch(() => null);
+  if (!membership) return;
+  const current = Array.isArray(membership.teamIds) ? membership.teamIds : [];
+  const next = present
+    ? current.includes(teamId)
+      ? current
+      : [...current, teamId]
+    : current.filter((id) => id !== teamId);
+  if (next.length === current.length && present) return;
+  // Requirement 9.20: team assignments are written to the membership record, which is the source of
+  // truth for them. The team record's own member list is the denormalized read side.
+  await saveMembership({ ...membership, teamIds: next, updatedAt: now() }).catch(() => {});
+};
+
+// ---------- 11.14 Personal profile and security facts ----------
+// Cognito remains the source of truth for identity attributes. These routes are self-scoped: the
+// username is derived from the verified principal and never accepted from a path or request body.
+const profileFromCognito = (user, fallbackEmail) => {
+  const attrs = Object.fromEntries(
+    ((user && (user.UserAttributes || user.Attributes)) || []).map((x) => [x.Name, x.Value]),
+  );
+  return {
+    email: attrs.email || fallbackEmail || null,
+    displayName: attrs.name || "",
+    givenName: attrs.given_name || "",
+    familyName: attrs.family_name || "",
+    updatedAt: user && user.UserLastModifiedDate
+      ? new Date(user.UserLastModifiedDate).toISOString()
+      : null,
+  };
+};
+const readOwnProfile = async (a) => {
+  const username = a.email || a.userId;
+  const user = await cognito.send(
+    new AdminGetUserCommand({ UserPoolId: process.env.USER_POOL_ID, Username: username }),
+  );
+  return profileFromCognito(user, a.email);
+};
+const cleanProfileValue = (label, value) => {
+  const text = String(value == null ? "" : value).trim();
+  if (text.length > 100) throw { status: 400, message: `${label} must be 100 characters or fewer` };
+  if (/[\u0000-\u001f\u007f]/.test(text))
+    throw { status: 400, message: `${label} contains unsupported control characters` };
+  return text;
+};
+const updateOwnProfile = async (a, body) => {
+  const accepted = [
+    ["displayName", "name"],
+    ["givenName", "given_name"],
+    ["familyName", "family_name"],
+  ];
+  const updates = accepted
+    .filter(([input]) => Object.prototype.hasOwnProperty.call(body, input))
+    .map(([input, attribute]) => ({ Name: attribute, Value: cleanProfileValue(input, body[input]) }));
+  if (!updates.length) throw { status: 400, message: "Nothing to change" };
+  if (Object.prototype.hasOwnProperty.call(body, "email"))
+    throw { status: 400, message: "The sign-in email is not changed from the profile route" };
+  const username = a.email || a.userId;
+  await cognito.send(
+    new AdminUpdateUserAttributesCommand({
+      UserPoolId: process.env.USER_POOL_ID,
+      Username: username,
+      UserAttributes: updates,
+    }),
+  );
+  await logActivity(a.tenantId, {
+    actor: a.userId,
+    actorLabel: actorLabelFor(asPrincipal(a)),
+    action: "PROFILE_UPDATED",
+    summary: "Updated personal profile",
+    details: { fields: updates.map((x) => x.Name) },
+  });
+  return { ...(await readOwnProfile(a)), updatedAt: now() };
+};
+const SECURITY_FACTS = Object.freeze({
+  accessTokenMinutes: 60,
+  idTokenMinutes: 60,
+  refreshTokenDays: 7,
+  passwordPolicy: {
+    minimumLength: 12,
+    requireLowercase: true,
+    requireUppercase: true,
+    requireNumbers: true,
+    requireSymbols: true,
+  },
+  // Planned identity capabilities are explicitly false so the customer surface can state the
+  // disabled reason without rendering a control that implies the capability exists.
+  mfaEnrollmentAvailable: false,
+  singleSignOnAvailable: false,
+  directoryProvisioningAvailable: false,
+});
+
+// The customer-writable half of the organization profile. Execution status and plan are AmazFlow's to
+// set and are refused here BY NAME: an organization that could set its own status to `active` would
+// be able to lift its own suspension, and a plan field a customer can write is a plan field that
+// means nothing (H-3, again).
+const validateOrgProfileForCustomer = (body) => {
+  const out = {};
+  if ("name" in body) {
+    const v = String(body.name || "").trim();
+    if (!v) throw { status: 400, message: "A name is required" };
+    out.name = v.slice(0, 120);
+  }
+  if ("slug" in body)
+    throw {
+      status: 400,
+      message: "An organization slug cannot be changed: it is the tenant identifier",
+    };
+  for (const field of ["status", "plan"])
+    if (field in body)
+      throw {
+        status: 403,
+        message: `An organization's ${field === "status" ? "execution status" : "plan"} is set by AmazFlow, not from this route`,
+      };
+  return out;
+};
+
 exports.handler = async (e) => {
   correlationId =
     e.requestContext?.requestId || `local_${crypto.randomUUID()}`;
+  responseRoute = e.routeKey || (e.source === "amazflow.sweep" ? "SWEEP" : "UNKNOWN");
   requestOrigin = allowedOriginFor(e);
   try {
     if (e.source === "amazflow.sweep") {
@@ -4515,6 +5669,52 @@ exports.handler = async (e) => {
         branding: org.branding || {},
       });
     }
+    // 11.9 -- unauthenticated invitation inspection. Deliberately placed here, above the session gate:
+    // the invitee has no account yet, so requiring one would make the invitation unopenable by the only
+    // person it is for.
+    //
+    // The response is exactly two fields (requirement 26.5). Not the role, not the inviting user, not
+    // the organization slug -- a token holder should learn who invited them and to what address, and
+    // nothing that helps them enumerate the tenancy.
+    if (route === "GET /invitations/{token}") {
+      const gate = await consumeRateLimit("invitation_inspect", callerAddress(e));
+      if (!gate.allowed)
+        return reply(429, {
+          error: "Too many invitation lookups. Wait a moment and try again.",
+          retryAfterSeconds: gate.retryAfterSeconds,
+        });
+      const index = await readInvitationIndex(hashToken(String(e.pathParameters?.token || "")));
+      if (!index) return reply(404, { error: "Not found" });
+      let invitation = await readInvitation(index.orgId, index.invitationId);
+      if (!invitation) return reply(404, { error: "Not found" });
+      invitation = await observeInvitationExpiry(invitation, {});
+      const inviteOrgRecord = await getOrganization(invitation.orgId).catch(() => null);
+      const visible = {
+        organizationName: (inviteOrgRecord && inviteOrgRecord.name) || invitation.orgId,
+        email: invitation.email,
+      };
+      // 410 Gone, not 404: "this existed and has expired" is actionable -- the person asks for a new
+      // one -- while "no such invitation" sends them to check the link for a typo that is not there.
+      if (invitation.state === "expired" || invitationExpired(invitation))
+        return reply(410, {
+          error: "This invitation has expired. Ask your AmazFlow contact to send a new one.",
+          code: "GONE",
+          ...visible,
+        });
+      if (invitation.state === "accepted")
+        return reply(409, {
+          error: "This invitation has already been accepted. Sign in instead.",
+          code: "CONFLICT",
+          ...visible,
+        });
+      if (invitation.state === "revoked")
+        return reply(409, {
+          error: "This invitation was withdrawn. Ask your AmazFlow contact to send a new one.",
+          code: "CONFLICT",
+          ...visible,
+        });
+      return reply(200, visible);
+    }
     const a = auth(e);
     if (!a.role)
       return reply(
@@ -4543,17 +5743,31 @@ exports.handler = async (e) => {
     // record (task 7.5), so the migration happens as a side effect of normal use rather than as a
     // batch job somebody has to remember to run.
     const p = await principalFor(a);
-    if (route === "GET /me")
+    if (route === "GET /me") {
+      // Requirement 9.23 (task 11.7). Stamped here rather than on every authenticated route: /me is
+      // the first call every surface makes, and a write per request would make the membership record
+      // the hottest key in the table to record a value nobody reads more precisely than "today".
+      await touchMembershipLogin(p);
+      const meOrg = await getOrganization(a.tenantId).catch(() => null);
+      const meMembership = await readMembership(a.tenantId, a.email || a.userId).catch(() => null);
       return reply(200, {
         userId: a.userId,
+        email: a.email || null,
         tenantId: a.tenantId,
         organizationId: a.tenantId,
+        // The DISPLAY name, so a surface renders "Acme Logistics" rather than "acme-logistics". Null
+        // rather than the slug dressed up as a name when no organization record exists.
+        organizationName: (meOrg && meOrg.name) || null,
         role: a.role,
         platformRole: p.role,
         teamIds: p.teamIds,
         sections: visibleSections(p),
+        // Requirement 9.22: absent, not zero and not a placeholder date. `null` is what the users view
+        // renders as "not recorded", and a fake date is a lie a support conversation gets built on.
+        lastLoginAt: (meMembership && meMembership.lastLoginAt) || null,
         accountStatus,
       });
+    }
     // The matrix as data, so /admin/roles renders the REAL policy rather than a frontend copy of it
     // that can disagree with enforcement (requirement 7.17, task 7.13).
     if (route === "GET /permissions/matrix") return reply(200, permissionMatrix());
@@ -4627,23 +5841,64 @@ exports.handler = async (e) => {
       const body = JSON.parse(e.body || "{}");
       const name = String(body.name || "").trim();
       if (!name) return reply(400, { error: "A name is required" });
-      const slug = slugify(body.slug || name);
-      if (!slug)
+      let creationProfile;
+      try {
+        const withoutSlug = { ...body };
+        delete withoutSlug.slug;
+        creationProfile = {
+          ...validateOrgProfile(withoutSlug),
+          ...validateOrgExtendedProfile(withoutSlug, "internal"),
+        };
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+      // Requirement 8.15 (task 11.2). An explicitly requested slug that is taken is an ERROR --
+      // silently handing back `acme-2` when the caller asked for `acme` would have them wire the wrong
+      // tenant id into a Cognito claim. A slug DERIVED from the name is disambiguated instead, because
+      // two customers legitimately called "Acme" is not a mistake anybody made.
+      const requestedSlug = String(body.slug || "").trim();
+      const rootSlug = slugify(requestedSlug || name);
+      if (!rootSlug)
         return reply(400, {
           error: "Could not derive a usable slug from that name",
         });
-      if (await getOrganization(slug))
+      const orgId = `org_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      let slug;
+      if (requestedSlug) {
+        if (await getOrganization(rootSlug))
+          return reply(409, {
+            // Deliberately does not distinguish "exists now" from "existed once". Both mean the
+            // same thing to the caller, and the difference is nobody's business.
+            error: `The slug "${rootSlug}" is not available`,
+          });
+        try {
+          await reserveSlug(rootSlug, `organization ${orgId}`);
+          slug = rootSlug;
+        } catch (err) {
+          if (!err || err.name !== "ConditionalCheckFailedException") throw err;
+          return reply(409, { error: `The slug "${rootSlug}" is not available` });
+        }
+      } else {
+        slug = await uniqueSlugFrom(name, `organization ${orgId}`);
+      }
+      if (!slug)
         return reply(409, {
-          error: `An organization with slug "${slug}" already exists`,
+          error: "Could not derive an available slug from that name. Supply one explicitly.",
         });
       const org = {
-        id: `org_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        id: orgId,
         name,
         slug,
-        status: "active",
-        plan: body.plan || "design_partner",
+        status: creationProfile.status || "active",
+        plan: creationProfile.plan || "design_partner",
         createdAt: now(),
         updatedAt: now(),
+        // Activation is derived later from the first completed production run (requirement 24.14),
+        // so a newly-created or merely re-enabled organization does not claim it has gone live.
+        onboardingStatus: creationProfile.onboardingStatus || "not_started",
+        ...creationProfile,
+        name,
       };
       await saveOrganization(org);
       await logActivity(slug, {
@@ -4652,7 +5907,7 @@ exports.handler = async (e) => {
         action: "ORG_CREATED",
         summary: `Created organization "${name}"`,
       });
-      return reply(201, org);
+      return reply(201, organizationFor(org, p));
     }
     if (route === "GET /organizations/{slug}") {
       const slug = e.pathParameters?.slug;
@@ -4662,7 +5917,10 @@ exports.handler = async (e) => {
       }
       const org = await getOrganization(slug);
       if (!org) return reply(404, { error: "Organization not found" });
-      return reply(200, { ...org, settings: orgSettings(org) });
+      // Requirement 8.6: the commercial lifecycle status, the internal account owner, and the CRM
+      // reference never reach a customer surface. Projected by entity rather than by route, so a new
+      // route that reads an organization cannot forget to strip them.
+      return reply(200, organizationFor(org, p));
     }
     if (route === "PUT /organizations/{slug}") {
       {
@@ -4674,7 +5932,13 @@ exports.handler = async (e) => {
       if (!org) return reply(404, { error: "Organization not found" });
       let patch;
       try {
-        patch = validateOrgProfile(JSON.parse(e.body || "{}"));
+        const orgBody = JSON.parse(e.body || "{}");
+        patch = {
+          ...validateOrgProfile(orgBody),
+          // Staff hold the internal scope, so the account owner, the CRM reference, and the commercial
+          // lifecycle status are writable here and nowhere else.
+          ...validateOrgExtendedProfile(orgBody, "internal"),
+        };
       } catch (err) {
         if (err && err.status) return reply(err.status, { error: err.message });
         throw err;
@@ -4682,7 +5946,10 @@ exports.handler = async (e) => {
       if (Object.keys(patch).length === 0)
         return reply(400, { error: "Nothing to change" });
       const before = { name: org.name, status: org.status, plan: org.plan };
-      const next = { ...org, ...patch, updatedAt: now() };
+      let next = { ...org, ...patch, updatedAt: now() };
+      // Requirement 8.16: an execution- or commercial-status change is its own audit event carrying
+      // the previous and new values. Activation remains derived from the first production run.
+      next = await recordOrgLifecycle(org, next, a);
       await saveOrganization(next);
       const changed = Object.keys(patch).filter((k) => before[k] !== patch[k]);
       await logActivity(slug, {
@@ -4697,7 +5964,7 @@ exports.handler = async (e) => {
           after: { name: next.name, status: next.status, plan: next.plan },
         },
       });
-      return reply(200, { ...next, settings: orgSettings(next) });
+      return reply(200, organizationFor(next, p));
     }
     if (route === "POST /organizations/{slug}/settings") {
       const slug = e.pathParameters?.slug;
@@ -4740,7 +6007,7 @@ exports.handler = async (e) => {
           : "Saved organization settings",
         details: { before, after: settings },
       });
-      return reply(200, { ...next, settings });
+      return reply(200, organizationFor(next, p));
     }
     if (route === "POST /workflows/generate") {
       {
@@ -5185,6 +6452,18 @@ exports.handler = async (e) => {
         }),
       );
       const targetUser = users.find((u) => u.username === username);
+      const membership = targetUser
+        ? await readMembership(tenantId, targetUser.email).catch(() => null)
+        : null;
+      if (membership) {
+        const at = now();
+        await saveMembership({
+          ...membership,
+          status: body.enabled ? "active" : "deactivated",
+          ...(body.enabled && !membership.activatedAt ? { activatedAt: at } : {}),
+          updatedAt: at,
+        });
+      }
       await logActivity(tenantId, {
         actor: a.userId,
         actorLabel: actorLabelFor(asPrincipal(a)),
@@ -5211,7 +6490,7 @@ exports.handler = async (e) => {
       org.branding = { ...(org.branding || {}), ...patch };
       org.updatedAt = now();
       await saveOrganization(org);
-      return reply(200, org);
+      return reply(200, organizationFor(org, p));
     }
     if (route === "GET /copilot/actions") {
       {
@@ -5431,6 +6710,358 @@ exports.handler = async (e) => {
         return reply(
           200,
           await revokeBrowserConnection(a, e.pathParameters?.id),
+        );
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+    }
+    /* ------------------------------------------- Phase 4: organization, users, teams, teams --- */
+
+    // 11.4 — the customer's own organization profile. `PUT /organizations/{slug}` is staff-only and
+    // stays that way; this is the half an organization administrator may write, and it refuses the
+    // three internal fields by name rather than dropping them (requirement 11.1, 8.2).
+    if (route === "POST /organizations/{slug}/profile") {
+      const slug = e.pathParameters?.slug;
+      {
+        const denied = await guardIn(p, "org:settings", { orgId: slug });
+        if (denied) return denied;
+      }
+      const org = await getOrganization(slug);
+      if (!org) return reply(404, { error: "Not found" });
+      let patch;
+      try {
+        const body = JSON.parse(e.body || "{}");
+        patch = {
+          ...validateOrgProfileForCustomer(body),
+          ...validateOrgExtendedProfile(body, p.isStaff ? "internal" : "customer"),
+        };
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+      if (Object.keys(patch).length === 0) return reply(400, { error: "Nothing to change" });
+      const next = { ...org, ...patch, updatedAt: now() };
+      await saveOrganization(next);
+      await logActivity(slug, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: "ORG_UPDATED",
+        summary: `Changed ${Object.keys(patch).join(", ")}`,
+        details: { fields: Object.keys(patch) },
+      });
+      return reply(200, organizationFor(next, p));
+    }
+
+    // 11.5 — role change. Remediates H-8 and closes the write side of task 7.5.
+    if (route === "POST /tenants/{tenantId}/users/{username}/role") {
+      const tenantId = e.pathParameters?.tenantId;
+      {
+        const denied = await guardIn(p, "user:set_role", { orgId: tenantId });
+        if (denied) return denied;
+      }
+      try {
+        const body = JSON.parse(e.body || "{}");
+        const result = await changeMemberRole(
+          tenantId,
+          e.pathParameters?.username,
+          String(body.role || "").trim(),
+          a,
+          p,
+        );
+        return reply(200, result);
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+    }
+
+    // 11.5 — resend. A new token, and the previous one stops working (requirement 26.17).
+    if (route === "POST /tenants/{tenantId}/users/{username}/invitation/resend") {
+      const tenantId = e.pathParameters?.tenantId;
+      {
+        const denied = await guardIn(p, "user:invite", { orgId: tenantId });
+        if (denied) return denied;
+      }
+      // Requirement 9.11: a suspended organization cannot grow its team, and that includes reissuing
+      // an invitation it already sent.
+      const resendOrg = await getOrganization(tenantId);
+      if (resendOrg && resendOrg.status === "suspended")
+        return reply(409, {
+          error: "This organization is suspended. Contact AmazFlow before adding people.",
+        });
+      try {
+        return reply(200, await resendInvitation(tenantId, e.pathParameters?.username, a, p));
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+    }
+
+    // 11.5 — revoke a pending invitation. Disables, never deletes (requirement 9.13, 9.16).
+    if (route === "DELETE /tenants/{tenantId}/users/{username}/invitation") {
+      const tenantId = e.pathParameters?.tenantId;
+      {
+        const denied = await guardIn(p, "user:invite", { orgId: tenantId });
+        if (denied) return denied;
+      }
+      try {
+        return reply(200, await revokeInvitation(tenantId, e.pathParameters?.username, a, p));
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+    }
+
+    // 11.10 — acceptance. Authenticated, single-use, server-resolved, rate-limited.
+    if (route === "POST /invitations/{token}/accept") {
+      const gate = await consumeRateLimit("invitation_accept", callerAddress(e));
+      if (!gate.allowed)
+        return reply(429, {
+          error: "Too many invitation attempts. Wait a moment and try again.",
+          retryAfterSeconds: gate.retryAfterSeconds,
+        });
+      try {
+        return reply(200, await acceptInvitation(String(e.pathParameters?.token || ""), a));
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message, code: err.code });
+        throw err;
+      }
+    }
+
+    // 11.8 — teams. Organization-scoped, audited, and granting nothing.
+    if (route === "GET /teams") {
+      {
+        const denied = await guardIn(p, "team:read", { orgId: p.orgId });
+        if (denied) return denied;
+      }
+      const teams = await teamsFor(p);
+      return reply(200, {
+        teams: teams.sort((x, y) => String(x.name).localeCompare(String(y.name))),
+        // Stated in the payload, not only in the interface copy, so any client that renders this
+        // cannot present teams as an access control by omission (requirement 10.7).
+        grantsPermissions: false,
+        grantsPermissionsReason:
+          "Team membership groups people and directs notifications. It grants no permissions in this release.",
+      });
+    }
+    if (route === "POST /teams") {
+      {
+        const denied = await guardIn(p, "team:manage", { orgId: p.orgId });
+        if (denied) return denied;
+      }
+      let name;
+      try {
+        name = validateTeamName(JSON.parse(e.body || "{}").name);
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+      const team = {
+        id: `team_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        tenantId: p.orgId,
+        name,
+        memberUsernames: [],
+        createdAt: now(),
+        updatedAt: now(),
+      };
+      await saveTeam(team);
+      await logActivity(p.orgId, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: "TEAM_CREATED",
+        summary: `Created the team "${name}"`,
+        details: { teamId: team.id, name },
+      });
+      return reply(201, team);
+    }
+    if (route === "PUT /teams/{id}") {
+      {
+        const denied = await guardIn(p, "team:manage", { orgId: p.orgId });
+        if (denied) return denied;
+      }
+      const team = await resolveEntity("TEAM#", e.pathParameters?.id, p, "staff renaming a team");
+      if (!team) return reply(404, { error: "Not found" });
+      let name;
+      try {
+        name = validateTeamName(JSON.parse(e.body || "{}").name);
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+      const previous = team.name;
+      const next = { ...team, name, updatedAt: now() };
+      await saveTeam(next);
+      await logActivity(team.tenantId, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: "TEAM_RENAMED",
+        summary: `Renamed the team "${previous}" to "${name}"`,
+        details: { teamId: team.id, previous, name },
+      });
+      return reply(200, next);
+    }
+    if (route === "DELETE /teams/{id}") {
+      {
+        const denied = await guardIn(p, "team:manage", { orgId: p.orgId });
+        if (denied) return denied;
+      }
+      const team = await resolveEntity("TEAM#", e.pathParameters?.id, p, "staff deleting a team");
+      if (!team) return reply(404, { error: "Not found" });
+      for (const username of team.memberUsernames || [])
+        await syncTeamMembership(team.tenantId, username, team.id, false);
+      await db.send(
+        new DeleteItemCommand({
+          TableName: table,
+          Key: { pk: { S: `TENANT#${team.tenantId}` }, sk: { S: `TEAM#${team.id}` } },
+        }),
+      );
+      await logActivity(team.tenantId, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: "TEAM_DELETED",
+        summary: `Deleted the team "${team.name}"`,
+        details: { teamId: team.id, name: team.name, members: (team.memberUsernames || []).length },
+      });
+      return reply(200, { id: team.id, deleted: true });
+    }
+    if (route === "POST /teams/{id}/members") {
+      {
+        const denied = await guardIn(p, "team:manage", { orgId: p.orgId });
+        if (denied) return denied;
+      }
+      const team = await resolveEntity("TEAM#", e.pathParameters?.id, p, "staff changing team membership");
+      if (!team) return reply(404, { error: "Not found" });
+      const username = String(JSON.parse(e.body || "{}").username || "").trim().toLowerCase();
+      if (!username) return reply(400, { error: "A username is required" });
+      // The person has to be a member of this organization. Without this a team could name an address
+      // from another organization and the team list would then read as a cross-tenant roster.
+      const members = await listTenantUsers(team.tenantId);
+      if (!members.find((u) => u.email === username || u.username === username))
+        return reply(404, { error: "Not found" });
+      const memberUsernames = (team.memberUsernames || []).includes(username)
+        ? team.memberUsernames
+        : [...(team.memberUsernames || []), username];
+      const next = { ...team, memberUsernames, updatedAt: now() };
+      await saveTeam(next);
+      await syncTeamMembership(team.tenantId, username, team.id, true);
+      await logActivity(team.tenantId, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: "TEAM_MEMBER_ADDED",
+        summary: `Added ${username} to "${team.name}"`,
+        details: { teamId: team.id, username },
+      });
+      return reply(200, next);
+    }
+    if (route === "DELETE /teams/{id}/members/{username}") {
+      {
+        const denied = await guardIn(p, "team:manage", { orgId: p.orgId });
+        if (denied) return denied;
+      }
+      const team = await resolveEntity("TEAM#", e.pathParameters?.id, p, "staff changing team membership");
+      if (!team) return reply(404, { error: "Not found" });
+      const username = String(e.pathParameters?.username || "").trim().toLowerCase();
+      const next = {
+        ...team,
+        memberUsernames: (team.memberUsernames || []).filter((u) => u !== username),
+        updatedAt: now(),
+      };
+      await saveTeam(next);
+      await syncTeamMembership(team.tenantId, username, team.id, false);
+      await logActivity(team.tenantId, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: "TEAM_MEMBER_REMOVED",
+        summary: `Removed ${username} from "${team.name}"`,
+        details: { teamId: team.id, username },
+      });
+      return reply(200, next);
+    }
+
+    // 12.3 — notifications. Unread count, list, mark one read, mark all read. No email delivery
+    // anywhere in this file (requirement 22.9).
+    if (route === "GET /notifications") {
+      {
+        const denied = await guardIn(p, "notification:read", { orgId: p.orgId });
+        if (denied) return denied;
+      }
+      const username = a.email || a.userId;
+      const items = await notificationsFor(p, username);
+      return reply(200, items);
+    }
+    if (route === "POST /notifications/{id}/read") {
+      {
+        const denied = await guardIn(p, "notification:read", { orgId: p.orgId });
+        if (denied) return denied;
+      }
+      const notification = await resolveEntity(
+        "NOTIFICATION#",
+        e.pathParameters?.id,
+        p,
+        "staff reading a notification",
+      );
+      if (!notification) return reply(404, { error: "Not found" });
+      const username = a.email || a.userId;
+      await markNotificationRead(notification.tenantId, username, notification.id);
+      return reply(200, { id: notification.id, read: true });
+    }
+    if (route === "POST /notifications/read-all") {
+      {
+        const denied = await guardIn(p, "notification:read", { orgId: p.orgId });
+        if (denied) return denied;
+      }
+      const username = a.email || a.userId;
+      const items = await notificationsFor(p, username);
+      for (const notification of items)
+        await markNotificationRead(p.orgId, username, notification.id);
+      return reply(200, { read: items.length });
+    }
+
+    // 11.14 — personal profile. The target username always comes from the verified session.
+    if (route === "GET /me/profile") {
+      try {
+        return reply(200, await readOwnProfile(a));
+      } catch (err) {
+        if (err && err.name === "UserNotFoundException")
+          return reply(404, { error: "Profile not found" });
+        throw err;
+      }
+    }
+    if (route === "PUT /me/profile") {
+      try {
+        return reply(200, await updateOwnProfile(a, JSON.parse(e.body || "{}")));
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+    }
+    if (route === "GET /security/facts") return reply(200, SECURITY_FACTS);
+
+    // Cognito verifies the current password and performs the change directly from the customer
+    // surface. This self-scoped acknowledgement is called only after that succeeds, giving the
+    // control plane the required administrative audit event without exposing an operator password
+    // setter (requirements 4.8 and 12.7).
+    if (route === "POST /me/password-changed") {
+      await logActivity(a.tenantId, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: "PASSWORD_CHANGED",
+        summary: "Changed own password",
+      });
+      return reply(200, { ok: true });
+    }
+
+    // 11.14 — personal preferences. Every accepted key is stored, and an unknown key is refused
+    // rather than dropped (requirements 12.4, 12.5).
+    if (route === "GET /me/preferences")
+      return reply(200, await readPreferences(p.orgId, a.email || a.userId));
+    if (route === "PUT /me/preferences") {
+      try {
+        const body = JSON.parse(e.body || "{}");
+        return reply(
+          200,
+          await savePreferences(p.orgId, a.email || a.userId, body.values || body),
         );
       } catch (err) {
         if (err && err.status) return reply(err.status, { error: err.message });
