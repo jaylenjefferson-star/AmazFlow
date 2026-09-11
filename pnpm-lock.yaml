@@ -214,6 +214,18 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/crm:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.13.4
+        version: 22.20.1
+      tsx:
+        specifier: ^4.19.3
+        version: 4.23.13
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/domain-ui:
     dependencies:
       '@amazflow/api-client':
