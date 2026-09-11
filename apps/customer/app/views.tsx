@@ -394,24 +394,35 @@ export function RunsView({ slots, navigate }: ViewProps) {
   );
 }
 
-export function TasksView({ slots }: ViewProps) {
-  const tasks = list<{ id: string; operation: string; status: string }>(slots, "agentTasks");
+export function TasksView({ slots, client, principal, refresh }: ViewProps) {
+  type Task = { id: string; operation: string; status: string; executionTarget?: string; runId?: string; claimedBy?: string; claimExpiresAt?: string; expiresAt?: string; destination?: string };
+  const tasks = list<Task>(slots, "agentTasks");
+  const mayResolve = can(principal, "task:resolve", { orgId: principal.orgId }).allow;
+  const { pending, feedback, run: act } = useAction(refresh);
   return (
     <Page title="Tasks" lead="Work waiting on an agent or on a person.">
+      <ActionFeedback value={feedback} />
       <Resource slot={tasks} emptyTitle="Nothing waiting" emptyBody="No task is outstanding right now.">
         {(value) => (
-          <ul className="ops-list">
-            {value.map((task) => (
-              <li key={task.id}>
-                <span>{task.operation}</span>
-                <Pill tone="waiting">{task.status}</Pill>
-              </li>
-            ))}
-          </ul>
+          <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Operation</th><th>Target surface</th><th>Originating run</th><th>Claim state</th><th>Deadline</th><th>Result</th></tr></thead><tbody>{value.map((task) => {
+            const claim = task.claimedBy ? `Claimed by ${task.claimedBy}` : "Waiting to be claimed";
+            const target = task.executionTarget === "desktop_agent" ? "Desktop App" : task.executionTarget === "browser_extension" ? "Chrome Extension" : "Not recorded";
+            return <tr key={task.id}><td>{task.operation}{task.destination && <><br /><span className="ops-muted">{task.destination}</span></>}</td><td>{target}</td><td>{task.runId ?? "Not recorded"}</td><td>{claim}{task.claimExpiresAt && <><br /><span className="ops-muted">Lease ends {relativeTime(task.claimExpiresAt)}</span></>}</td><td>{task.expiresAt ? relativeTime(task.expiresAt) : "Not recorded"}</td><td>{mayResolve && (task.status === "PENDING" || task.status === "CLAIMED") ? <TaskResultForm task={task} disabled={pending !== null} submit={(result) => act(`task-${task.id}`, result.ok ? "Result recorded and run advanced." : "Failure recorded and run advanced.", () => client.post(endpoints.submitAgentTaskResult(task.id).path, result))} /> : "—"}</td></tr>;
+          })}</tbody></table></div>
         )}
       </Resource>
     </Page>
   );
+}
+
+function TaskResultForm({ task, disabled, submit }: { task: { id: string }; disabled: boolean; submit: (result: { ok: boolean; status?: string; error?: string }) => Promise<boolean> }) {
+  const [ok, setOk] = useState("true");
+  const [detail, setDetail] = useState("");
+  return <form className="ops-row ops-gap-sm" onSubmit={(event) => { event.preventDefault(); void submit(ok === "true" ? { ok: true, ...(detail.trim() ? { status: detail.trim() } : {}) } : { ok: false, error: detail.trim() || "Reported as unsuccessful from the task queue." }); }}>
+    <Select value={ok} onChange={setOk} label={`Result for ${task.id}`} options={[{ value: "true", label: "Succeeded" }, { value: "false", label: "Failed" }]} />
+    <input className="ops-input" aria-label={`Result detail for ${task.id}`} value={detail} onChange={(event) => setDetail(event.target.value)} disabled={disabled} placeholder="Optional detail" />
+    <Btn type="submit" size="sm" variant="primary" disabled={disabled}>Submit</Btn>
+  </form>;
 }
 
 export function ApprovalsView({ slots, navigate, client, principal, refresh }: ViewProps) {

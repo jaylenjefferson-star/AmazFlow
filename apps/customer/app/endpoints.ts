@@ -109,6 +109,10 @@ export const decideRunApproval = (id: string, stepId: string): Endpoint => ({
   route: "POST /runs/{id}/approvals/{stepId}",
   path: `/runs/${e(id)}/approvals/${e(stepId)}`,
 });
+export const submitAgentTaskResult = (id: string): Endpoint => ({
+  route: "POST /agent-tasks/{id}/result",
+  path: `/agent-tasks/${e(id)}/result`,
+});
 
 /** Browser connections. Credentials and managed-profile identifiers never cross this boundary. */
 export const createBrowserConnection = (): Endpoint => ({
@@ -199,6 +203,7 @@ export const ALL_ENDPOINTS: readonly Endpoint[] = [
   cancelRun("run_1"),
   confirmRunAction("run_1", "step_1"),
   decideRunApproval("run_1", "step_1"),
+  submitAgentTaskResult("task_1"),
   createBrowserConnection(),
   startBrowserConnectionLogin("connection_1"),
   completeBrowserConnectionLogin("connection_1"),

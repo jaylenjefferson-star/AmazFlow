@@ -1106,11 +1106,14 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
 
 - [ ] 18. Phase 8 — Tasks, approvals, and exceptions
 
-  - [ ] 18.1 Build the tasks view and the permitted result submission path
+  - [x] 18.1 Build the tasks view and the permitted result submission path
     - List organization tasks the principal may read, narrowed to own runs for the own-records form; display
       target surface, operation, originating run, and claim state; record a submitted result and advance the
       run; respond with a state conflict when the run is not awaiting an agent on that step; append the
       audit entry
+    - The customer queue now shows task surface, origin, claim state and deadline, and offers successful
+      or failed result submission only to principals granted task:resolve. The established control-plane
+      route retains its state conflict and audit checks.
     - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.6_
 
   - [x] 18.2 Build the approvals view and the server-verified decision path
