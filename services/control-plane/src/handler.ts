@@ -258,7 +258,6 @@ let requestStartedAt = null;
 let requestUserId = null;
 let requestOrgId = null;
 let lastPermissionCheck = null;
-<<<<<<< HEAD
 let requestTruncated = false;
 let requestReadTruncated = false;
 let responsePagination = null;

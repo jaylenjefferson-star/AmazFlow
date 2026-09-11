@@ -198,7 +198,7 @@ function Page({
   );
 }
 
-export function HomeView({ slots, navigate, principal }: ViewProps) {
+export function HomeView({ slots, navigate, principal, client, refresh }: ViewProps) {
   const runs = list<{ id: string; status: string; startedAt?: string }>(slots, "runs");
   const workflows = list<{ id: string; status?: string; steps?: Array<{ type?: string; provider?: string; executionTarget?: string }> }>(slots, "workflows");
   const agents = list<{ agentType?: string; connectionStatus?: string }>(slots, "agents");
