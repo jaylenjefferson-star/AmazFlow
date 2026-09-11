@@ -535,6 +535,7 @@ export function ConnectionsView({ slots, client, principal, refresh }: ViewProps
   const [baseUrl, setBaseUrl] = useState("");
   const [origins, setOrigins] = useState("");
   const [mode, setMode] = useState("auto");
+  const [loginSessions, setLoginSessions] = useState<Record<string, string>>({});
   const action = useAction(refresh);
   const mayManage = can(principal, "connection:manage", { orgId: principal.orgId }).allow;
   const busy = action.pending !== null;
@@ -591,13 +592,13 @@ export function ConnectionsView({ slots, client, principal, refresh }: ViewProps
                 <td>{connection.preferredMode ?? "Not recorded"}</td>
                 <td>{dependents.length ? dependents.map((workflow) => workflow.name ?? workflow.id).join(", ") : "No workflow references this connection"}</td>
                 <td><Pill tone={connection.status === "active" ? "good" : connection.status === "revoked" ? "bad" : "waiting"}>{connection.status}</Pill></td>
-                <td>{mayManage && connection.status !== "revoked" ? <span className="ops-row ops-gap-sm"><Btn size="sm" disabled={busy} onClick={() => void action.run(`connection-login-${connection.id}`, "A secure sign-in session was started.", () => client.post(endpoints.startBrowserConnectionLogin(connection.id).path))}>{action.pending === `connection-login-${connection.id}` ? "Starting…" : connection.status === "active" ? "Reconnect" : "Sign in"}</Btn><Btn size="sm" variant="danger" disabled={busy} onClick={() => void action.run(`connection-revoke-${connection.id}`, "Connection disconnected.", () => client.del(endpoints.revokeBrowserConnection(connection.id).path))}>Disconnect</Btn></span> : "—"}</td>
+                <td>{mayManage && connection.status !== "revoked" ? <span className="ops-col ops-gap-sm"><span className="ops-row ops-gap-sm"><Btn size="sm" disabled={busy} onClick={() => void action.run(`connection-login-${connection.id}`, "A secure sign-in session was started.", () => client.post(endpoints.startBrowserConnectionLogin(connection.id).path))}>{action.pending === `connection-login-${connection.id}` ? "Starting…" : connection.status === "active" ? "Reconnect" : "Sign in"}</Btn><Btn size="sm" variant="danger" disabled={busy} onClick={() => void action.run(`connection-revoke-${connection.id}`, "Connection disconnected.", () => client.del(endpoints.revokeBrowserConnection(connection.id).path))}>Disconnect</Btn></span><span className="ops-row ops-gap-sm"><input className="ops-input" aria-label={`Login session for ${connection.name}`} value={loginSessions[connection.id] ?? ""} onChange={(event) => setLoginSessions((current) => ({ ...current, [connection.id]: event.target.value }))} disabled={busy} placeholder="Login session ID" /><Btn size="sm" disabled={busy || !loginSessions[connection.id]?.trim()} onClick={() => void action.run(`connection-complete-${connection.id}`, "Secure sign-in completed.", () => client.post(endpoints.completeBrowserConnectionLogin(connection.id).path, { loginSessionId: loginSessions[connection.id].trim() }))}>Complete sign-in</Btn></span></span> : "—"}</td>
               </tr>;
             })}
           </tbody></table></div>
         )}
       </Resource>
-      <Alert title="Secure sign-in availability">If managed browser sign-in is not configured for this environment, starting a session will say so plainly and will not record a sign-in. Contact AmazFlow before retrying.</Alert>
+      <Alert title="Connection test availability">A separate connection-test API is not deployed, so no test button is shown. Starting and completing secure sign-in is the only supported readiness path. If managed browser sign-in is not configured for this environment, the control plane says so plainly and records no sign-in.</Alert>
       </div>
     </Page>
   );

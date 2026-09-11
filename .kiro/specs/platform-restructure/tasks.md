@@ -1162,12 +1162,15 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
 
 - [ ] 20. Phase 9 — Connections, secret handling, and the grant-signing secret migration
 
-  - [ ] 20.1 Build the connections view with derived dependencies and an honest disabled state
+  - [x] 20.1 Build the connections view with derived dependencies and an honest disabled state
     - Name, base location, permitted origins, preferred mode, status, and the workflows that depend on it,
       derived from stored definitions; create, start and complete a login session, test, reconnect,
       disconnect; the managed profile identifier and every credential value excluded from responses; while
       the routes are not present in the deployed control plane the view is intentionally disabled with a
       stated reason
+    - The customer connection view derives workflow dependencies, exposes create/start/complete/reconnect
+      and disconnect against the served routes, never displays credential or profile values, and explains
+      that no separate test API exists rather than offering a non-functional test control.
     - _Requirements: 20.1, 20.2, 20.3, 20.4, 20.5, 30.9_
 
   - [ ] 20.2 Add secret metadata records backed by the external secret store
