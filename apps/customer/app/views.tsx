@@ -458,8 +458,26 @@ export function ApprovalsView({ slots, navigate, client, principal, refresh }: V
   );
 }
 
+type ExceptionCause = "SYSTEM_FAILURE" | "INTEGRATION_FAILURE" | "MISSING_INFORMATION" | "AMBIGUOUS_RECORD" | "HUMAN_REVIEW" | "POLICY_CONFLICT" | "AGENT_UNAVAILABLE" | "CREDENTIAL_PROBLEM";
+type ExceptionRun = { id: string; status: string; currentStepId?: string; audit?: Array<{ type?: string; message?: string; stepId?: string; details?: Record<string, unknown> }>; stepResults?: Record<string, { provider?: string; status?: string; actionResult?: { error?: string } }> };
+const classifyException = (run: ExceptionRun, connections: Array<{ status?: string }>) => {
+  const events = [...(run.audit ?? [])].reverse();
+  const type = (value: string) => events.find((event) => event.type === value);
+  const failedProvider = Object.values(run.stepResults ?? {}).find((result) => result.status === "FAILED")?.provider;
+  const connectionBroken = connections.some((connection) => connection.status === "error" || connection.status === "revoked");
+  if (type("ACTION_RECONCILIATION_REQUIRED") || type("VERIFICATION_FAILED")) return { cause: "POLICY_CONFLICT" as ExceptionCause, unsafe: true, recovery: "Reconcile the target system before starting another run. Retrying could duplicate a side effect." };
+  if (connectionBroken) return { cause: "CREDENTIAL_PROBLEM" as ExceptionCause, unsafe: false, recovery: "Reconnect the affected system, then start a new run." };
+  if (run.status === "TIMED_OUT") return { cause: "AGENT_UNAVAILABLE" as ExceptionCause, unsafe: false, recovery: "Connect the required agent, then start a new run." };
+  if (type("REJECTED")) return { cause: "HUMAN_REVIEW" as ExceptionCause, unsafe: false, recovery: "No action was taken. Correct the input or workflow, then start a new run." };
+  if (type("AI_ALLOWLIST_REJECTED")) return { cause: "AMBIGUOUS_RECORD" as ExceptionCause, unsafe: false, recovery: "Resolve the ambiguous record with a human decision before starting a new run." };
+  if (events.some((event) => /confidence|required input|missing information/i.test(event.message ?? ""))) return { cause: "MISSING_INFORMATION" as ExceptionCause, unsafe: false, recovery: "Supply the missing information, then start a new run." };
+  if (type("ACTION_FAILED") && ["api", "spreadsheet", "email", "file"].includes(failedProvider ?? "")) return { cause: "INTEGRATION_FAILURE" as ExceptionCause, unsafe: false, recovery: "Check the connected integration, then start a new run." };
+  return { cause: "SYSTEM_FAILURE" as ExceptionCause, unsafe: false, recovery: "Review the recorded failure and start a new run when the underlying issue is resolved." };
+};
+
 export function ExceptionsView({ slots, navigate }: ViewProps) {
-  const runs = list<{ id: string; status: string }>(slots, "runs");
+  const runs = list<ExceptionRun>(slots, "runs");
+  const connections = list<{ status?: string }>(slots, "connections");
   const failed = {
     ...runs,
     value: runs.value.filter((run) => run.status === "FAILED" || run.status === "TIMED_OUT"),
@@ -472,15 +490,10 @@ export function ExceptionsView({ slots, navigate }: ViewProps) {
         emptyBody="Every run either finished or is still going."
       >
         {(value) => (
-          <ul className="ops-list">
-            {value.map((run) => (
-              <li key={run.id}>
-                <button type="button" onClick={() => navigate({ routeId: "runs", entityId: run.id })}>
-                  {run.id}
-                </button>
-              </li>
-            ))}
-          </ul>
+          <ul className="ops-list">{value.map((run) => {
+            const diagnosis = classifyException(run, connections.value);
+            return <li key={run.id}><span><button type="button" onClick={() => navigate({ routeId: "runs", entityId: run.id })}>{run.id}</button><br /><strong>{diagnosis.cause.replace(/_/g, " ")}</strong><br /><span className="ops-muted">{diagnosis.recovery}</span></span><Pill tone={diagnosis.unsafe ? "bad" : "waiting"}>{diagnosis.unsafe ? "Reconcile first" : "Recovery available"}</Pill></li>;
+          })}</ul>
         )}
       </Resource>
     </Page>

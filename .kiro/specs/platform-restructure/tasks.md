@@ -1127,9 +1127,11 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       operator is shown the queue but never controls the API would refuse.
     - _Requirements: 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 18.7, 18.8, 18.9, 18.10_
 
-  - [ ] 18.3 Derive the exception cause classification from recorded data
+  - [x] 18.3 Derive the exception cause classification from recorded data
     - Classify from audit entries, step results, and connection state into the eight causes; never store the
       classification separately from the run
+    - The exceptions queue derives all eight listed causes at render time from audit events, failed-step
+      provider data, timeouts, and connection state. It keeps policy/reconciliation failures unsafe to retry.
     - _Requirements: 19.1, 19.2, 19.3_
 
   - [ ] 18.4 Build the exceptions view with cause-appropriate recovery
