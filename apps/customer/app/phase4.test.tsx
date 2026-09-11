@@ -177,6 +177,7 @@ test("the organization identifier is encoded into every path that carries it", (
   );
   assert.equal(endpoints.orgBranding("north/wind").path, "/organizations/north%2Fwind/branding");
   assert.equal(endpoints.removeTeamMember("t/1", "p@x.example").path, "/teams/t%2F1/members/p%40x.example");
+  assert.equal(endpoints.revokeBrowserConnection("connection/a").path, "/connections/browser/connection%2Fa");
 });
 
 test("the customer surface reaches the control plane only through the shared API client", () => {

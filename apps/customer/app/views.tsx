@@ -450,26 +450,87 @@ export function AgentsView({ slots }: ViewProps) {
   );
 }
 
-export function ConnectionsView({ slots }: ViewProps) {
-  const connections = list<{ id: string; name: string; status: string }>(slots, "connections");
+type BrowserConnection = {
+  id: string;
+  name: string;
+  baseUrl: string;
+  allowedOrigins?: string[];
+  preferredMode?: string;
+  status: string;
+  createdAt?: string;
+};
+
+export function ConnectionsView({ slots, client, principal, refresh }: ViewProps) {
+  const connections = list<BrowserConnection>(slots, "connections");
+  const workflows = list<{ id: string; name?: string; steps?: Array<{ connectionId?: string }> }>(slots, "workflows");
+  const [name, setName] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [origins, setOrigins] = useState("");
+  const [mode, setMode] = useState("auto");
+  const action = useAction(refresh);
+  const mayManage = can(principal, "connection:manage", { orgId: principal.orgId }).allow;
+  const busy = action.pending !== null;
+
+  const create = (event: FormEvent) => {
+    event.preventDefault();
+    const allowedOrigins = origins.split(",").map((origin) => origin.trim()).filter(Boolean);
+    void action.run("connection-create", `Created ${name.trim()} as a connection that needs sign-in.`, async () => {
+      await client.post(endpoints.createBrowserConnection().path, {
+        name: name.trim(),
+        baseUrl: baseUrl.trim(),
+        allowedOrigins: allowedOrigins.length ? allowedOrigins : undefined,
+        preferredMode: mode,
+      });
+      setName("");
+      setBaseUrl("");
+      setOrigins("");
+      setMode("auto");
+    });
+  };
+
   return (
     <Page title="Connections" lead="The systems a workflow signs in to on your behalf.">
+      <div className="ops-col ops-gap-md">
+      {mayManage && (
+        <Panel title="Add a connection" sub="A secure managed profile holds the sign-in session. Credentials are never stored in a workflow or shown here.">
+          <form className="ops-col ops-gap-sm" onSubmit={create}>
+            <div className="ops-grid-2">
+              <Field label="Connection name"><input className="ops-input" value={name} onChange={(event) => setName(event.target.value)} disabled={busy} required /></Field>
+              <Field label="Starting address" hint="A public HTTPS URL"><input className="ops-input" type="url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} disabled={busy} required placeholder="https://example.com/" /></Field>
+            </div>
+            <div className="ops-grid-2">
+              <Field label="Permitted origins" hint="Comma-separated HTTPS origins. Leave empty to use the starting address."><input className="ops-input" value={origins} onChange={(event) => setOrigins(event.target.value)} disabled={busy} placeholder="https://example.com" /></Field>
+              <Select value={mode} onChange={setMode} label="Preferred surface" options={[{ value: "auto", label: "Choose automatically" }, { value: "managed", label: "AmazFlow managed browser" }, { value: "connected", label: "Connected browser" }]} />
+            </div>
+            <div><Btn type="submit" variant="primary" disabled={busy || !name.trim() || !baseUrl.trim()}>{action.pending === "connection-create" ? "Creating…" : "Create connection"}</Btn></div>
+          </form>
+        </Panel>
+      )}
+      <ActionFeedback value={action.feedback} />
       <Resource
         slot={connections}
         emptyTitle="No connections yet"
         emptyBody="A connection is created when a workflow needs to sign in to one of your systems."
       >
         {(value) => (
-          <ul className="ops-list">
-            {value.map((connection) => (
-              <li key={connection.id}>
-                <span>{connection.name}</span>
-                <Pill tone={connection.status === "active" ? "good" : "muted"}>{connection.status}</Pill>
-              </li>
-            ))}
-          </ul>
+          <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Connection</th><th>Location</th><th>Permitted origins</th><th>Mode</th><th>Used by workflows</th><th>Status</th><th>Actions</th></tr></thead><tbody>
+            {value.map((connection) => {
+              const dependents = workflows.value.filter((workflow) => workflow.steps?.some((step) => step.connectionId === connection.id));
+              return <tr key={connection.id}>
+                <td><strong>{connection.name}</strong><br /><span className="ops-muted">{connection.createdAt ? `Created ${relativeTime(connection.createdAt)}` : "Created time not recorded"}</span></td>
+                <td>{connection.baseUrl}</td>
+                <td>{connection.allowedOrigins?.length ? connection.allowedOrigins.join(", ") : "Starting origin only"}</td>
+                <td>{connection.preferredMode ?? "Not recorded"}</td>
+                <td>{dependents.length ? dependents.map((workflow) => workflow.name ?? workflow.id).join(", ") : "No workflow references this connection"}</td>
+                <td><Pill tone={connection.status === "active" ? "good" : connection.status === "revoked" ? "bad" : "waiting"}>{connection.status}</Pill></td>
+                <td>{mayManage && connection.status !== "revoked" ? <span className="ops-row ops-gap-sm"><Btn size="sm" disabled={busy} onClick={() => void action.run(`connection-login-${connection.id}`, "A secure sign-in session was started.", () => client.post(endpoints.startBrowserConnectionLogin(connection.id).path))}>{action.pending === `connection-login-${connection.id}` ? "Starting…" : connection.status === "active" ? "Reconnect" : "Sign in"}</Btn><Btn size="sm" variant="danger" disabled={busy} onClick={() => void action.run(`connection-revoke-${connection.id}`, "Connection disconnected.", () => client.del(endpoints.revokeBrowserConnection(connection.id).path))}>Disconnect</Btn></span> : "—"}</td>
+              </tr>;
+            })}
+          </tbody></table></div>
         )}
       </Resource>
+      <Alert title="Secure sign-in availability">If managed browser sign-in is not configured for this environment, starting a session will say so plainly and will not record a sign-in. Contact AmazFlow before retrying.</Alert>
+      </div>
     </Page>
   );
 }

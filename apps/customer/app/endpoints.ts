@@ -110,6 +110,24 @@ export const decideRunApproval = (id: string, stepId: string): Endpoint => ({
   path: `/runs/${e(id)}/approvals/${e(stepId)}`,
 });
 
+/** Browser connections. Credentials and managed-profile identifiers never cross this boundary. */
+export const createBrowserConnection = (): Endpoint => ({
+  route: "POST /connections/browser",
+  path: "/connections/browser",
+});
+export const startBrowserConnectionLogin = (id: string): Endpoint => ({
+  route: "POST /connections/browser/{id}/login-session",
+  path: `/connections/browser/${e(id)}/login-session`,
+});
+export const completeBrowserConnectionLogin = (id: string): Endpoint => ({
+  route: "POST /connections/browser/{id}/login-session/complete",
+  path: `/connections/browser/${e(id)}/login-session/complete`,
+});
+export const revokeBrowserConnection = (id: string): Endpoint => ({
+  route: "DELETE /connections/browser/{id}",
+  path: `/connections/browser/${e(id)}`,
+});
+
 /** Personal settings (task 11.14). The target account always comes from the verified session. */
 export const saveOwnProfile = (): Endpoint => ({ route: "PUT /me/profile", path: "/me/profile" });
 export const saveOwnPreferences = (): Endpoint => ({
@@ -181,6 +199,10 @@ export const ALL_ENDPOINTS: readonly Endpoint[] = [
   cancelRun("run_1"),
   confirmRunAction("run_1", "step_1"),
   decideRunApproval("run_1", "step_1"),
+  createBrowserConnection(),
+  startBrowserConnectionLogin("connection_1"),
+  completeBrowserConnectionLogin("connection_1"),
+  revokeBrowserConnection("connection_1"),
   saveOwnProfile(),
   saveOwnPreferences(),
   ownPasswordChanged(),
