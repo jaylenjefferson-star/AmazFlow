@@ -16,11 +16,6 @@ Parameters:
     Type: String
     Default: production
     AllowedValues: [development, production]
-  ExecutionGrantSecret:
-    Type: String
-    NoEcho: true
-    Default: 9cdf5cf763984a9e4b99dd16d5c6c12c296fbf37bad582138e44e5d97f2b3139
-    Description: HMAC secret signing AgentCore execution grants (v1 format, matches packages/engine/src/execution-grant.ts). Dev/staging secret baked into the template; move to Secrets Manager before this path carries real customer actions.
   ExecutorHarnessArn:
     Type: String
     Default: arn:aws:bedrock-agentcore:us-east-1:398681517793:harness/harness_pwphl-y67Z8PxUwD
@@ -32,6 +27,16 @@ Parameters:
     Description: Production allows live operational data but not PHI, payment data, or other regulated data
 
 Resources:
+  ExecutionGrantSecret:
+    Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Description: Runtime-only HMAC secret for AgentCore execution grants
+      GenerateSecretString:
+        PasswordLength: 64
+        ExcludePunctuation: true
+
   ControlPlaneTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
@@ -159,6 +164,9 @@ Resources:
                 Action: [ses:SendEmail]
                 Resource: '*'
               - Effect: Allow
+                Action: [secretsmanager:GetSecretValue]
+                Resource: !Ref ExecutionGrantSecret
+              - Effect: Allow
                 Action: [bedrock:InvokeModel]
                 Resource:
                   - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFoundationModelId}
@@ -205,7 +213,7 @@ Resources:
           LEAD_TO: hello@amazflow.com
           LEAD_FROM: hello@amazflow.com
           BEDROCK_MODEL_ID: !Ref BedrockModelId
-          EXECUTION_GRANT_SECRET: !Ref ExecutionGrantSecret
+          EXECUTION_GRANT_SECRET_ID: !Ref ExecutionGrantSecret
           EXECUTOR_HARNESS_ARN: !Ref ExecutorHarnessArn
       Code:
         ZipFile: |
@@ -213,8 +221,9 @@ Resources:
           const {DynamoDBClient,ScanCommand,QueryCommand,PutItemCommand,GetItemCommand,DeleteItemCommand,TransactWriteItemsCommand}=require('@aws-sdk/client-dynamodb');
           const {BedrockRuntimeClient,ConverseCommand}=require('@aws-sdk/client-bedrock-runtime');
           const {SESv2Client,SendEmailCommand}=require('@aws-sdk/client-sesv2');
+          const {SecretsManagerClient,GetSecretValueCommand}=require('@aws-sdk/client-secrets-manager');
           const {CognitoIdentityProviderClient,ListUsersCommand,ListUsersInGroupCommand,AdminEnableUserCommand,AdminDisableUserCommand,AdminCreateUserCommand,AdminAddUserToGroupCommand,AdminRemoveUserFromGroupCommand,AdminGetUserCommand,AdminUpdateUserAttributesCommand,AdminUserGlobalSignOutCommand}=require('@aws-sdk/client-cognito-identity-provider');
-          const db=new DynamoDBClient({}); const bedrock=new BedrockRuntimeClient({}); const ses=new SESv2Client({}); const cognito=new CognitoIdentityProviderClient({}); const table=process.env.TABLE_NAME;
+          const db=new DynamoDBClient({}); const bedrock=new BedrockRuntimeClient({}); const ses=new SESv2Client({}); const secrets=new SecretsManagerClient({}); const cognito=new CognitoIdentityProviderClient({}); const table=process.env.TABLE_NAME;
           // Requirement 27.11: successful responses fail closed through a route-specific top-level
           // allowlist. A newly persisted field is not returned until its owning route names it here.
           const privateResponseFields=new Set(['managedProfileId','agentSessionId','browserSessionId']);
@@ -713,12 +722,26 @@ Resources:
           const GRANT_TTL_SECONDS=300;
           const b64u=(v)=>Buffer.from(v,'utf8').toString('base64url');
           const unb64u=(v)=>Buffer.from(v,'base64url').toString('utf8');
-          const signGrant=(encodedPayload)=>crypto.createHmac('sha256',process.env.EXECUTION_GRANT_SECRET).update(`v1.${encodedPayload}`).digest('base64url');
-          const mintExecutionGrant=({runId,tenantId,workflowId,workflowVersion,stepId,allowedTools,confirmationGranted,taskId,agentId,agentType,executionTarget,actionType,destination})=>{
+          // The deployed Lambda receives a secret identifier, not the secret. Fetch it lazily and
+          // cache it only inside the warm process. The direct value fallback is for the local test
+          // harness; CloudFormation configures EXECUTION_GRANT_SECRET_ID in every real environment.
+          let executionGrantSecretPromise;
+          const getExecutionGrantSecret=async()=>{
+            if(!executionGrantSecretPromise) executionGrantSecretPromise=(async()=>{
+              if(process.env.EXECUTION_GRANT_SECRET)return process.env.EXECUTION_GRANT_SECRET;
+              if(!process.env.EXECUTION_GRANT_SECRET_ID) throw new Error('Execution grants are not configured');
+              const value=await secrets.send(new GetSecretValueCommand({SecretId:process.env.EXECUTION_GRANT_SECRET_ID}));
+              if(!value.SecretString) throw new Error('Execution grant secret is empty or unavailable');
+              return value.SecretString;
+            })();
+            return executionGrantSecretPromise;
+          };
+          const signGrant=async(encodedPayload)=>crypto.createHmac('sha256',await getExecutionGrantSecret()).update(`v1.${encodedPayload}`).digest('base64url');
+          const mintExecutionGrant=async({runId,tenantId,workflowId,workflowVersion,stepId,allowedTools,confirmationGranted,taskId,agentId,agentType,executionTarget,actionType,destination})=>{
             const issuedAt=Math.floor(Date.now()/1000);
             const payload={version:1,grantId:crypto.randomUUID(),runId,tenantId,workflowId,workflowVersion,stepId,allowedTools,confirmationGranted:!!confirmationGranted,taskId:taskId||null,agentId:agentId||null,agentType:agentType||null,executionTarget:executionTarget||null,actionType:actionType||null,destination:destination||null,issuedAt,expiresAt:issuedAt+GRANT_TTL_SECONDS};
             const encoded=b64u(JSON.stringify(payload));
-            return `v1.${encoded}.${signGrant(encoded)}`;
+            return `v1.${encoded}.${await signGrant(encoded)}`;
           };
           // Independently verifies signature, expiry, every scope field against what the caller
           // separately loaded from the database (never against what the request body claims),
@@ -729,7 +752,7 @@ Resources:
             const [version,encoded,signature,extra]=parts;
             if(version!=='v1'||!encoded||!signature||extra) throw {status:400,message:'Malformed execution grant'};
             const actual=Buffer.from(signature,'base64url');
-            const wanted=Buffer.from(signGrant(encoded),'base64url');
+            const wanted=Buffer.from(await signGrant(encoded),'base64url');
             if(actual.length!==wanted.length||!crypto.timingSafeEqual(actual,wanted)) throw {status:401,message:'Invalid execution grant signature'};
             let payload;
             try{ payload=JSON.parse(unb64u(encoded)); }catch{ throw {status:400,message:'Malformed execution grant payload'}; }
@@ -895,7 +918,7 @@ Resources:
             const leaseExpiresAtMs=Date.now()+GRANT_TTL_SECONDS*1000;
             await acquireTaskLease(task.id,agentCtx.agentId,leaseExpiresAtMs);
             const confirmationGranted=Array.isArray(run.confirmedStepIds)&&run.confirmedStepIds.includes(task.stepId);
-            const grant=mintExecutionGrant({runId:run.id,tenantId:run.tenantId,workflowId:run.workflowId,workflowVersion:run.workflowVersion,stepId:task.stepId,allowedTools:['record_step_result','agent.report_result'],confirmationGranted,taskId:task.id,agentId:agentCtx.agentId,agentType:agentCtx.agent&&agentCtx.agent.agentType?agentCtx.agent.agentType:'CHROME_EXTENSION',executionTarget:task.executionTarget||'browser_extension',actionType:task.operation,destination:task.destination||null});
+            const grant=await mintExecutionGrant({runId:run.id,tenantId:run.tenantId,workflowId:run.workflowId,workflowVersion:run.workflowVersion,stepId:task.stepId,allowedTools:['record_step_result','agent.report_result'],confirmationGranted,taskId:task.id,agentId:agentCtx.agentId,agentType:agentCtx.agent&&agentCtx.agent.agentType?agentCtx.agent.agentType:'CHROME_EXTENSION',executionTarget:task.executionTarget||'browser_extension',actionType:task.operation,destination:task.destination||null});
             const grantId=JSON.parse(unb64u(grant.split('.')[1])).grantId;
             task.status='CLAIMED';
             task.claimedBy=agentCtx.agentId;
@@ -1258,7 +1281,7 @@ Resources:
             if(run.status!=='WAITING_AGENT'||!run.currentStepId) throw {status:409,message:'Run is not waiting on an agent step'};
             const stepId=run.currentStepId;
             const confirmationGranted=Array.isArray(run.confirmedStepIds)&&run.confirmedStepIds.includes(stepId);
-            const grant=mintExecutionGrant({runId:run.id,tenantId:run.tenantId,workflowId:run.workflowId,workflowVersion:run.workflowVersion,stepId,allowedTools:['record_step_result'],confirmationGranted});
+            const grant=await mintExecutionGrant({runId:run.id,tenantId:run.tenantId,workflowId:run.workflowId,workflowVersion:run.workflowVersion,stepId,allowedTools:['record_step_result'],confirmationGranted});
             const grantId=JSON.parse(unb64u(grant.split('.')[1])).grantId;
             const step=(workflow.steps||[]).find(s=>s.id===stepId);
             const prompt=`Workflow "${workflow.name}", step "${stepId}"${step?` (${step.name})`:''}. Report your progress on this step using the record_step_result tool. Execution grant -- pass this exact token as the tool's "grant" parameter on every call, it is the only thing that authorizes you to act:\n${grant}`;

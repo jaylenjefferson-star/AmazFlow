@@ -42,7 +42,9 @@ The plan above assumes a full `@amazflow/control-plane` + `@amazflow/aws-cdk` de
 
 **What's real and deployed:**
 - `POST /runs/{id}/executor/invoke` (JWT, SUPER_ADMIN) and `POST /agent/tools/record-step-result` (grant-authed) added to the live Lambda. Grant format is an inline port of `packages/engine/src/execution-grant.ts` (same v1 wire format, same fields), not a second format.
-- CFN parameters `ExecutionGrantSecret` (NoEcho, dev/staging secret baked into the template -- move to Secrets Manager before this carries real customer actions) and `ExecutorHarnessArn`.
+- The execution-grant secret is an `AWS::SecretsManager::Secret`; Lambda receives only its identifier
+  and resolves the value at runtime. The migration/rotation procedure is in `docs/DEPLOYING.md` and
+  requires zero runs awaiting an agent. `ExecutorHarnessArn` remains a CFN parameter.
 - AgentCore Harness `harness_pwphl` (ARN `arn:aws:bedrock-agentcore:us-east-1:398681517793:harness/harness_pwphl-y67Z8PxUwD`), reconfigured this session: model `us.anthropic.claude-sonnet-4-6`, system prompt establishes the bounded-execution-grant contract, one Gateway tool attached.
 - AgentCore Gateway `amazflow-executor-gateway` (target `amazflow-tools`), REST API target, inline OpenAPI schema exposing exactly one operation (`record_step_result`) against `POST /agent/tools/record-step-result` on the existing API (`https://5jsi2v2k35.execute-api.us-east-1.amazonaws.com`). Inbound auth: IAM. Outbound auth to the target: none (the target route has no API-Gateway-level auth; authorization is the execution grant, verified inside the Lambda).
 - No Policy Engine attached yet -- deliberately deferred; the backend already enforces tenant/workflow/run/step/tool/expiry/single-use deterministically without it.

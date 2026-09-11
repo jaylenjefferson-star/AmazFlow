@@ -13,6 +13,7 @@ class ScanCommand extends Cmd {}
 class QueryCommand extends Cmd {}
 class TransactWriteItemsCommand extends Cmd {}
 class DeleteItemCommand extends Cmd {}
+class GetSecretValueCommand extends Cmd {}
 
 class CondFail extends Error { constructor() { super("cond"); this.name = "ConditionalCheckFailedException"; } }
 
@@ -243,6 +244,12 @@ const stubs = {
     ConverseCommand: Cmd,
   },
   "@aws-sdk/client-sesv2": { SESv2Client: class { async send() { return {}; } }, SendEmailCommand: Cmd },
+  "@aws-sdk/client-secrets-manager": {
+    // Tests can remove the direct environment value and prove that the deployed handler uses the
+    // runtime identifier path without reaching a real account or persisting a secret in a fixture.
+    SecretsManagerClient: class { async send() { return { SecretString: process.env.HARNESS_EXECUTION_GRANT_SECRET || "harness-secret-not-a-real-key" }; } },
+    GetSecretValueCommand,
+  },
   "@aws-sdk/client-cognito-identity-provider": {
     // A working in-memory user pool rather than a stub that always answers "no users".
     // Invitations are the one flow whose whole job is to mutate the pool, so a stub that cannot
@@ -269,6 +276,7 @@ process.env.TABLE_NAME = "harness-table";
 process.env.USER_POOL_ID = "harness-pool";
 process.env.DATA_BOUNDARY = "harness";
 process.env.EXECUTION_GRANT_SECRET = "harness-secret-not-a-real-key";
+process.env.HARNESS_EXECUTION_GRANT_SECRET = process.env.EXECUTION_GRANT_SECRET;
 process.env.BEDROCK_MODEL_ID = "harness-model";
 
 module.exports = { store, key, db, crypto, users, groups, globallySignedOut, seedUser, resetPool, cognitoFaults, scriptModelResponse };

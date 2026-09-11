@@ -49,6 +49,10 @@ const {
 const { ExecutionGrantService, WorkflowEngine } = require("@amazflow/engine");
 const { SESv2Client, SendEmailCommand } = require("@aws-sdk/client-sesv2");
 const {
+  SecretsManagerClient,
+  GetSecretValueCommand,
+} = require("@aws-sdk/client-secrets-manager");
+const {
   CognitoIdentityProviderClient,
   ListUsersCommand,
   ListUsersInGroupCommand,
@@ -64,6 +68,7 @@ const {
 const db = new DynamoDBClient({});
 const bedrock = new BedrockRuntimeClient({});
 const ses = new SESv2Client({});
+const secrets = new SecretsManagerClient({});
 const cognito = new CognitoIdentityProviderClient({});
 const table = process.env.TABLE_NAME;
 const agentCoreRuntime = new AgentCoreRuntime();
@@ -94,9 +99,29 @@ const agentCoreMemory = process.env.AGENTCORE_MEMORY_ID
 const browserManager = process.env.AGENTCORE_BROWSER_ID
   ? new AgentCoreBrowserManager(process.env.AGENTCORE_BROWSER_ID)
   : null;
-const executionGrants = process.env.EXECUTION_GRANT_SECRET
-  ? new ExecutionGrantService(process.env.EXECUTION_GRANT_SECRET, 300)
-  : null;
+// Production receives only the Secrets Manager identifier. The value is fetched after cold start
+// and retained solely in this process for grant signing/verification; it is never put into a
+// template, response, run, audit record, or log. The direct value fallback keeps local harnesses
+// and one-shot development tools usable while deployment uses EXECUTION_GRANT_SECRET_ID only.
+let executionGrantsPromise;
+const getExecutionGrants = async () => {
+  if (!executionGrantsPromise)
+    executionGrantsPromise = (async () => {
+      let secret = process.env.EXECUTION_GRANT_SECRET;
+      if (!secret) {
+        const secretId = process.env.EXECUTION_GRANT_SECRET_ID;
+        if (!secretId) return null;
+        const value = await secrets.send(
+          new GetSecretValueCommand({ SecretId: secretId }),
+        );
+        secret = value.SecretString;
+      }
+      if (!secret)
+        throw new Error("Execution grant secret is empty or unavailable");
+      return new ExecutionGrantService(secret, 300);
+    })();
+  return executionGrantsPromise;
+};
 const privateResponseFields = new Set([
   "managedProfileId",
   "agentSessionId",
@@ -1370,6 +1395,7 @@ const acquireTaskLease = async (taskId, agentId, leaseExpiresAtMs) => {
 // Everything it asserts is re-checked on the way back in against records loaded from the
 // database, never against anything the agent echoes back.
 const claimAgentTask = async (taskId, agentCtx) => {
+  const executionGrants = await getExecutionGrants();
   if (!executionGrants)
     throw { status: 503, message: "Execution grants are not configured" };
   const allTasks = await scanType("TASK#", { role: "SUPER_ADMIN" });
@@ -1483,6 +1509,7 @@ const claimAgentTask = async (taskId, agentCtx) => {
 // claims in the body. Deliberately non-destructive: it appends progress to the run's own audit
 // trail rather than advancing run state, which stays owned by the engine.
 const recordStepResult = async (grantToken, body) => {
+  const executionGrants = await getExecutionGrants();
   if (!executionGrants)
     throw { status: 503, message: "Execution grants are not configured" };
   const stepId = String(body.stepId || "");
@@ -1679,6 +1706,7 @@ const invokeExecutorDiagnostic = async (run, workflow) => {
   // essentially never rests at plain RUNNING.
   if (run.status !== "WAITING_AGENT" || !run.currentStepId)
     throw { status: 409, message: "Run is not waiting on an agent step" };
+  const executionGrants = await getExecutionGrants();
   if (!executionGrants)
     throw { status: 503, message: "Execution grants are not configured" };
   if (!executionHarnessArn)
@@ -2056,6 +2084,7 @@ const advance = async (workflow, run, auditStartIdx) => {
             break;
           }
         } else {
+          const executionGrants = await getExecutionGrants();
           if (!agentCoreActions || !executionGrants)
             throw new Error("Managed action execution is not fully configured");
           const executionGrant = executionGrants.issue({
@@ -2186,6 +2215,7 @@ const advance = async (workflow, run, auditStartIdx) => {
           }
         }
       } else if (step.provider === "api" && useAgentCore()) {
+        const executionGrants = await getExecutionGrants();
         if (!agentCoreActions || !executionGrants)
           throw new Error("Managed action execution is not fully configured");
         const cfg = step.input || {};
@@ -2481,7 +2511,8 @@ const createProductionEngine = async (loadedRun) => {
     },
   };
   const grantIssuer = {
-    issue: ({ workflow, run, step }) => {
+    issue: async ({ workflow, run, step }) => {
+      const executionGrants = await getExecutionGrants();
       if (!executionGrants)
         throw new Error("Execution grants are not configured");
       return executionGrants.issue({
@@ -2584,6 +2615,7 @@ const resumeAgentTask = async (taskId, result, a, grantToken, reportingAgent) =>
   // actually claimed this step, inside the lease window.
   let grantPayload;
   if (grantToken !== undefined) {
+    const executionGrants = await getExecutionGrants();
     if (!executionGrants)
       throw { status: 503, message: "Execution grants are not configured" };
     try {
@@ -3983,6 +4015,7 @@ const consumeExecutionGrant = async (grantId, expiresAt) => {
   }
 };
 const executeGatewayApiTool = async (input) => {
+  const executionGrants = await getExecutionGrants();
   if (!executionGrants) throw new Error("Execution grants are not configured");
   const claims = await executionGrants.verify(
     String(input.executionGrant || ""),

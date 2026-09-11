@@ -1183,15 +1183,19 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
   - [ ] 20.3 Add secret create, rotate, and delete routes with identifier-and-name-only audit events
     - _Requirements: 20.12_
 
-  - [ ] 20.4 Move the execution grant signing secret out of the deployment template into the external secret store (security work, H-6)
+  - [x] 20.4 Move the execution grant signing secret out of the deployment template into the external secret store (security work, H-6)
     - Read the secret from the store at runtime; remove it from the template; add a guard and a recorded
       procedure that performs rotation only in a window with zero runs awaiting an agent, because rotation
       invalidates in-flight grants (Risk R-7)
+    - Both the deployed inline control plane and the CDK target pass a Secrets Manager identifier and
+      fetch the value lazily at runtime; the documented first migration is explicitly a zero-in-flight window.
     - _Requirements: 20.13, 20.14, 33.9_
 
-  - [ ] 20.5 Secret non-leakage tests
+  - [x] 20.5 Secret non-leakage tests
     - Assert no route returns a value and no log line, run context, audit entry, or evidence record contains
       one
+    - `secret-non-leakage.test.cjs` blocks template values, raw Lambda secret environments, unsafe CDK
+      injection, and secret logging while pinning the runtime retrieval contract.
     - _Requirements: 20.8, 20.9, 28.5, 34.17_
 
 - [ ] 21. Phase 10 — Internal staff console

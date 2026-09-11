@@ -71,7 +71,7 @@ class AmazFlowAgentCoreStack extends cdk.Stack {
       PolicyEngineConfiguration: { Arn: executionPolicyEngine.getAtt("PolicyEngineArn"), Mode: "ENFORCE" }, Tags: tags
     } });
 
-    const toolFunction = new lambda.Function(this, "GatewayTools", { runtime: lambda.Runtime.NODEJS_22_X, code: lambda.Code.fromAsset(controlPlaneAsset), handler: "index.gatewayToolHandler", timeout: cdk.Duration.minutes(5), memorySize: 1024, environment: { TABLE_NAME: tableName.valueAsString, EXECUTION_GRANT_SECRET: grantSecret.secretValue.unsafeUnwrap(), AI_EXECUTION_BACKEND: "agentcore" }, logRetention: logs.RetentionDays.ONE_MONTH, tracing: lambda.Tracing.ACTIVE });
+    const toolFunction = new lambda.Function(this, "GatewayTools", { runtime: lambda.Runtime.NODEJS_22_X, code: lambda.Code.fromAsset(controlPlaneAsset), handler: "index.gatewayToolHandler", timeout: cdk.Duration.minutes(5), memorySize: 1024, environment: { TABLE_NAME: tableName.valueAsString, EXECUTION_GRANT_SECRET_ID: grantSecret.secretArn, AI_EXECUTION_BACKEND: "agentcore" }, logRetention: logs.RetentionDays.ONE_MONTH, tracing: lambda.Tracing.ACTIVE });
     table.grantReadWriteData(toolFunction); grantSecret.grantRead(toolFunction);
     gatewayRole.addToPolicy(new iam.PolicyStatement({ actions: ["lambda:InvokeFunction"], resources: [toolFunction.functionArn] }));
 
@@ -142,7 +142,7 @@ class AmazFlowAgentCoreStack extends cdk.Stack {
     const executionHarness = new cdk.CfnResource(this, "ExecutionHarness", { type: "AWS::BedrockAgentCore::Harness", properties: { HarnessName: "AmazFlowExecutionHarness", ExecutionRoleArn: executionRole.roleArn, Model: model, MaxIterations: 12, MaxTokens: 2500, TimeoutSeconds: 300, SystemPrompt: [{ Text: "Execute exactly one approved workflow step. Use only allowed tools. Stop for reconciliation after any uncertain side effect." }], Tools: [{ Type: "agentcore_gateway", Name: "execution_gateway", Config: { AgentCoreGateway: { GatewayArn: executionGateway.getAtt("GatewayArn") } } }, { Type: "agentcore_browser", Name: "browser", Config: { AgentCoreBrowser: { BrowserArn: browser.getAtt("BrowserArn") } } }], Tags: Object.entries(tags).map(([Key, Value]) => ({ Key, Value })) } });
 
     const control = new lambda.Function(this, "ControlPlaneFunction", { runtime: lambda.Runtime.NODEJS_22_X, code: lambda.Code.fromAsset(controlPlaneAsset), handler: "index.handler", timeout: cdk.Duration.minutes(5), memorySize: 1536, tracing: lambda.Tracing.ACTIVE, logRetention: logs.RetentionDays.ONE_MONTH, environment: {
-      TABLE_NAME: tableName.valueAsString, USER_POOL_ID: userPoolId.valueAsString, DATA_BOUNDARY: "production-non-regulated", AI_EXECUTION_BACKEND: "agentcore", LEGACY_EXECUTOR_ENABLED: "false", EXECUTION_GRANT_SECRET: grantSecret.secretValue.unsafeUnwrap(),
+      TABLE_NAME: tableName.valueAsString, USER_POOL_ID: userPoolId.valueAsString, DATA_BOUNDARY: "production-non-regulated", AI_EXECUTION_BACKEND: "agentcore", LEGACY_EXECUTOR_ENABLED: "false", EXECUTION_GRANT_SECRET_ID: grantSecret.secretArn,
       AGENTCORE_OPERATOR_HARNESS_ARN: operatorHarness.getAtt("Arn").toString(), AGENTCORE_EXECUTION_HARNESS_ARN: executionHarness.getAtt("Arn").toString(), AGENTCORE_MEMORY_ID: memory.getAtt("MemoryId").toString(), AGENTCORE_BROWSER_ID: browser.getAtt("BrowserId").toString(), AGENTCORE_EXECUTION_TOOL_NAMES: "ExecutionTools___api_execute,browser", AI_INPUT_USD_PER_MILLION: aiInputRate.valueAsString, AI_OUTPUT_USD_PER_MILLION: aiOutputRate.valueAsString
     } });
     table.grantReadWriteData(control); grantSecret.grantRead(control);

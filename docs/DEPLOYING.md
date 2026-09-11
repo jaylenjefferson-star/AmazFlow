@@ -60,9 +60,24 @@ creates a **changeset and prints exactly what would change** before anything is 
 preview is the point: it is the difference between "deploy and hope" and knowing that a template
 edit touches only the Lambda function and not, say, the DynamoDB table.
 
-It never passes `--parameter-overrides`, so existing parameter values are preserved. That matters
-most for `ExecutionGrantSecret`: changing it invalidates every execution grant currently in
-flight, which would strand any run waiting on an agent.
+The template creates an `AWS::SecretsManager::Secret` for execution-grant signing and passes only
+its identifier to Lambda. Lambda fetches the value at runtime and never writes it to a response,
+record, log, or environment variable. The initial migration from the older template parameter
+creates a new signing secret, so it has the same effect as a rotation: outstanding grants stop
+verifying.
+
+### Execution-grant secret migration and rotation procedure
+
+Only perform the first migration or a later rotation in an approved maintenance window:
+
+1. Stop admitting new workflow runs and connected-agent claims.
+2. Confirm there are **zero** runs in `WAITING_AGENT` and no active task leases or unexpired grants.
+3. Deploy the reviewed change (or rotate the Secrets Manager value) and force fresh Lambda
+   environments before reopening admission, so every signer and verifier reads the same value.
+4. Re-enable admission, then verify a newly minted grant can make one read-only/progress call.
+
+Do not rotate while a run awaits an agent. Rotation invalidates all grants issued with the prior
+key; reconciling an uncertain side effect always takes priority over retrying it.
 
 ### Option B — raw AWS CLI
 
