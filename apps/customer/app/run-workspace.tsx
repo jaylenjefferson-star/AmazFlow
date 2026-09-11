@@ -131,7 +131,7 @@ export function RunWorkspace({
       <Panel
         title="Current path"
         sub={`${narrative.progression.filter((step) => step.state === "done").length} of ${narrative.progression.length} visible steps completed`}
-        actions={mayCancel && ["RUNNING", "WAITING_AGENT", "WAITING_APPROVAL", "AWAITING_CONFIRMATION"].includes(run.status) ? <Btn variant="danger" onClick={() => void mutate("cancel", endpoints.cancelRun(run.id).path)} disabled={busy !== null}>{busy === "cancel" ? "Cancelling…" : "Cancel run"}</Btn> : undefined}
+        actions={mayCancel && ["RUNNING", "WAITING_AGENT", "WAITING_APPROVAL", "AWAITING_CONFIRMATION"].includes(run.status) ? <Btn variant="danger" onClick={() => { if (window.confirm(`Cancel this run of "${run.workflowName ?? run.workflowId}"? It cannot be resumed.`)) void mutate("cancel", endpoints.cancelRun(run.id).path); }} disabled={busy !== null}>{busy === "cancel" ? "Cancelling…" : "Cancel run"}</Btn> : undefined}
       >
         <ol className="ops-list">
           {narrative.progression.map((item) => (

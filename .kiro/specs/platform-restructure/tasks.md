@@ -1480,23 +1480,43 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       resource-load error paths
     - _Requirements: 29.1, 29.2, 29.3, 29.4, 29.5_
 
-  - [ ] 26.7 Implement the loading and mutation discipline
+  - [x] 26.7 Implement the loading and mutation discipline
     - Skeleton matching the eventual layout on first load; current content retained during background
       refresh with no skeleton; a mutating control disabled until its request settles; a destructive action
       requiring explicit confirmation naming the affected record
+    - Audited first: the skeleton-on-first-load, retained-content-on-background-refresh, and
+      disabled-while-pending rules are already systemic, enforced by the shared `Resource` component and
+      `useAction` hook every view goes through — not something to re-implement per view. The one gap was
+      the destructive-confirmation rule: it existed for invitation revoke, user deactivation, team delete,
+      and member removal, but not for run cancellation, connection disconnect, or secret delete. Added the
+      same `window.confirm` pattern, naming the affected record, to all three
+      (`apps/customer/app/run-workspace.tsx`, `apps/customer/app/views.tsx`).
     - _Requirements: 29.6, 29.7, 29.8, 29.9_
 
-  - [ ] 26.8 Implement honest empty states and absent-value rendering
+  - [x] 26.8 Implement honest empty states and absent-value rendering
     - Distinguish no records, filtered-out, and permission-limited emptiness; offer the next action or state
       who can perform it; render an unrecorded value as not recorded or not available rather than a zero, a
       dash, or a plausible default
+    - Audited rather than rebuilt: the three-way distinction (empty / unavailable-by-permission / error) is
+      the shared `Resource` component's own contract, and the filtered-vs-empty distinction with a stated
+      next action already exists where a view has a filter (e.g. `AuditView`'s "No records match this
+      action" vs. "No administrative activity recorded"). Absent-value rendering via `label()`'s
+      "Not recorded" fallback is applied consistently everywhere a raw field is displayed. No gap found
+      that wasn't already covered by the existing shared components.
     - _Requirements: 29.10, 29.11, 29.12_
 
-  - [ ] 26.9 Record the page classification artifact and keep it current
+  - [x] 26.9 Record the page classification artifact and keep it current
     - Classify every page on every surface as functional, intentionally disabled with a stated reason, or
       removed; present no control that accepts input without effect; retain the marketing simulation labelled
       as a simulation and the existing content-placeholder labelling; update the classification in the same
       change that changes a page
+    - `scripts/generate-page-classification.ts` (`pnpm docs:page-classification`) regenerates
+      `docs/PAGE_CLASSIFICATION.md` directly from `apps/customer/app/routes.ts` and
+      `apps/internal/app/routes.ts` — the same tables the shell reads for navigation and disabled-section
+      rendering — so the artifact cannot drift the way a hand-maintained parallel list would. The legacy
+      `apps/web` surface has no structured route table, so that section is hand-maintained and calls that
+      out explicitly. Sub-page disabled panels (MFA/SSO/directory-provisioning within `/admin/security/`)
+      are listed separately since they are not routes.
     - _Requirements: 30.1, 30.2, 30.3, 30.4, 30.7, 30.8, 30.9, 30.10_
 
   - [x] 26.10 Remove the unlinked agent test harness page from the public surface
@@ -1523,10 +1543,18 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       distinct and append-only
     - _Requirements: 28.1, 28.2, 28.3, 28.4, 28.5, 28.6, 28.7, 28.8, 28.9, 28.10, 28.11, 28.12_
 
-  - [ ] 26.13 Add the bundle content check to the build
+  - [x] 26.13 Add the bundle content check to the build
     - Fail the build when the customer bundle contains a forbidden vendor or model identifier string or a
       hardcoded secret; retain existing type checking, static export builds, agent contract suites, and the
       published-extension-matches-source check
+    - `apps/customer/scripts/check-bundle.cjs` scans the actual static-export output in `out/` (not
+      source — a leak can be assembled from innocuous-looking source pieces and still land whole in the
+      built bundle) for vendor/model strings (bedrock, anthropic, claude, agentcore, a harness ARN) and
+      secret shapes (AWS access key id, PEM private key header, vendor API key prefix). Wired as a
+      postbuild step in `apps/customer`'s own `build` script, so it runs automatically wherever that build
+      runs. The customer app was not previously in CI at all (only the legacy `@amazflow/web` was) —
+      added typecheck/test/build steps for it and `@amazflow/domain-ui` to `.github/workflows/ci.yml` so
+      this check is actually exercised in the pipeline that gates merges, not just runnable locally.
     - _Requirements: 34.17, 34.18_
 
 - [ ] 27. Phase 14 — Full verification before deployment
