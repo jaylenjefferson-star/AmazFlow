@@ -143,6 +143,7 @@ const RESPONSE_FIELD_GROUPS = {
   profile: ["email", "displayName", "givenName", "familyName", "updatedAt"],
   security: ["accessTokenMinutes", "idTokenMinutes", "refreshTokenDays", "passwordPolicy", "mfaEnrollmentAvailable", "singleSignOnAvailable", "directoryProvisioningAvailable"],
   organization: ["id", "tenantId", "name", "slug", "status", "plan", "createdAt", "updatedAt", "branding", "settings", "primaryDomain", "primaryContact", "billingContact", "accountOwnerUserId", "crmRecordId", "activatedAt", "onboardingStatus", "lifecycleStatus"],
+  onboarding: ["tenantId", "status", "crmReference", "internalOwner", "milestones", "checklist", "internalNotes", "updatedAt"],
   user: ["username", "email", "role", "platformRole", "teamIds", "enabled", "userStatus", "state", "membershipStatus", "invitedAt", "invitedBy", "activatedAt", "lastLoginAt", "createdAt", "updatedAt"],
   team: ["id", "tenantId", "name", "memberUsernames", "createdAt", "updatedAt", "deleted"],
   teams: ["teams", "grantsPermissions", "grantsPermissionsReason"],
@@ -203,6 +204,7 @@ allowResponseFields(["GET /me/profile", "PUT /me/profile"], "profile");
 allowResponseFields(["GET /security/facts"], "security");
 allowResponseFields(["GET /me/preferences", "PUT /me/preferences"], "preferences");
 allowResponseFields(["GET /organizations", "POST /organizations", "GET /organizations/{slug}", "PUT /organizations/{slug}", "POST /organizations/{slug}/profile", "POST /organizations/{slug}/settings", "POST /organizations/{slug}/branding", "GET /organizations/{slug}/branding"], "organization");
+allowResponseFields(["GET /onboarding", "POST /onboarding/checklist/{step}", "GET /organizations/{slug}/onboarding", "PUT /organizations/{slug}/onboarding"], "onboarding");
 allowResponseFields(["GET /tenants/{tenantId}/users"], "user");
 allowResponseFields(["POST /tenants/{tenantId}/users/{username}/role", "POST /tenants/{tenantId}/users/{username}/invitation/resend", "DELETE /tenants/{tenantId}/users/{username}/invitation"], "ack");
 allowResponseFields(["POST /tenants/{tenantId}/users"], "invitation");
@@ -1136,8 +1138,8 @@ const guardIn = async (p, permission, resource) => {
   }
 };
 
-const save = async (type, doc) =>
-  db.send(
+const save = async (type, doc) => {
+  const result = await db.send(
     new PutItemCommand({
       TableName: table,
       Item: {
@@ -1151,6 +1153,14 @@ const save = async (type, doc) =>
       },
     }),
   );
+  if (type === "RUN" && doc.status === "COMPLETED" && !doc.isTest && !doc.testRun)
+    await observeOnboarding(doc.tenantId, "firstProductionRun", doc.completedAt || doc.updatedAt || now());
+  if (type === "WORKFLOW") {
+    await observeOnboarding(doc.tenantId, "workflowCreated", doc.createdAt || now());
+    if (doc.status === "active") await observeOnboarding(doc.tenantId, "workflowPublished", doc.publishedAt || doc.updatedAt || now());
+  }
+  return result;
+};
 // Organizations (customer tenants) live in a shared PLATFORM partition rather than a
 // TENANT# partition, since listing them is a platform-level (SUPER_ADMIN) operation
 // across all customers, not a single tenant's own data.
@@ -3378,6 +3388,7 @@ const inviteTenantUser = async (tenantId, body, a) => {
     summary: `Invited ${email} as ${role === "CLIENT_ADMIN" ? "a team admin" : "a team member"}`,
     details: { email, role, platformRole: invitedRole },
   });
+  if (role === "CLIENT_ADMIN") await observeOnboarding(tenantId, "administratorInvited");
   return {
     acceptUrl: invitationLink,
     username,
@@ -3602,6 +3613,71 @@ const logActivity = async (tenantId, entry, notification) => {
   }
   return doc;
 };
+
+const ONBOARDING_STATUS_SET = [
+  "PROSPECT", "CLOSED_WON", "SETUP_REQUIRED", "ONBOARDING", "CONFIGURATION",
+  "TESTING", "READY_FOR_LAUNCH", "ACTIVE", "PAUSED", "CHURNED",
+];
+const ONBOARDING_MILESTONES = [
+  "administratorInvited", "administratorActivated", "firstIntegration",
+  "firstAgent", "workflowCreated", "workflowPublished", "firstProductionRun",
+];
+const onboardingKey = (tenantId) => ({
+  pk: { S: `TENANT#${tenantId}` },
+  sk: { S: "ONBOARDING" },
+});
+const defaultOnboarding = (tenantId) => ({
+  tenantId,
+  status: "PROSPECT",
+  crmReference: null,
+  internalOwner: null,
+  milestones: Object.fromEntries(ONBOARDING_MILESTONES.map((key) => [key, null])),
+  checklist: {},
+  internalNotes: "",
+  updatedAt: now(),
+});
+const readOnboarding = async (tenantId) => {
+  const out = await db.send(new GetItemCommand({ TableName: table, Key: onboardingKey(tenantId) }));
+  if (out.Item?.document?.S) return JSON.parse(out.Item.document.S);
+  const record = defaultOnboarding(tenantId);
+  await db.send(new PutItemCommand({
+    TableName: table,
+    Item: { ...onboardingKey(tenantId), tenantId: { S: tenantId }, document: { S: JSON.stringify(record) }, updatedAt: { S: now() } },
+    ConditionExpression: "attribute_not_exists(pk)",
+  })).catch((err) => {
+    if (err?.name !== "ConditionalCheckFailedException") throw err;
+  });
+  return record;
+};
+const saveOnboarding = async (record) => db.send(new PutItemCommand({
+  TableName: table,
+  Item: { ...onboardingKey(record.tenantId), tenantId: { S: record.tenantId }, document: { S: JSON.stringify(record) }, updatedAt: { S: now() } },
+}));
+const observeOnboarding = async (tenantId, milestone, at = now()) => {
+  if (!tenantId || !ONBOARDING_MILESTONES.includes(milestone)) return;
+  const record = await readOnboarding(tenantId);
+  if (record.milestones?.[milestone]) return;
+  const next = { ...record, milestones: { ...record.milestones, [milestone]: at }, updatedAt: at };
+  await saveOnboarding(next);
+  await logActivity(tenantId, {
+    actor: "system",
+    actorLabel: "AmazFlow platform",
+    action: "ONBOARDING_MILESTONE_OBSERVED",
+    summary: `Observed onboarding milestone ${milestone}`,
+    details: { milestone, at },
+  });
+  if (milestone === "firstProductionRun") {
+    const org = await getOrganization(tenantId);
+    if (org && !org.activatedAt) await saveOrganization({ ...org, activatedAt: at, updatedAt: at });
+  }
+};
+const onboardingForCustomer = (record) => ({
+  tenantId: record.tenantId,
+  status: record.status,
+  milestones: record.milestones,
+  checklist: record.checklist,
+  updatedAt: record.updatedAt,
+});
 
 // ---------- AmazFlow Copilot ----------
 // A persistent SUPER_ADMIN assistant with real read access to platform data and a
@@ -4982,6 +5058,7 @@ const completeBrowserLogin = async (a, id, body) => {
     save("BROWSERLOGIN", login),
     save("BROWSERCONNECTION", connection),
   ]);
+  await observeOnboarding(connection.tenantId, "firstIntegration", connection.updatedAt);
   await logActivity(connection.tenantId, {
     actor: a.userId,
     actorLabel: actorLabelFor(asPrincipal(a)),
@@ -6324,6 +6401,7 @@ exports.handler = async (e) => {
           body.capabilities,
           body.permissions,
         );
+        await observeOnboarding(agentCtx.tenantId, "firstAgent");
         return reply(200, { ok: true });
       } catch (err) {
         if (err && err.status) return reply(err.status, { error: err.message });
@@ -6424,11 +6502,74 @@ exports.handler = async (e) => {
     // record (task 7.5), so the migration happens as a side effect of normal use rather than as a
     // batch job somebody has to remember to run.
     const p = await principalFor(a);
+    if (route === "GET /onboarding") {
+      const denied = await guardIn(p, "org:read", { orgId: a.tenantId });
+      if (denied) return denied;
+      return reply(200, onboardingForCustomer(await readOnboarding(a.tenantId)));
+    }
+    if (route === "POST /onboarding/checklist/{step}") {
+      const denied = await guardIn(p, "org:settings", { orgId: a.tenantId });
+      if (denied) return denied;
+      const step = String(e.pathParameters?.step || "").trim();
+      const body = JSON.parse(e.body || "{}");
+      const state = body.state === "skipped" ? "skipped" : body.state === "complete" ? "complete" : "";
+      if (!step || !state) return reply(400, { error: "checklist step and state (complete or skipped) are required" });
+      const record = await readOnboarding(a.tenantId);
+      const at = now();
+      const next = {
+        ...record,
+        checklist: { ...record.checklist, [step]: { state, actor: a.userId, at } },
+        updatedAt: at,
+      };
+      await saveOnboarding(next);
+      await logActivity(a.tenantId, {
+        actor: a.userId,
+        actorLabel: actorLabelFor(p),
+        action: state === "skipped" ? "ONBOARDING_CHECKLIST_SKIPPED" : "ONBOARDING_CHECKLIST_COMPLETED",
+        summary: `${state === "skipped" ? "Skipped" : "Completed"} onboarding step "${step}"`,
+        details: { step, state, at },
+      });
+      return reply(200, onboardingForCustomer(next));
+    }
+    if (route === "GET /organizations/{slug}/onboarding") {
+      const slug = String(e.pathParameters?.slug || "");
+      const denied = await guardIn(p, "internal:organization_manage", { orgId: slug });
+      if (denied) return denied;
+      const record = await readOnboarding(slug);
+      return reply(200, record);
+    }
+    if (route === "PUT /organizations/{slug}/onboarding") {
+      const slug = String(e.pathParameters?.slug || "");
+      const denied = await guardIn(p, "internal:organization_manage", { orgId: slug });
+      if (denied) return denied;
+      if (!(await getOrganization(slug))) return reply(404, { error: "Organization not found" });
+      const body = JSON.parse(e.body || "{}");
+      const record = await readOnboarding(slug);
+      const nextStatus = body.status === undefined ? record.status : String(body.status);
+      if (!ONBOARDING_STATUS_SET.includes(nextStatus))
+        return reply(400, { error: `status must be one of ${ONBOARDING_STATUS_SET.join(", ")}` });
+      for (const key of ONBOARDING_MILESTONES)
+        if ((body.milestones && key in body.milestones) || key in body) return reply(400, { error: "Milestones are derived from observed platform events and cannot be supplied" });
+      const next = {
+        ...record,
+        status: nextStatus,
+        ...(body.crmReference !== undefined ? { crmReference: String(body.crmReference).slice(0, 200) } : {}),
+        ...(body.internalOwner !== undefined ? { internalOwner: String(body.internalOwner).slice(0, 200) } : {}),
+        ...(body.internalNotes !== undefined ? { internalNotes: String(body.internalNotes).slice(0, 4000) } : {}),
+        updatedAt: now(),
+      };
+      await saveOnboarding(next);
+      if (record.status !== next.status)
+        await logActivity(slug, { actor: a.userId, actorLabel: actorLabelFor(p), action: "ONBOARDING_STATUS_CHANGED", summary: `Onboarding status changed from ${record.status} to ${next.status}`, details: { previous: record.status, next: next.status } });
+      return reply(200, next);
+    }
     if (route === "GET /me") {
       // Requirement 9.23 (task 11.7). Stamped here rather than on every authenticated route: /me is
       // the first call every surface makes, and a write per request would make the membership record
       // the hottest key in the table to record a value nobody reads more precisely than "today".
       await touchMembershipLogin(p);
+      if (["ORG_ADMIN", "ORG_OWNER"].includes(p.role))
+        await observeOnboarding(a.tenantId, "administratorActivated");
       const meOrg = await getOrganization(a.tenantId).catch(() => null);
       const meMembership = await readMembership(a.tenantId, a.email || a.userId).catch(() => null);
       return reply(200, {

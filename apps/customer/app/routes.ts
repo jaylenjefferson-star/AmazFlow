@@ -146,6 +146,7 @@ export const customerResourceSpecs = (orgId: string) => [
   { key: "notifications", route: "GET /notifications", path: "/notifications", permission: "notification:read", live: true, empty: [] },
   { key: "permissionMatrix", route: "GET /permissions/matrix", path: "/permissions/matrix", permission: null, empty: null },
   { key: "organization", route: "GET /organizations/{slug}", path: `/organizations/${encodeURIComponent(orgId)}`, permission: "org:read", empty: null },
+  { key: "onboarding", route: "GET /onboarding", path: "/onboarding", permission: "org:read", empty: null },
   { key: "users", route: "GET /tenants/{tenantId}/users", path: `/tenants/${encodeURIComponent(orgId)}/users`, permission: "user:read", empty: [] },
   { key: "teams", route: "GET /teams", path: "/teams", permission: "team:read", empty: null },
   { key: "securityFacts", route: "GET /security/facts", path: "/security/facts", permission: null, empty: null },

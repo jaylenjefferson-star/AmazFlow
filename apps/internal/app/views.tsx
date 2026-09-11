@@ -94,6 +94,8 @@ export function StaffSection({
   const rows = Array.isArray(slot.value) ? (slot.value as Record<string, unknown>[]) : [];
   if (Array.isArray(slot.value) && rows.length === 0)
     return <EmptyState title="Nothing here yet" body="This section is empty, not broken." />;
+  if (routeId === "onboarding" && client)
+    return <StaffOnboarding organizations={rows as Organization[]} client={client} />;
   if (routeId === "overview")
     return <Overview organizations={rows} runs={slots.runs?.value as Record<string, unknown>[] | undefined} agents={slots.agents?.value as Record<string, unknown>[] | undefined} />;
   if (routeId === "approvals")
@@ -109,6 +111,26 @@ export function StaffSection({
   if (routeId === "support" && client && refresh)
     return <SupportQueue rows={rows} client={client} refresh={refresh} />;
   return <Table routeId={routeId} rows={rows} />;
+}
+
+function StaffOnboarding({ organizations, client }: { organizations: Organization[]; client: ApiClient }) {
+  const [state, setState] = useState<{ loading: boolean; records: Record<string, unknown>[]; error: string | null }>({ loading: true, records: [], error: null });
+  useEffect(() => {
+    let current = true;
+    void Promise.all(organizations.map(async (organization) => client.get<Record<string, unknown>>(`/organizations/${encodeURIComponent(organization.slug)}/onboarding`))).then((records) => {
+      if (current) setState({ loading: false, records, error: null });
+    }).catch((error) => {
+      if (current) setState({ loading: false, records: [], error: error instanceof Error ? error.message : String(error) });
+    });
+    return () => { current = false; };
+  }, [client, organizations]);
+  if (state.loading) return <div aria-busy="true" aria-live="polite"><SkeletonPanel rows={4} /></div>;
+  if (state.error) return <Alert tone="bad" title="Onboarding did not load">{state.error}</Alert>;
+  if (!state.records.length) return <EmptyState title="No onboarding records" body="No organizations are available to this staff account." />;
+  return <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Organization</th><th>Status</th><th>Milestones</th><th>Internal owner</th><th>Notes</th></tr></thead><tbody>{state.records.map((record) => {
+    const milestones = Object.values((record.milestones ?? {}) as Record<string, unknown>).filter(Boolean).length;
+    return <tr key={String(record.tenantId)}><td>{String(record.tenantId)}</td><td><Pill tone={record.status === "CHURNED" ? "bad" : "waiting"}>{String(record.status)}</Pill></td><td>{milestones}</td><td>{label(record.internalOwner)}</td><td>{label(record.internalNotes)}</td></tr>;
+  })}</tbody></table></div>;
 }
 
 const label = (value: unknown, fallback = "Not recorded") =>

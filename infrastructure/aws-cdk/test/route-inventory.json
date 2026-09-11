@@ -209,6 +209,24 @@
       "orgScope": "parameter-scoped"
     },
     {
+      "route": "GET /organizations/{slug}/onboarding",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "GET /onboarding",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
       "route": "GET /permissions/matrix",
       "copies": [
         "deployed",
@@ -542,6 +560,15 @@
       "orgScope": "parameter-scoped"
     },
     {
+      "route": "POST /onboarding/checklist/{step}",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
       "route": "POST /runs/{id}/approvals/{stepId}",
       "copies": [
         "deployed",
@@ -786,6 +813,15 @@
     },
     {
       "route": "PUT /organizations/{slug}",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "parameter-scoped"
+    },
+    {
+      "route": "PUT /organizations/{slug}/onboarding",
       "copies": [
         "deployed",
         "canonical"

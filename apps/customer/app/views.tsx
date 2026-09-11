@@ -204,10 +204,11 @@ export function HomeView({ slots, navigate, principal }: ViewProps) {
   const agents = list<{ agentType?: string; connectionStatus?: string }>(slots, "agents");
   const connections = list<{ status?: string }>(slots, "connections");
   const organization = one<{ onboardingStatus?: string } | null>(slots, "organization", null);
+  const onboarding = one<{ status?: string; milestones?: Record<string, string | null>; checklist?: Record<string, { state?: string }> } | null>(slots, "onboarding", null);
   const maySeeOnboarding = can(principal, "org:settings", { orgId: principal.orgId }).allow;
   return (
     <Page title="Home" lead="What AmazFlow is doing for you right now.">
-      {maySeeOnboarding && <OnboardingChecklist organization={organization.value} workflows={workflows.value} agents={agents.value} connections={connections.value} runs={runs.value} />}
+      {maySeeOnboarding && <OnboardingChecklist organization={organization.value} onboarding={onboarding.value} workflows={workflows.value} agents={agents.value} connections={connections.value} runs={runs.value} client={client} refresh={refresh} />}
       <Resource
         slot={runs}
         emptyTitle="Nothing has run yet"
@@ -236,16 +237,22 @@ export function HomeView({ slots, navigate, principal }: ViewProps) {
 
 function OnboardingChecklist({
   organization,
+  onboarding,
   workflows,
   agents,
   connections,
   runs,
+  client,
+  refresh,
 }: {
   organization: { onboardingStatus?: string } | null;
+  onboarding: { status?: string; milestones?: Record<string, string | null>; checklist?: Record<string, { state?: string }> } | null;
   workflows: Array<{ id: string; status?: string; steps?: Array<{ type?: string; provider?: string; executionTarget?: string }> }>;
   agents: Array<{ agentType?: string; connectionStatus?: string }>;
   connections: Array<{ status?: string }>;
   runs: Array<{ status: string }>;
+  client: ApiClient;
+  refresh: () => Promise<void>;
 }) {
   const targets = new Set(workflows.flatMap((workflow) => (workflow.steps ?? []).filter((step) => step.type === "action").map((step) => step.executionTarget ?? (step.provider === "desktop" ? "desktop_agent" : "browser_extension"))));
   const browserRequired = targets.has("browser_extension");
@@ -255,19 +262,22 @@ function OnboardingChecklist({
   const activeConnection = connections.some((connection) => connection.status === "active");
   const published = workflows.some((workflow) => workflow.status === "active");
   const productionRun = runs.some((run) => run.status === "COMPLETED");
+  const stored = onboarding?.checklist ?? {};
   const steps = [
-    ...(browserRequired ? [{ label: "Connect the Chrome Extension", done: activeBrowser, detail: activeBrowser ? "A connected browser agent is available." : "Install and connect the extension on a computer that can reach this work." }] : []),
-    ...(desktopRequired ? [{ label: "Connect the Desktop App", done: activeDesktop, detail: activeDesktop ? "A connected desktop agent is available." : "Open and connect the AmazFlow Desktop App on the required computer." }] : []),
-    ...(browserRequired ? [{ label: "Sign in to the connected system", done: activeConnection, detail: activeConnection ? "At least one managed connection is active." : "Your workflow requires a browser surface; create and sign in to its connection." }] : []),
-    { label: "Create a workflow", done: workflows.length > 0, detail: workflows.length ? "A workflow definition is saved." : "Describe the repeatable work you want AmazFlow to run." },
-    { label: "Publish the workflow", done: published, detail: published ? "A published workflow is ready to run." : "AmazFlow reviews and publishes the workflow. Nothing is required from you for this step." },
-    { label: "Complete your first production run", done: productionRun, detail: productionRun ? "Your organization has completed production work." : "Start the published workflow when the required surfaces are ready." },
+    ...(browserRequired ? [{ key: "browser", label: "Connect the Chrome Extension", done: activeBrowser, detail: activeBrowser ? "A connected browser agent is available." : "Install and connect the extension on a computer that can reach this work." }] : []),
+    ...(desktopRequired ? [{ key: "desktop", label: "Connect the Desktop App", done: activeDesktop, detail: activeDesktop ? "A connected desktop agent is available." : "Open and connect the AmazFlow Desktop App on the required computer." }] : []),
+    ...(browserRequired ? [{ key: "connection", label: "Sign in to the connected system", done: activeConnection, detail: activeConnection ? "At least one managed connection is active." : "Your workflow requires a browser surface; create and sign in to its connection." }] : []),
+    { key: "workflow-created", label: "Create a workflow", done: workflows.length > 0, detail: workflows.length ? "A workflow definition is saved." : "Describe the repeatable work you want AmazFlow to run." },
+    { key: "workflow-published", label: "Publish the workflow", done: published, detail: published ? "A published workflow is ready to run." : "AmazFlow reviews and publishes the workflow. Nothing is required from you for this step." },
+    { key: "production-run", label: "Complete your first production run", done: productionRun, detail: productionRun ? "Your organization has completed production work." : "Start the published workflow when the required surfaces are ready." },
   ];
-  const completed = steps.filter((step) => step.done).length;
-  return <Panel title="Getting started" sub={organization?.onboardingStatus ? `Onboarding status: ${organization.onboardingStatus.replace(/_/g, " ")}` : "Complete the steps your organization actually needs."}>
+  const visibleSteps = steps.map((step) => ({ ...step, done: step.done || stored[step.key]?.state === "complete", skipped: stored[step.key]?.state === "skipped" }));
+  const completed = visibleSteps.filter((step) => step.done || step.skipped).length;
+  const skip = async (key: string) => { await client.post(`/onboarding/checklist/${encodeURIComponent(key)}`, { state: "skipped" }); await refresh(); };
+  return <Panel title="Getting started" sub={onboarding?.status ? `Onboarding status: ${onboarding.status.replace(/_/g, " ")}` : organization?.onboardingStatus ? `Onboarding status: ${organization.onboardingStatus.replace(/_/g, " ")}` : "Complete the steps your organization actually needs."}>
     <div className="ops-col ops-gap-sm">
       <p className="ops-muted">{completed} of {steps.length} steps complete. Steps appear only when the workflow definitions require them.</p>
-      <ul className="ops-list">{steps.map((step) => <li key={step.label}><span><strong>{step.label}</strong><br /><span className="ops-muted">{step.detail}</span></span><Pill tone={step.done ? "good" : "waiting"}>{step.done ? "Complete" : "To do"}</Pill></li>)}</ul>
+      <ul className="ops-list">{visibleSteps.map((step) => <li key={step.label}><span><strong>{step.label}</strong><br /><span className="ops-muted">{step.skipped ? "Skipped by your team." : step.detail}</span></span>{step.done ? <Pill tone="good">Complete</Pill> : step.skipped ? <Pill tone="waiting">Skipped</Pill> : <button type="button" className="ops-button" onClick={() => void skip(step.key)}>Skip</button>}</li>)}</ul>
     </div>
   </Panel>;
 }

@@ -304,6 +304,54 @@ const check = (name, fn) =>
     assert.deepEqual(list.body, [], "no group means not a member, so the list stays honest");
   });
 
+  // --------------------------------------------------------- persisted onboarding state --------
+
+  await check("the customer onboarding record is created lazily and is tenant-scoped", async () => {
+    seed();
+    const first = await call("GET /onboarding");
+    assert.equal(first.status, 200);
+    assert.equal(first.body.tenantId, TENANT);
+    assert.equal(first.body.status, "PROSPECT");
+    assert.ok(store.has(`TENANT#${TENANT}|ONBOARDING`));
+    assert.ok(!store.has(`TENANT#${OTHER}|ONBOARDING`));
+  });
+
+  await check("checklist skips persist actor attribution and emit an audit event", async () => {
+    seed();
+    const res = await call("POST /onboarding/checklist/{step}", {
+      role: "CLIENT_ADMIN",
+      pathParameters: { step: "connect_integration" },
+      body: { state: "skipped" },
+    });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(res.body.checklist.connect_integration.state, "skipped");
+    assert.equal(res.body.checklist.connect_integration.actor, "user_client_admin");
+    assert.ok(res.body.checklist.connect_integration.at);
+    const audit = activityFor(TENANT).find((x) => x.action === "ONBOARDING_CHECKLIST_SKIPPED");
+    assert.ok(audit);
+    assert.equal(audit.details.step, "connect_integration");
+  });
+
+  await check("manual milestone fields are rejected by staff onboarding updates", async () => {
+    seed();
+    const res = await call("PUT /organizations/{slug}/onboarding", {
+      pathParameters: { slug: TENANT },
+      body: { status: "ONBOARDING", milestones: { firstAgent: now() } },
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.body.error, /cannot be supplied/i);
+  });
+
+  await check("staff onboarding reads cannot cross tenant boundaries", async () => {
+    seed();
+    const res = await call("GET /organizations/{slug}/onboarding", {
+      pathParameters: { slug: OTHER },
+      tenantId: TENANT,
+      role: "CLIENT_ADMIN",
+    });
+    assert.ok([403, 404].includes(res.status), `unexpected status ${res.status}`);
+  });
+
   console.log(`\n${pass} passed, ${fail} failed\n`);
   process.exit(fail ? 1 : 0);
 })();
