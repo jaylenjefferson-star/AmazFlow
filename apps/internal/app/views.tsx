@@ -5,7 +5,7 @@
 // tests, and the untested one here would be the access-denied shell — the single most important thing
 // on this surface to get right.
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import type { ApiClient } from "@amazflow/api-client";
 import {
   Alert,
@@ -30,6 +30,7 @@ export const SECTION_RESOURCE: Record<string, string> = {
   approvals: "runs",
   exceptions: "runs",
   organizations: "organizations",
+  users: "organizations",
   runs: "runs",
   workflows: "workflows",
   studio: "workflows",
@@ -101,8 +102,10 @@ export function StaffSection({
     return <RunQueue rows={rows.filter((row) => row.status === "FAILED" || row.status === "TIMED_OUT")} empty="No runs need attention across organizations." />;
   if (routeId === "health" || routeId === "settings")
     return <Facts value={(slot.value ?? {}) as Record<string, unknown>} />;
+  if (routeId === "users" && client)
+    return <StaffUsers organizations={rows as Organization[]} client={client} />;
   if (routeId === "organizations" && client && refresh)
-    return <OrganizationsManager rows={rows} client={client} refresh={refresh} />;
+    return <OrganizationsManager rows={rows} client={client} refresh={refresh} runs={(slots.runs?.value ?? []) as Record<string, unknown>[]} workflows={(slots.workflows?.value ?? []) as Record<string, unknown>[]} agents={(slots.agents?.value ?? []) as Record<string, unknown>[]} connections={(slots.connections?.value ?? []) as Record<string, unknown>[]} />;
   return <Table routeId={routeId} rows={rows} />;
 }
 
@@ -142,7 +145,7 @@ type Organization = {
   activatedAt?: string | null;
 };
 
-function OrganizationsManager({ rows, client, refresh }: { rows: Record<string, unknown>[]; client: ApiClient; refresh: () => Promise<void> }) {
+function OrganizationsManager({ rows, client, refresh, runs, workflows, agents, connections }: { rows: Record<string, unknown>[]; client: ApiClient; refresh: () => Promise<void>; runs: Record<string, unknown>[]; workflows: Record<string, unknown>[]; agents: Record<string, unknown>[]; connections: Record<string, unknown>[] }) {
   const organizations = rows as Organization[];
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
@@ -172,6 +175,7 @@ function OrganizationsManager({ rows, client, refresh }: { rows: Record<string, 
     });
   };
   return <div className="ops-col ops-gap-md">
+    <OrganizationUsage organizations={organizations} runs={runs} workflows={workflows} agents={agents} connections={connections} />
     <Panel title="Create organization" sub="The tenant slug is permanent once created.">
       <form className="ops-toolbar" onSubmit={create}>
         <input className="ops-input" aria-label="Organization name" value={name} onChange={(event) => setName(event.target.value)} disabled={busy} placeholder="Organization name" required />
@@ -183,6 +187,48 @@ function OrganizationsManager({ rows, client, refresh }: { rows: Record<string, 
     <Alert title="Execution and commercial state are separate">Changing a commercial lifecycle never stops execution. When handling a churned customer, set the execution status explicitly after deciding what should happen to live work.</Alert>
     {organizations.length === 0 ? <EmptyState title="Nothing here yet" body="Create the first organization when a customer is ready to be configured." /> : <div className="ops-col ops-gap-sm">{organizations.map((organization) => <OrganizationEditor key={organization.id} organization={organization} client={client} busy={busy} pending={pending} save={mutate} />)}</div>}
   </div>;
+}
+
+function OrganizationUsage({ organizations, runs, workflows, agents, connections }: { organizations: Organization[]; runs: Record<string, unknown>[]; workflows: Record<string, unknown>[]; agents: Record<string, unknown>[]; connections: Record<string, unknown>[] }) {
+  if (!organizations.length) return null;
+  const count = (items: Record<string, unknown>[], org: Organization, active?: (item: Record<string, unknown>) => boolean) =>
+    items.filter((item) => item.tenantId === org.slug && (!active || active(item))).length;
+  return <Panel title="Customer usage summary" sub="Counts are derived from live control-plane records, not a billing estimate.">
+    <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Organization</th><th>Runs</th><th>Active workflows</th><th>Connected agents</th><th>Active connections</th></tr></thead><tbody>{organizations.map((organization) => <tr key={organization.id}><td>{organization.name}</td><td>{count(runs, organization)}</td><td>{count(workflows, organization, (workflow) => workflow.status === "active")}</td><td>{count(agents, organization, (agent) => agent.connectionStatus === "connected")}</td><td>{count(connections, organization, (connection) => connection.status === "active")}</td></tr>)}</tbody></table></div>
+  </Panel>;
+}
+
+type StaffUser = {
+  username?: string;
+  email?: string;
+  platformRole?: string;
+  state?: string;
+  lastLoginAt?: string | null;
+  tenantId: string;
+};
+
+function StaffUsers({ organizations, client }: { organizations: Organization[]; client: ApiClient }) {
+  const [state, setState] = useState<{ loading: boolean; users: StaffUser[]; error: string | null }>({ loading: true, users: [], error: null });
+  useEffect(() => {
+    let current = true;
+    void Promise.allSettled(organizations.map(async (organization) => {
+      const users = await client.get<Omit<StaffUser, "tenantId">[]>(`/tenants/${encodeURIComponent(organization.slug)}/users`);
+      return users.map((user) => ({ ...user, tenantId: organization.slug }));
+    })).then((settled) => {
+      if (!current) return;
+      const failed = settled.find((result) => result.status === "rejected");
+      if (failed && failed.status === "rejected") {
+        setState({ loading: false, users: [], error: failed.reason instanceof Error ? failed.reason.message : String(failed.reason) });
+        return;
+      }
+      setState({ loading: false, users: settled.flatMap((result) => result.status === "fulfilled" ? result.value : []), error: null });
+    });
+    return () => { current = false; };
+  }, [client, organizations]);
+  if (state.loading) return <div aria-busy="true" aria-live="polite"><SkeletonPanel rows={4} /></div>;
+  if (state.error) return <Alert tone="bad" title="The user directory did not load">{state.error}</Alert>;
+  if (!state.users.length) return <EmptyState title="No organization members" body="No customer accounts are recorded across the organizations you can view." />;
+  return <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Person</th><th>Organization</th><th>Role</th><th>State</th><th>Last sign-in</th></tr></thead><tbody>{state.users.map((user, index) => <tr key={`${user.tenantId}-${user.username ?? user.email ?? index}`}><td>{label(user.email ?? user.username)}</td><td>{user.tenantId}</td><td>{label(user.platformRole)}</td><td>{label(user.state)}</td><td>{label(user.lastLoginAt)}</td></tr>)}</tbody></table></div>;
 }
 
 function OrganizationEditor({ organization, client, busy, pending, save }: { organization: Organization; client: ApiClient; busy: boolean; pending: string | null; save: (key: string, success: string, operation: () => Promise<unknown>) => Promise<void> }) {

@@ -1199,10 +1199,13 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       as reporting-only. The control plane records lifecycle changes in the organization audit trail.
     - _Requirements: 23.2, 8.13, 8.16, 33.5_
 
-  - [ ] 21.3 Build the cross-organization staff views
+  - [x] 21.3 Build the cross-organization staff views
     - Per-customer usage summary and user list; runs spanning organizations; exceptions filtered to failed
       and timed out; agents and connections spanning organizations; audit spanning organizations; support
       ticket listing and update
+    - The internal surface now derives per-organization counts from live runs, workflows, agents, and
+      connections, reads each scoped user directory through its existing authorized route, and presents
+      cross-organization operational, exception, agent, connection, audit, and support queues.
     - _Requirements: 23.3, 23.4, 23.5, 23.6, 23.7_
 
   - [ ] 21.4 Build the system health view from real signals
