@@ -48,7 +48,7 @@ export function RunWorkspace({
   const [workflow, setWorkflow] = useState<WorkflowDefinition | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"cancel" | "confirm" | null>(null);
+  const [busy, setBusy] = useState<"cancel" | "confirm" | "resume" | null>(null);
 
   useEffect(() => {
     if (!run) return;
@@ -91,6 +91,20 @@ export function RunWorkspace({
     }
   };
 
+  const resumeAsNewRun = async () => {
+    if (!run) return;
+    setBusy("resume");
+    setActionError(null);
+    try {
+      const resumed = await client.post<{ id: string }>(endpoints.resumeRun(run.id).path);
+      navigate({ routeId: "runs", entityId: resumed.id });
+    } catch (error) {
+      setActionError(errorText(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   if (!run) {
     return (
       <section>
@@ -111,6 +125,11 @@ export function RunWorkspace({
   const status = runStatus(run.status, "customer");
   const mayCancel = can(principal, "run:cancel", { orgId: run.tenantId, ownerUserId: run.createdBy }).allow;
   const mayConfirm = can(principal, "run:confirm", { orgId: run.tenantId, ownerUserId: run.createdBy }).allow;
+  const mayResume = can(principal, "exception:resume", { orgId: run.tenantId, ownerUserId: run.createdBy }).allow;
+  const canResumeThisRun =
+    mayResume &&
+    ["FAILED", "TIMED_OUT"].includes(run.status) &&
+    !narrative.diagnosis.unsafeToRetry;
   const pendingConfirmation = narrative.gates.find((gate) => gate.kind === "confirmation" && gate.state === "pending" && gate.stepId);
   const evidence = (Object.values(run.stepResults ?? {}) as StepResult[]).filter((result) => result.evidence);
 
@@ -131,7 +150,13 @@ export function RunWorkspace({
       <Panel
         title="Current path"
         sub={`${narrative.progression.filter((step) => step.state === "done").length} of ${narrative.progression.length} visible steps completed`}
-        actions={mayCancel && ["RUNNING", "WAITING_AGENT", "WAITING_APPROVAL", "AWAITING_CONFIRMATION"].includes(run.status) ? <Btn variant="danger" onClick={() => { if (window.confirm(`Cancel this run of "${run.workflowName ?? run.workflowId}"? It cannot be resumed.`)) void mutate("cancel", endpoints.cancelRun(run.id).path); }} disabled={busy !== null}>{busy === "cancel" ? "Cancelling…" : "Cancel run"}</Btn> : undefined}
+        actions={
+          mayCancel && ["RUNNING", "WAITING_AGENT", "WAITING_APPROVAL", "AWAITING_CONFIRMATION"].includes(run.status) ? (
+            <Btn variant="danger" onClick={() => { if (window.confirm(`Cancel this run of "${run.workflowName ?? run.workflowId}"? It cannot be resumed.`)) void mutate("cancel", endpoints.cancelRun(run.id).path); }} disabled={busy !== null}>{busy === "cancel" ? "Cancelling…" : "Cancel run"}</Btn>
+          ) : canResumeThisRun ? (
+            <Btn variant="primary" onClick={() => void resumeAsNewRun()} disabled={busy !== null}>{busy === "resume" ? "Starting…" : "Resume as new run"}</Btn>
+          ) : undefined
+        }
       >
         <ol className="ops-list">
           {narrative.progression.map((item) => (

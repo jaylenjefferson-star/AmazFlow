@@ -1092,35 +1092,66 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       time, with absent telemetry stated as "Not recorded".
     - _Requirements: 15.1, 15.2, 15.3_
 
-  - [ ] 17.2 Wire agent authorization, credential exchange, re-registration, and revocation with audit
+  - [x] 17.2 Wire agent authorization, credential exchange, re-registration, and revocation with audit
     - Single-use expiring organization-scoped code; credential stored as a hash with the code marked
       consumed; re-registration reuses the installation record and supersedes the prior credential; a
       superseded or revoked credential is refused; revocation ends access on the agent's next request;
       heartbeat records time, capabilities, and permissions
+    - All of this already existed and was tested server-side (critical-path.test.cjs: re-registration
+      reuse/supersede; guardrail-capabilities.test.cjs: a revoked credential admitted to nothing;
+      guardrail-heartbeat-audit.test.cjs: heartbeat recording) — the gap was that the customer app had no
+      way to trigger authorize or revoke at all. Added a "Connect a new agent" form (shows the single-use
+      pairing code once, never persisted or refetchable) and a per-row "Revoke" control, gated on
+      `agent:authorize`/`agent:revoke`, to `AgentsView`.
     - _Requirements: 15.4, 15.5, 15.6, 15.7, 15.8, 15.9, 15.19_
 
-  - [ ] 17.3 Expose the server-side reason a pending task is not eligible for the connected agents
+  - [x] 17.3 Expose the server-side reason a pending task is not eligible for the connected agents
     - Evaluated with the same admission predicate the claim route uses; an unmatched capability leaves the
       task available to another eligible agent
+    - Added `taskEligibilityReason(task)` to both control-plane copies, reusing `preflightFor`'s own
+      connected/capable/permissioned derivation scoped to one task's surface and operation rather than a
+      whole workflow's. `GET /agent-tasks` now attaches it per pending task; the eligibility check never
+      changes whether the task can still be claimed (purely diagnostic). Customer `TasksView` shows it
+      under "Waiting to be claimed".
     - _Requirements: 15.10, 15.11, 15.17_
 
-  - [ ] 17.4 Surface preflight and refuse run creation for an unconnected required surface
+  - [x] 17.4 Surface preflight and refuse run creation for an unconnected required surface
     - Refuse at creation rather than creating a run that later times out
+    - The control-plane refusal already existed (`POST /workflows/{id}/runs` checks `preflightFor` before
+      creating) and is now covered by a dedicated test (task 15.10's workflow-lifecycle.test.cjs addition).
+      The actual gap was upstream: the customer app had no way to start a run at all. Added
+      `POST /workflows/{id}/runs` wiring (`startWorkflowRun`) and a "Start a run" control to
+      `WorkflowWorkspace`, disabled whenever preflight reports not ready.
     - _Requirements: 15.18, 13.21_
 
-  - [ ] 17.5 Property tests for agent capability and surface matching (Property 4) with fast-check
+  - [x] 17.5 Property tests for agent capability and surface matching (Property 4) with fast-check
     - **Property 4: Agent capability and surface matching** — a claim is granted only when surface,
       capability, and assignment all match; a desktop agent is never handed a browser step and vice versa;
       exactly one agent wins a contested claim; a grant verifies only against its issued scope; each grant
       tool is consumable exactly once; an expired lease is reclaimable and a live one is not
+    - `infrastructure/aws-cdk/test/property-agent-matching.test.cjs` exercises the deployed handler's own
+      exported `agentMayRunTask` (not a reimplementation) against generated tenant/surface/capability/
+      role/ownership combinations, checked against an independently-derived reference. Caught a real
+      modeling error in the test itself while writing it: an agent with an EXPLICIT empty capabilities
+      array matches nothing, distinct from no capabilities field at all (permissive) — fixed the
+      reference to match the code, which was correct. Contested-claim, grant-scope, and lease-expiry
+      bullets are already pinned exhaustively by guardrail-capabilities/-grants/-leases.test.cjs and
+      critical-path.test.cjs.
     - **Validates: Requirements 15.10, 15.12, 15.13, 15.14, 15.15, 15.18, 31.4, 31.5, 31.6, 31.7, 31.8, 31.9, 31.10**
 
-  - [ ] 17.6 Agent behaviour test suite
+  - [x] 17.6 Agent behaviour test suite
     - Registration; re-registration reusing the installation record and superseding the credential; refusal
       of a superseded credential; heartbeat recording; offline handling after more than two missed intervals
       including preflight reporting not-ready and run creation refused; capability matching leaving a task
       pending; surface matching; contested claims yielding one winner; stalled lease reclamation by the
       sweep; grant scope mismatch, expiry, and replay; revocation ending access immediately
+    - Audited rather than duplicated: every item above already has dedicated coverage —
+      critical-path.test.cjs (registration/re-registration/supersede, contested claims, lease sweep,
+      surface matching end to end), guardrail-capabilities.test.cjs (capability/surface/assignment
+      matching, revoked-credential admits nothing), guardrail-grants.test.cjs (scope mismatch, expiry,
+      replay), guardrail-heartbeat-audit.test.cjs (heartbeat recording, offline derivation), and (new,
+      task 17.4) workflow-lifecycle.test.cjs's preflight-not-ready run refusal. Writing a new suite here
+      would have re-tested the same behavior under a different file name.
     - _Requirements: 34.13, 15.16_
 
 - [ ] 18. Phase 8 — Tasks, approvals, and exceptions
@@ -1160,9 +1191,17 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       show reconciliation guidance and deliberately never present a retry action.
     - _Requirements: 19.4, 19.5, 31.16_
 
-  - [ ] 18.5 Implement resume as a new run pinned to the same workflow version
+  - [x] 18.5 Implement resume as a new run pinned to the same workflow version
     - Same input; audit event linking the new run to the original; no rewinding or mutation of the original
       run's completed steps
+    - `POST /runs/{id}/resume` in both control-plane copies: refuses outside FAILED/TIMED_OUT, fetches the
+      original run's own pinned `workflowVersion` via `getWorkflowVersion` (not the current/latest
+      definition), and calls the existing `runWorkflow`/`WorkflowEngine.start` with the original's input —
+      threaded a new `resumedFromRunId` flag through both (`packages/engine`'s `start()` and the handler's
+      `runWorkflow`) rather than duplicating run construction. Records `RUN_RESUMED_FROM_EXCEPTION` naming
+      both run ids; the original run is never written to. Wired into the customer app: a "Resume as new
+      run" control on the exceptions queue and on the run detail page, shown only when
+      `exception:resume` is held and the derived diagnosis is not unsafe to retry.
     - _Requirements: 19.6, 19.7, 19.8_
 
   - [x] 18.6 Approvals test suite

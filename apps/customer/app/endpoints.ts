@@ -113,6 +113,24 @@ export const submitAgentTaskResult = (id: string): Endpoint => ({
   route: "POST /agent-tasks/{id}/result",
   path: `/agent-tasks/${e(id)}/result`,
 });
+export const resumeRun = (id: string): Endpoint => ({
+  route: "POST /runs/{id}/resume",
+  path: `/runs/${e(id)}/resume`,
+});
+export const startWorkflowRun = (workflowId: string): Endpoint => ({
+  route: "POST /workflows/{id}/runs",
+  path: `/workflows/${e(workflowId)}/runs`,
+});
+
+/** Agents (task 17.2). The pairing code is single-use and shown to the person exactly once. */
+export const createAgentAuthorization = (): Endpoint => ({
+  route: "POST /agent-authorizations",
+  path: "/agent-authorizations",
+});
+export const revokeAgent = (id: string): Endpoint => ({
+  route: "POST /agents/{id}/revoke",
+  path: `/agents/${e(id)}/revoke`,
+});
 
 /** Browser connections. Credentials and managed-profile identifiers never cross this boundary. */
 export const createBrowserConnection = (): Endpoint => ({
@@ -215,10 +233,14 @@ export const ALL_ENDPOINTS: readonly Endpoint[] = [
   confirmRunAction("run_1", "step_1"),
   decideRunApproval("run_1", "step_1"),
   submitAgentTaskResult("task_1"),
+  resumeRun("run_1"),
+  startWorkflowRun("wf_1"),
   createBrowserConnection(),
   startBrowserConnectionLogin("connection_1"),
   completeBrowserConnectionLogin("connection_1"),
   revokeBrowserConnection("connection_1"),
+  createAgentAuthorization(),
+  revokeAgent("agent_1"),
   createSecret(),
   rotateSecret("secret_1"),
   deleteSecret("secret_1"),

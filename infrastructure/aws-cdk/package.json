@@ -10,7 +10,7 @@
     "test:guardrails": "node test/guardrail-state-machine.test.cjs && node test/guardrail-grants.test.cjs && node test/guardrail-leases.test.cjs && node test/guardrail-verification.test.cjs && node test/guardrail-capabilities.test.cjs && node test/guardrail-heartbeat-audit.test.cjs && node test/guardrail-concurrency-retry.test.cjs",
     "test:behaviour": "node test/critical-path.test.cjs && node test/org-settings.test.cjs && node test/onboarding.test.cjs && node test/phase4-administration.test.cjs && node test/workflow-lifecycle.test.cjs && node test/browser-connections.test.cjs && node test/secrets.test.cjs && node test/approvals.test.cjs && node test/auth-session.test.cjs && node test/isolation-baseline.test.cjs && node test/isolation-api.test.cjs && node test/per-role-permissions.test.cjs",
     "record:route-inventory": "node test/record-route-inventory.cjs",
-    "test:properties": "node test/property-tenant-isolation.test.cjs && node test/property-rbac.test.cjs && node test/property-invitations.test.cjs && node test/property-run-lifecycle.test.cjs",
+    "test:properties": "node test/property-tenant-isolation.test.cjs && node test/property-rbac.test.cjs && node test/property-invitations.test.cjs && node test/property-run-lifecycle.test.cjs && node test/property-agent-matching.test.cjs",
     "test:security": "node test/secret-non-leakage.test.cjs",
     "test:parity": "node test/source-parity.test.cjs && node --test test/provider-parity.test.cjs",
     "synth": "cdk synth"

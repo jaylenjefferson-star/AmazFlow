@@ -168,7 +168,7 @@ const RESPONSE_FIELD_GROUPS = {
   // is the deadline the agent honours, and `destination` is the origin or application it is allowed
   // to touch. Without those three the poll response is a list of identifiers an agent cannot act on,
   // which is what the first, narrower version of this group produced.
-  task: ["id", "tenantId", "runId", "stepId", "provider", "operation", "input", "status", "executionTarget", "destination", "requiredCapabilities", "assignedRoles", "workflowId", "expiresAt", "createdBy", "createdAt", "updatedAt", "claimedBy", "claimedAt", "claimExpiresAt", "grant", "grantId", "result"],
+  task: ["id", "tenantId", "runId", "stepId", "provider", "operation", "input", "status", "executionTarget", "destination", "requiredCapabilities", "assignedRoles", "workflowId", "expiresAt", "createdBy", "createdAt", "updatedAt", "claimedBy", "claimedAt", "claimExpiresAt", "grant", "grantId", "result", "eligibilityReason"],
   // The claim envelope is not a task: it wraps one, alongside the single-use grant, the lease
   // deadline, the verification contract, and the `display` block both agents render instead of
   // showing identifiers to a person. Sharing the task contract stripped every one of those.
@@ -213,7 +213,7 @@ allowResponseFields(["GET /notifications"], "notification");
 allowResponseFields(["GET /permissions/matrix"], "matrix");
 allowResponseFields(["GET /workflows", "POST /workflows", "POST /workflows/generate", "GET /workflows/{id}/versions", "POST /workflows/{id}/draft", "POST /workflows/{id}/publish", "POST /workflows/{id}/unpublish", "POST /workflows/{id}/duplicate", "POST /workflows/{id}/archive"], "workflow");
 allowResponseFields(["GET /workflows/{id}/preflight"], "preflight");
-allowResponseFields(["GET /runs", "POST /workflows/{id}/runs", "POST /runs/{id}/cancel", "POST /runs/{id}/confirmations/{stepId}/confirm", "POST /runs/{id}/approvals/{stepId}", "POST /runs/{id}/executor/invoke", "POST /agent-tasks/{id}/result", "POST /agent/tasks/{id}/result", "POST /agent/tools/record-step-result", "POST /ai/execute"], "run");
+allowResponseFields(["GET /runs", "POST /workflows/{id}/runs", "POST /runs/{id}/cancel", "POST /runs/{id}/resume", "POST /runs/{id}/confirmations/{stepId}/confirm", "POST /runs/{id}/approvals/{stepId}", "POST /runs/{id}/executor/invoke", "POST /agent-tasks/{id}/result", "POST /agent/tasks/{id}/result", "POST /agent/tools/record-step-result", "POST /ai/execute"], "run");
 allowResponseFields(["GET /agent-tasks", "GET /agent/tasks"], "task");
 allowResponseFields(["POST /agent/tasks/{id}/claim"], "claim");
 allowResponseFields(["GET /agents", "POST /agent-authorizations", "POST /agent-authorizations/{code}/exchange", "POST /agents/{id}/revoke", "POST /agent/heartbeat"], "agent");
@@ -1700,6 +1700,32 @@ const preflightFor = async (workflow, tenantId) => {
     ready: surfaces.every((x) => x.status === "connected"),
   };
 };
+// Requirement 15.17: for a pending task no agent has claimed, the customer app shows WHY -- computed
+// server-side from the same connected/capable/permissioned facts preflightFor derives for a whole
+// workflow, scoped here to this one task's own surface and operation. Requirement 15.11 is the
+// other half: an unmatched capability just leaves the task pending for another agent, so this is
+// read-only diagnosis, never a change to whether the task can still be claimed.
+const taskEligibilityReason = async (task) => {
+  const target = task.executionTarget || "browser_extension";
+  const wanted = AGENT_TYPE_FOR_TARGET[target];
+  const all = await scanType("AGENT#", { role: "SUPER_ADMIN" });
+  const mine = all.filter((x) => x.tenantId === task.tenantId).map(agentSnapshot);
+  const candidates = mine.filter((x) => x.agentType === wanted && x.connectionStatus !== "revoked");
+  const connected = candidates.filter((x) => x.connectionStatus === "connected");
+  const capable = connected.filter(
+    (x) => !x.capabilities.length || x.capabilities.includes(task.operation),
+  );
+  const permissioned = capable.filter(
+    (x) => target !== "desktop_agent" || !x.permissions || x.permissions.accessibility !== false,
+  );
+  if (permissioned.length) return null;
+  const surfaceLabel = target === "desktop_agent" ? "desktop app" : "browser extension";
+  if (!candidates.length) return `No ${surfaceLabel} is registered for this organization.`;
+  if (!connected.length) return `No connected ${surfaceLabel}. The registered one is offline.`;
+  if (!capable.length)
+    return `No connected ${surfaceLabel} advertises the "${task.operation}" capability.`;
+  return `The connected ${surfaceLabel} has not granted the operating-system permission this action needs.`;
+};
 // Diagnostic only. This route is an alternative way to push a run that is already parked on an
 // agent step: instead of waiting for the extension to poll for that step's task, it mints a grant
 // and asks the Executor harness to act. It exists to prove the harness path end to end, and it is
@@ -2564,6 +2590,7 @@ const runWorkflow = async (workflow, input, a, flags = {}) => {
     workflowId: workflow.id,
     workflowVersion: workflow.version || 1,
     ...(flags.isTest ? { isTest: true } : {}),
+    ...(flags.resumedFromRunId ? { resumedFromRunId: flags.resumedFromRunId } : {}),
     status: "RUNNING",
     currentStepId: workflow.startAt,
     createdBy: a.userId,
@@ -2584,6 +2611,45 @@ const runWorkflow = async (workflow, input, a, flags = {}) => {
     executionBackend: useAgentCore() ? "agentcore" : "legacy",
   };
   return advance(workflow, run, 0);
+};
+// Task 18.5 / requirements 19.6-19.8: resuming an exception is a NEW run, never a rewind. It is
+// pinned to the same workflow VERSION the original ran on -- not whatever the workflow currently
+// is, which may have been edited since -- and carries the same input. The original run's own
+// record is never touched; the link is recorded only on the new run and in the audit trail.
+const RESUMABLE_EXCEPTION_STATUSES = ["FAILED", "TIMED_OUT"];
+const resumeRunFromException = async (runId, a) => {
+  const run = await resolveEntity("RUN#", runId, a, "resuming a run from its exception by id");
+  if (!run) throw { status: 404, message: "Run not found" };
+  await authorizeIn(asPrincipal(a), "exception:resume", {
+    orgId: run.tenantId,
+    ownerUserId: run.createdBy,
+  });
+  if (!RESUMABLE_EXCEPTION_STATUSES.includes(run.status))
+    throw {
+      status: 409,
+      message: "Only a failed or timed-out run can be resumed",
+    };
+  const pinnedWorkflow = await getWorkflowVersion(
+    run.tenantId,
+    run.workflowId,
+    run.workflowVersion,
+  );
+  if (!pinnedWorkflow)
+    throw {
+      status: 400,
+      message: "The workflow version this run started on is no longer available",
+    };
+  const newRun = await runWorkflow(pinnedWorkflow, run.context?.input ?? {}, a, {
+    resumedFromRunId: run.id,
+  });
+  await logActivity(run.tenantId, {
+    actor: a.userId,
+    actorLabel: actorLabelFor(asPrincipal(a)),
+    action: "RUN_RESUMED_FROM_EXCEPTION",
+    summary: `Resumed run ${run.id} as a new run`,
+    details: { originalRunId: run.id, newRunId: newRun.id },
+  });
+  return newRun;
 };
 // grantToken is required on the agent route and omitted for the operator's own
 // /agent-tasks/{id}/result console route, which is already Cognito-authenticated and
@@ -6999,6 +7065,15 @@ exports.handler = async (e) => {
         throw err;
       }
     }
+    if (route === "POST /runs/{id}/resume") {
+      try {
+        const run = await resumeRunFromException(e.pathParameters?.id, a);
+        return reply(201, run);
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+    }
     if (route === "POST /runs/{id}/confirmations/{stepId}/confirm") {
       try {
         const run = await confirmActionGate(
@@ -7079,10 +7154,14 @@ exports.handler = async (e) => {
         if (denied) return denied;
       }
       const items = await scanType("TASK#", a);
-      return reply(
-        200,
-        items.filter((t) => t.status === "PENDING"),
+      const pendingTasks = items.filter((t) => t.status === "PENDING");
+      const withEligibility = await Promise.all(
+        pendingTasks.map(async (t) => ({
+          ...t,
+          eligibilityReason: await taskEligibilityReason(t),
+        })),
       );
+      return reply(200, withEligibility);
     }
     if (route === "POST /agent-tasks/{id}/result") {
       {

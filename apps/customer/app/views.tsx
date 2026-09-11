@@ -395,7 +395,7 @@ export function RunsView({ slots, navigate }: ViewProps) {
 }
 
 export function TasksView({ slots, client, principal, refresh }: ViewProps) {
-  type Task = { id: string; operation: string; status: string; executionTarget?: string; runId?: string; claimedBy?: string; claimExpiresAt?: string; expiresAt?: string; destination?: string };
+  type Task = { id: string; operation: string; status: string; executionTarget?: string; runId?: string; claimedBy?: string; claimExpiresAt?: string; expiresAt?: string; destination?: string; eligibilityReason?: string | null };
   const tasks = list<Task>(slots, "agentTasks");
   const mayResolve = can(principal, "task:resolve", { orgId: principal.orgId }).allow;
   const { pending, feedback, run: act } = useAction(refresh);
@@ -405,7 +405,11 @@ export function TasksView({ slots, client, principal, refresh }: ViewProps) {
       <Resource slot={tasks} emptyTitle="Nothing waiting" emptyBody="No task is outstanding right now.">
         {(value) => (
           <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Operation</th><th>Target surface</th><th>Originating run</th><th>Claim state</th><th>Deadline</th><th>Result</th></tr></thead><tbody>{value.map((task) => {
-            const claim = task.claimedBy ? `Claimed by ${task.claimedBy}` : "Waiting to be claimed";
+            const claim = task.claimedBy
+              ? `Claimed by ${task.claimedBy}`
+              : task.eligibilityReason
+                ? <span className="ops-col ops-gap-sm"><span>Waiting to be claimed</span><span className="ops-muted">{task.eligibilityReason}</span></span>
+                : "Waiting to be claimed";
             const target = task.executionTarget === "desktop_agent" ? "Desktop App" : task.executionTarget === "browser_extension" ? "Chrome Extension" : "Not recorded";
             return <tr key={task.id}><td>{task.operation}{task.destination && <><br /><span className="ops-muted">{task.destination}</span></>}</td><td>{target}</td><td>{task.runId ?? "Not recorded"}</td><td>{claim}{task.claimExpiresAt && <><br /><span className="ops-muted">Lease ends {relativeTime(task.claimExpiresAt)}</span></>}</td><td>{task.expiresAt ? relativeTime(task.expiresAt) : "Not recorded"}</td><td>{mayResolve && (task.status === "PENDING" || task.status === "CLAIMED") ? <TaskResultForm task={task} disabled={pending !== null} submit={(result) => act(`task-${task.id}`, result.ok ? "Result recorded and run advanced." : "Failure recorded and run advanced.", () => client.post(endpoints.submitAgentTaskResult(task.id).path, result))} /> : "—"}</td></tr>;
           })}</tbody></table></div>
@@ -475,15 +479,19 @@ const classifyException = (run: ExceptionRun, connections: Array<{ status?: stri
   return { cause: "SYSTEM_FAILURE" as ExceptionCause, unsafe: false, recovery: "Review the recorded failure and start a new run when the underlying issue is resolved." };
 };
 
-export function ExceptionsView({ slots, navigate }: ViewProps) {
+export function ExceptionsView({ slots, principal, client, navigate, refresh }: ViewProps) {
   const runs = list<ExceptionRun>(slots, "runs");
   const connections = list<{ status?: string }>(slots, "connections");
   const failed = {
     ...runs,
     value: runs.value.filter((run) => run.status === "FAILED" || run.status === "TIMED_OUT"),
   };
+  const mayResume = can(principal, "exception:resume", { orgId: principal.orgId }).allow;
+  const action = useAction(refresh);
+  const busy = action.pending !== null;
   return (
     <Page title="Needs attention" lead="Runs that stopped without finishing.">
+      <ActionFeedback value={action.feedback} />
       <Resource
         slot={failed}
         emptyTitle="Nothing needs attention"
@@ -492,7 +500,18 @@ export function ExceptionsView({ slots, navigate }: ViewProps) {
         {(value) => (
           <ul className="ops-list">{value.map((run) => {
             const diagnosis = classifyException(run, connections.value);
-            return <li key={run.id}><span><button type="button" onClick={() => navigate({ routeId: "runs", entityId: run.id })}>{run.id}</button><br /><strong>{diagnosis.cause.replace(/_/g, " ")}</strong><br /><span className="ops-muted">{diagnosis.recovery}</span></span><Pill tone={diagnosis.unsafe ? "bad" : "waiting"}>{diagnosis.unsafe ? "Reconcile first" : "Recovery available"}</Pill></li>;
+            return <li key={run.id}>
+              <span><button type="button" onClick={() => navigate({ routeId: "runs", entityId: run.id })}>{run.id}</button><br /><strong>{diagnosis.cause.replace(/_/g, " ")}</strong><br /><span className="ops-muted">{diagnosis.recovery}</span></span>
+              <span className="ops-row ops-gap-sm">
+                <Pill tone={diagnosis.unsafe ? "bad" : "waiting"}>{diagnosis.unsafe ? "Reconcile first" : "Recovery available"}</Pill>
+                {mayResume && !diagnosis.unsafe && (
+                  <Btn size="sm" disabled={busy} onClick={() => void action.run(`resume-${run.id}`, "Started a new run from the same point.", async () => {
+                    const resumed = await client.post<{ id: string }>(endpoints.resumeRun(run.id).path);
+                    navigate({ routeId: "runs", entityId: resumed.id });
+                  })}>{action.pending === `resume-${run.id}` ? "Resuming…" : "Resume as new run"}</Btn>
+                )}
+              </span>
+            </li>;
           })}</ul>
         )}
       </Resource>
@@ -500,20 +519,66 @@ export function ExceptionsView({ slots, navigate }: ViewProps) {
   );
 }
 
-export function AgentsView({ slots }: ViewProps) {
+const AGENT_TYPES = [
+  { value: "CHROME_EXTENSION", label: "Chrome Extension" },
+  { value: "DESKTOP_AGENT", label: "Desktop App" },
+];
+
+export function AgentsView({ slots, principal, client, refresh }: ViewProps) {
   const agents = list<{
     id: string; name?: string; agentType?: string; platform?: string; version?: string;
     connectionStatus?: string; capabilities?: string[]; permissions?: string[]; lastSeenAt?: string;
   }>(slots, "agents");
+  const mayAuthorize = can(principal, "agent:authorize", { orgId: principal.orgId }).allow;
+  const mayRevoke = can(principal, "agent:revoke", { orgId: principal.orgId }).allow;
+  const action = useAction(refresh);
+  const busy = action.pending !== null;
+  const [name, setName] = useState("");
+  const [agentType, setAgentType] = useState("CHROME_EXTENSION");
+  const [pairingCode, setPairingCode] = useState<string | null>(null);
+
+  const authorize = (event: FormEvent) => {
+    event.preventDefault();
+    setPairingCode(null);
+    void action.run("agent-authorize", `Ready to pair "${name.trim()}".`, async () => {
+      const result = await client.post<{ code: string }>(endpoints.createAgentAuthorization().path, {
+        name: name.trim(),
+        agentType,
+      });
+      setPairingCode(result.code);
+      setName("");
+    });
+  };
+
   return (
     <Page title="Agents" lead="The browsers and computers AmazFlow can act through.">
-      <Resource
-        slot={agents}
-        emptyTitle="No agents connected"
-        emptyBody="Install the AmazFlow extension or desktop app to let a workflow act on your systems."
-      >
-        {(value) => <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Agent</th><th>Surface</th><th>Platform</th><th>Version</th><th>Connectivity</th><th>Capabilities</th><th>Permissions</th><th>Last seen</th></tr></thead><tbody>{value.map((agent) => <tr key={agent.id}><td>{agent.name ?? agent.id}</td><td>{agent.agentType === "DESKTOP_AGENT" ? "Desktop App" : agent.agentType === "CHROME_EXTENSION" ? "Chrome Extension" : "Not recorded"}</td><td>{agent.platform ?? "Not recorded"}</td><td>{agent.version ?? "Not recorded"}</td><td><Pill tone={agent.connectionStatus === "connected" ? "good" : agent.connectionStatus === "revoked" ? "bad" : "waiting"}>{agent.connectionStatus ?? "Not recorded"}</Pill></td><td>{agent.capabilities?.length ? agent.capabilities.join(", ") : "Not recorded"}</td><td>{agent.permissions?.length ? agent.permissions.join(", ") : "Not recorded"}</td><td>{agent.lastSeenAt ? relativeTime(agent.lastSeenAt) : "Not recorded"}</td></tr>)}</tbody></table></div>}
-      </Resource>
+      <div className="ops-col ops-gap-md">
+        {mayAuthorize && (
+          <Panel title="Connect a new agent" sub="Generates a single-use pairing code to enter into the extension or desktop app.">
+            <form className="ops-col ops-gap-sm" onSubmit={authorize}>
+              <div className="ops-grid-2">
+                <Field label="Agent name"><input className="ops-input" value={name} onChange={(event) => setName(event.target.value)} disabled={busy} required /></Field>
+                <Select value={agentType} onChange={setAgentType} label="Surface" options={AGENT_TYPES} />
+              </div>
+              <div><Btn type="submit" variant="primary" disabled={busy || !name.trim()}>{action.pending === "agent-authorize" ? "Generating…" : "Generate pairing code"}</Btn></div>
+            </form>
+            {pairingCode && (
+              <Alert tone="good" title="Pairing code — enter this in the extension or desktop app now">
+                <code style={{ fontSize: 16, letterSpacing: "0.05em" }}>{pairingCode}</code>
+                <p className="ops-muted" style={{ marginTop: 8 }}>This code is single-use and will not be shown again.</p>
+              </Alert>
+            )}
+          </Panel>
+        )}
+        <ActionFeedback value={action.feedback} />
+        <Resource
+          slot={agents}
+          emptyTitle="No agents connected"
+          emptyBody="Install the AmazFlow extension or desktop app to let a workflow act on your systems."
+        >
+          {(value) => <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Agent</th><th>Surface</th><th>Platform</th><th>Version</th><th>Connectivity</th><th>Capabilities</th><th>Permissions</th><th>Last seen</th>{mayRevoke && <th>Actions</th>}</tr></thead><tbody>{value.map((agent) => <tr key={agent.id}><td>{agent.name ?? agent.id}</td><td>{agent.agentType === "DESKTOP_AGENT" ? "Desktop App" : agent.agentType === "CHROME_EXTENSION" ? "Chrome Extension" : "Not recorded"}</td><td>{agent.platform ?? "Not recorded"}</td><td>{agent.version ?? "Not recorded"}</td><td><Pill tone={agent.connectionStatus === "connected" ? "good" : agent.connectionStatus === "revoked" ? "bad" : "waiting"}>{agent.connectionStatus ?? "Not recorded"}</Pill></td><td>{agent.capabilities?.length ? agent.capabilities.join(", ") : "Not recorded"}</td><td>{agent.permissions?.length ? agent.permissions.join(", ") : "Not recorded"}</td><td>{agent.lastSeenAt ? relativeTime(agent.lastSeenAt) : "Not recorded"}</td>{mayRevoke && <td>{agent.connectionStatus !== "revoked" ? <Btn size="sm" variant="danger" disabled={busy} onClick={() => { if (window.confirm(`Revoke "${agent.name ?? agent.id}"? It will lose access immediately.`)) void action.run(`agent-revoke-${agent.id}`, `Revoked "${agent.name ?? agent.id}".`, () => client.post(endpoints.revokeAgent(agent.id).path)); }}>Revoke</Btn> : "—"}</td>}</tr>)}</tbody></table></div>}
+        </Resource>
+      </div>
     </Page>
   );
 }

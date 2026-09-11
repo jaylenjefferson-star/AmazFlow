@@ -53,6 +53,7 @@ const leaksOrgB = (body) => {
 // against the inventory below, so nothing can be quietly omitted.
 const idScoped = () => [
   { route: "POST /runs/{id}/cancel", own: { id: A.runs.RUNNING.id }, foreign: { id: B.runs.RUNNING.id } },
+  { route: "POST /runs/{id}/resume", own: { id: A.runs.FAILED.id }, foreign: { id: B.runs.FAILED.id } },
   {
     route: "POST /runs/{id}/approvals/{stepId}",
     own: { id: A.runs.WAITING_APPROVAL.id, stepId: A.runs.WAITING_APPROVAL.currentStepId },

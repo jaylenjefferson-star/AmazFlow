@@ -261,6 +261,13 @@ export type WorkflowRun = {
    * cannot be identified after the fact from anything else the record holds.
    */
   isTest?: boolean;
+  /**
+   * Set when this run was created by resuming an exception (task 18.5, requirements 19.6-19.8): a
+   * new run, pinned to the same workflow version and started with the same input, rather than a
+   * rewind or mutation of the original run's completed steps. The original run's own record is
+   * never touched -- this field lives only on the new one, naming what it resumed from.
+   */
+  resumedFromRunId?: string;
   currentStepId?: string;
   createdBy?: string;
   confirmedStepIds?: string[];

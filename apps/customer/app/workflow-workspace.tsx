@@ -69,7 +69,8 @@ export function WorkflowWorkspace({
   const [preflight, setPreflight] = useState<Preflight | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"save" | "generate" | null>(null);
+  const [busy, setBusy] = useState<"save" | "generate" | "run" | null>(null);
+  const [runDescription, setRunDescription] = useState("");
 
   useEffect(() => {
     setDraft(source ?? null);
@@ -98,6 +99,8 @@ export function WorkflowWorkspace({
 
   const blocking = useMemo(() => (draft ? workflowBlockingProblems(draft) : []), [draft]);
   const targets = useMemo(() => (draft ? requiredTargets(draft) : []), [draft]);
+  const isRunnable = draft?.status === "active" || draft?.status === "testing";
+  const canRun = isRunnable && can(principal, "workflow:run", { orgId: principal.orgId, assignedRoles: draft?.assignedRoles }).allow;
 
   const save = async () => {
     if (!draft || !canEdit || blocking.length) return;
@@ -123,6 +126,27 @@ export function WorkflowWorkspace({
       await refresh();
       navigate({ routeId: "workflows", entityId: saved.id });
     } catch (error) {
+      setMutationError(messageOf(error));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const startRun = async () => {
+    if (!canRun || busy !== null) return;
+    setBusy("run");
+    setMutationError(null);
+    try {
+      const run = await client.post<{ id: string }>(endpoints.startWorkflowRun(workflowId).path, {
+        ...(runDescription.trim() ? { description: runDescription.trim() } : {}),
+      });
+      setRunDescription("");
+      navigate({ routeId: "runs", entityId: run.id });
+    } catch (error) {
+      // Requirement 15.18/17.4: the control plane refuses at creation -- via preflight, the
+      // organization's execution status, or the concurrency ceiling -- rather than creating a run
+      // that can only sit and time out. The button being enabled is a convenience, not the
+      // guarantee; this is what actually stops it.
       setMutationError(messageOf(error));
     } finally {
       setBusy(null);
@@ -196,6 +220,30 @@ export function WorkflowWorkspace({
           </div>
         )}
       </Panel>
+
+      {canRun && (
+        <Panel
+          title="Start a run"
+          sub={preflight && !preflight.ready ? "Not ready: at least one required surface above has no connected agent." : "Runs from the version currently in effect."}
+        >
+          <div className="ops-col ops-gap-sm">
+            <label>
+              <span className="ops-field-label">What do you need done? (optional)</span>
+              <textarea
+                className="ops-input"
+                value={runDescription}
+                onChange={(event) => setRunDescription(event.target.value)}
+                placeholder="Optional detail for this specific run"
+              />
+            </label>
+            <div>
+              <Btn variant="primary" onClick={() => void startRun()} disabled={busy !== null || (preflight != null && !preflight.ready)}>
+                {busy === "run" ? "Starting…" : "Start a run"}
+              </Btn>
+            </div>
+          </div>
+        </Panel>
+      )}
 
       <Panel title="Version history" sub="Each saved version remains readable so a run keeps the definition it started with.">
         {workflowId === "new" ? <p>This draft has not been saved yet.</p> : !versions ? <SkeletonPanel rows={3} /> : versions.length === 0 ? <p>No saved versions were returned.</p> : (

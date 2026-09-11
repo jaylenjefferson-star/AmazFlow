@@ -578,6 +578,15 @@
       "orgScope": "entity-identifier-scoped"
     },
     {
+      "route": "POST /runs/{id}/resume",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
       "route": "POST /secrets",
       "copies": [
         "deployed",

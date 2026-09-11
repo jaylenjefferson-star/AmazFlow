@@ -145,6 +145,16 @@ const invariants = [
   ["rotating a secret is audited", /SECRET_ROTATED/, /SECRET_ROTATED/],
   ["deleting a secret is audited", /SECRET_DELETED/, /SECRET_DELETED/],
 
+  // Task eligibility diagnosis (17.3 / requirement 15.17).
+  ["a pending task's eligibility reason is computed server-side", /taskEligibilityReason=async\(task\)=>\{/, /taskEligibilityReason = async \(task\) => \{/],
+  ["an eligible task's reason is null, not a false explanation", /if\(permissioned\.length\) return null;/, /if \(permissioned\.length\) return null;/],
+
+  // Resume from an exception (18.5).
+  ["the resume route is exposed", /POST \/runs\/\{id\}\/resume/, /POST \/runs\/\{id\}\/resume/],
+  ["resume is admitted only from the two exception statuses", /RESUMABLE_EXCEPTION_STATUSES=\['FAILED','TIMED_OUT'\]/, /RESUMABLE_EXCEPTION_STATUSES = \["FAILED", "TIMED_OUT"\]/],
+  ["resume pins the new run to the original's own workflow version", /getWorkflowVersion\(run\.tenantId,run\.workflowId,run\.workflowVersion\)/, /getWorkflowVersion\(\s*run\.tenantId,\s*run\.workflowId,\s*run\.workflowVersion,\s*\)/],
+  ["resuming a run is audited", /RUN_RESUMED_FROM_EXCEPTION/, /RUN_RESUMED_FROM_EXCEPTION/],
+
   // Phase 1 -- authentication and session lifecycle. Same standing rule as above: each
   // security-relevant behaviour gets an invariant in both copies.
   //

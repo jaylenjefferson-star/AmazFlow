@@ -76,11 +76,11 @@ export class WorkflowEngine {
     workflow: WorkflowDefinition,
     input: Record<string, unknown>,
     actorOverride?: { userId?: string; role?: string },
-    flags: { isTest?: boolean } = {}
+    flags: { isTest?: boolean; resumedFromRunId?: string } = {}
   ) {
     const timestamp = now();
     const actor = actorOverride ?? (input._actor ?? {}) as { userId?: string; role?: string };
-    const run: WorkflowRun = { id: uid("run"), tenantId: workflow.tenantId, workflowId: workflow.id, workflowVersion: workflow.version, ...(flags.isTest ? { isTest: true as const } : {}), status: "RUNNING", currentStepId: workflow.startAt, createdBy: actor.userId, confirmedStepIds: [], stepResults: {}, context: { input, values: {}, lastAction: null }, audit: [{ id: uid("aud"), at: timestamp, type: "RUN_STARTED", message: "Workflow execution started", details: { actor: actor.userId, role: actor.role } }], createdAt: timestamp, updatedAt: timestamp, executionBackend: this.actionExecutor ? "agentcore" : "legacy" };
+    const run: WorkflowRun = { id: uid("run"), tenantId: workflow.tenantId, workflowId: workflow.id, workflowVersion: workflow.version, ...(flags.isTest ? { isTest: true as const } : {}), ...(flags.resumedFromRunId ? { resumedFromRunId: flags.resumedFromRunId } : {}), status: "RUNNING", currentStepId: workflow.startAt, createdBy: actor.userId, confirmedStepIds: [], stepResults: {}, context: { input, values: {}, lastAction: null }, audit: [{ id: uid("aud"), at: timestamp, type: "RUN_STARTED", message: "Workflow execution started", details: { actor: actor.userId, role: actor.role } }], createdAt: timestamp, updatedAt: timestamp, executionBackend: this.actionExecutor ? "agentcore" : "legacy" };
     await this.store.saveRun(run);
     return this.advance(workflow, run);
   }
