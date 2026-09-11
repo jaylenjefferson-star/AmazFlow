@@ -181,7 +181,7 @@ class AmazFlowAgentCoreStack extends cdk.Stack {
     });
     alarmSubscription.cfnOptions.condition = hasAlarmEmail;
 
-    for (const [name, namespace, metricName, threshold, statistic] of [["PolicyDenials", "AWS/Bedrock-AgentCore", "DenyDecisions", 1, "Sum"], ["AgentFailures", "AmazFlow/AgentCore", "AgentFailure", 5, "Sum"], ["BrowserFallback", "AmazFlow/AgentCore", "BrowserFallback", 10, "Sum"], ["Latency", "AWS/Bedrock-AgentCore", "Latency", 120000, "p99"], ["TokenUsage", "AmazFlow/AgentCore", "TokenUsage", 1_000_000, "Sum"], ["Spend", "AmazFlow/AgentCore", "EstimatedSpendUsd", 500, "Sum"]] as const) {
+    for (const [name, namespace, metricName, threshold, statistic] of [["PolicyDenials", "AWS/Bedrock-AgentCore", "DenyDecisions", 1, "Sum"], ["AgentFailures", "AmazFlow/AgentCore", "AgentFailure", 5, "Sum"], ["AuthorizationDenied", "AmazFlow/AgentCore", "AuthorizationDenied", 20, "Sum"], ["CrossOrganizationAccess", "AmazFlow/AgentCore", "CrossOrganizationAccess", 1, "Sum"], ["BrowserFallback", "AmazFlow/AgentCore", "BrowserFallback", 10, "Sum"], ["Latency", "AWS/Bedrock-AgentCore", "Latency", 120000, "p99"], ["TokenUsage", "AmazFlow/AgentCore", "TokenUsage", 1_000_000, "Sum"], ["Spend", "AmazFlow/AgentCore", "EstimatedSpendUsd", 500, "Sum"]] as const) {
       const alarm = new cloudwatch.Alarm(this, `${name}Alarm`, { metric: new cloudwatch.Metric({ namespace, metricName, period: cdk.Duration.minutes(5), statistic }), threshold, evaluationPeriods: 1, treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING });
       alarm.addAlarmAction(new cwActions.SnsAction(alarmTopic));
     }

@@ -256,7 +256,10 @@ let requestStartedAt = null;
 let requestUserId = null;
 let requestOrgId = null;
 let lastPermissionCheck = null;
+<<<<<<< HEAD
 let requestTruncated = false;
+let requestReadTruncated = false;
+let responsePagination = null;
 const CODE_FOR_STATUS = {
   400: "BAD_REQUEST",
   401: "UNAUTHENTICATED",
@@ -343,6 +346,15 @@ const reply = (s, b) => {
       // carrying it is completing an existing contract, not adding a new one.
       ...(correlationId ? { "x-correlation-id": correlationId } : {}),
       ...(requestTruncated ? { "x-amazflow-list-truncated": "true" } : {}),
+      ...(responsePagination
+        ? {
+            "x-page-size": String(responsePagination.pageSize),
+            ...(responsePagination.nextCursor
+              ? { "x-next-cursor": responsePagination.nextCursor }
+              : {}),
+            "x-list-truncated": responsePagination.truncated ? "true" : "false",
+          }
+        : {}),
       ...corsHeaders(),
     },
     body: JSON.stringify(projected, (key, value) =>
@@ -815,6 +827,7 @@ const pagedQuery = async (pk, type) => {
 // partial list.
 const reportTruncation = (type, pages) => {
   requestTruncated = true;
+  requestReadTruncated = true;
   console.error(
     JSON.stringify({
       level: "error",
@@ -825,6 +838,39 @@ const reportTruncation = (type, pages) => {
     }),
   );
   emitApplicationMetric("ScanTruncated");
+};
+const PAGE_SIZE_DEFAULT = 50;
+const PAGE_SIZE_MAX = 200;
+const opaqueCursor = (offset) =>
+  Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url");
+const readCursor = (value) => {
+  if (!value) return 0;
+  try {
+    const parsed = JSON.parse(Buffer.from(String(value), "base64url").toString("utf8"));
+    if (!Number.isInteger(parsed.offset) || parsed.offset < 0) throw new Error("invalid");
+    return parsed.offset;
+  } catch {
+    throw { status: 400, message: "The pagination cursor is invalid", code: "INVALID_CURSOR" };
+  }
+};
+const paginateList = (items, query = {}) => {
+  const rawSize = query.pageSize ?? query.page_size;
+  const pageSize = rawSize === undefined ? PAGE_SIZE_DEFAULT : Number(rawSize);
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > PAGE_SIZE_MAX)
+    throw {
+      status: 400,
+      message: `pageSize must be an integer between 1 and ${PAGE_SIZE_MAX}`,
+      code: "INVALID_PAGE_SIZE",
+    };
+  const offset = readCursor(query.cursor);
+  const page = items.slice(offset, offset + pageSize);
+  const nextOffset = offset + page.length;
+  responsePagination = {
+    pageSize,
+    nextCursor: nextOffset < items.length ? opaqueCursor(nextOffset) : null,
+    truncated: requestReadTruncated,
+  };
+  return page;
 };
 // Retained as the compatibility shim for the engine-internal call sites that pass a bare
 // { role: "SUPER_ADMIN" } rather than a principal. New code MUST use tenantRead, crossTenantRead or
@@ -989,6 +1035,7 @@ const platformRead = async (type, reason) => {
 // organization's data" is the question an audit reviewer actually asks.
 const isReadPermission = (permission) => /:(read|read_all)$/.test(String(permission));
 const recordCrossTenantAccess = async (p, permission, targetOrgId) => {
+  emitApplicationMetric("CrossOrganizationAccess");
   try {
     await logActivity(targetOrgId, {
       actor: p.userId,
@@ -1002,6 +1049,7 @@ const recordCrossTenantAccess = async (p, permission, targetOrgId) => {
   }
 };
 const recordCrossTenantRead = async (p, type, reason) => {
+  emitApplicationMetric("CrossOrganizationAccess");
   try {
     await logActivity(p.orgId, {
       actor: p.userId,
@@ -4814,9 +4862,12 @@ const publicBrowserConnection = (connection) => {
   const { managedProfileId, ...safe } = connection;
   return safe;
 };
-const listBrowserConnections = async (a) => {
+const listBrowserConnections = async (a, query) => {
   await authorizeIn(asPrincipal(a), "connection:read", { orgId: a.tenantId });
-  return (await scanType("BROWSERCONNECTION#", a)).map(publicBrowserConnection);
+  return paginateList(
+    (await scanType("BROWSERCONNECTION#", a)).map(publicBrowserConnection),
+    query,
+  );
 };
 const createBrowserConnection = async (a, body) => {
   await authorizeIn(asPrincipal(a), "connection:manage", { orgId: a.tenantId });
@@ -4982,9 +5033,12 @@ const validateSecretInput = (body) => {
   if (!value) throw { status: 400, message: "A secret value is required" };
   return { name, kind, value };
 };
-const listSecrets = async (a) => {
+const listSecrets = async (a, query) => {
   await authorizeIn(asPrincipal(a), "secret:manage", { orgId: a.tenantId });
-  return (await scanType("SECRET#", a)).map(publicSecret);
+  return paginateList(
+    (await scanType("SECRET#", a)).map(publicSecret),
+    query,
+  );
 };
 const requireSecret = async (a, id) => {
   const secret = await resolveEntity("SECRET#", id, a, "staff resolving a secret by id");
@@ -6088,6 +6142,9 @@ exports.handler = async (e) => {
   requestOrgId = null;
   lastPermissionCheck = null;
   requestTruncated = false;
+  requestReadTruncated = false;
+  responsePagination = null;
+  emitApplicationMetric("CrossOrganizationAccess", 0);
   try {
     if (e.source === "amazflow.sweep") {
       const result = await sweepExpired();
@@ -6409,11 +6466,14 @@ exports.handler = async (e) => {
       const items = await scanType("WORKFLOW#", a);
       return reply(
         200,
-        items
-          .filter((workflow) => workflowMatchesFilters(workflow, filters))
-          .sort((x, y) =>
-            String(y.version).localeCompare(String(x.version)),
-          ),
+        paginateList(
+          items
+            .filter((workflow) => workflowMatchesFilters(workflow, filters))
+            .sort((x, y) =>
+              String(y.version).localeCompare(String(x.version)),
+            ),
+          e.queryStringParameters,
+        ),
       );
     }
     if (route === "POST /workflows") {
@@ -6454,7 +6514,13 @@ exports.handler = async (e) => {
       const workflows = await scanType("WORKFLOW#", a);
       const workflow = workflows.find((w) => w.id === id);
       if (!workflow) return reply(404, { error: "Workflow not found" });
-      return reply(200, await listWorkflowVersions(workflow.tenantId, id));
+      return reply(
+        200,
+        paginateList(
+          await listWorkflowVersions(workflow.tenantId, id),
+          e.queryStringParameters,
+        ),
+      );
     }
 
     /* ------------------------------------------- 14.2 the customer draft write route ---------- */
@@ -6689,8 +6755,11 @@ exports.handler = async (e) => {
       const orgs = await listOrganizations();
       return reply(
         200,
-        orgs.sort((x, y) =>
-          String(x.createdAt).localeCompare(String(y.createdAt)),
+        paginateList(
+          orgs.sort((x, y) =>
+            String(x.createdAt).localeCompare(String(y.createdAt)),
+          ),
+          e.queryStringParameters,
         ),
       );
     }
@@ -6951,8 +7020,11 @@ exports.handler = async (e) => {
       const items = await scanType("LEAD#", a);
       return reply(
         200,
-        items.sort((x, y) =>
-          String(y.createdAt).localeCompare(String(x.createdAt)),
+        paginateList(
+          items.sort((x, y) =>
+            String(y.createdAt).localeCompare(String(x.createdAt)),
+          ),
+          e.queryStringParameters,
         ),
       );
     }
@@ -6962,8 +7034,11 @@ exports.handler = async (e) => {
         items = items.filter((r) => r.createdBy === a.userId);
       return reply(
         200,
-        items.sort((x, y) =>
-          String(y.createdAt).localeCompare(String(x.createdAt)),
+        paginateList(
+          items.sort((x, y) =>
+            String(y.createdAt).localeCompare(String(x.createdAt)),
+          ),
+          e.queryStringParameters,
         ),
       );
     }
@@ -7198,11 +7273,14 @@ exports.handler = async (e) => {
       const items = await scanType("AGENT#", a);
       return reply(
         200,
-        items
-          .sort((x, y) =>
-            String(y.createdAt).localeCompare(String(x.createdAt)),
-          )
-          .map((x) => ({ ...x, ...agentSnapshot(x) })),
+        paginateList(
+          items
+            .sort((x, y) =>
+              String(y.createdAt).localeCompare(String(x.createdAt)),
+            )
+            .map((x) => ({ ...x, ...agentSnapshot(x) })),
+          e.queryStringParameters,
+        ),
       );
     }
     if (route === "POST /agent-authorizations") {
@@ -7264,7 +7342,7 @@ exports.handler = async (e) => {
           eligibilityReason: await taskEligibilityReason(t),
         })),
       );
-      return reply(200, withEligibility);
+      return reply(200, paginateList(withEligibility, e.queryStringParameters));
     }
     if (route === "POST /agent-tasks/{id}/result") {
       {
@@ -7339,7 +7417,7 @@ exports.handler = async (e) => {
         const denied = await guardIn(p, "user:read", { orgId: tenantId });
         if (denied) return denied;
       }
-      return reply(200, await listTenantUsers(tenantId));
+      return reply(200, paginateList(await listTenantUsers(tenantId), e.queryStringParameters));
     }
     if (route === "POST /tenants/{tenantId}/users") {
       const tenantId = e.pathParameters?.tenantId;
@@ -7446,8 +7524,11 @@ exports.handler = async (e) => {
       if (status) items = items.filter((x) => x.status === status);
       return reply(
         200,
-        items.sort((x, y) =>
-          String(y.createdAt).localeCompare(String(x.createdAt)),
+        paginateList(
+          items.sort((x, y) =>
+            String(y.createdAt).localeCompare(String(x.createdAt)),
+          ),
+          e.queryStringParameters,
         ),
       );
     }
@@ -7520,9 +7601,12 @@ exports.handler = async (e) => {
       const action = e.queryStringParameters?.action;
       return reply(
         200,
-        (action ? own.filter((x) => x.action === action) : own)
-          .sort((x, y) => String(y.at).localeCompare(String(x.at)))
-          .slice(0, 300),
+        paginateList(
+          (action ? own.filter((x) => x.action === action) : own).sort((x, y) =>
+            String(y.at).localeCompare(String(x.at)),
+          ),
+          e.queryStringParameters,
+        ),
       );
     }
     if (route === "GET /activity") {
@@ -7537,9 +7621,10 @@ exports.handler = async (e) => {
       if (action) items = items.filter((x) => x.action === action);
       return reply(
         200,
-        items
-          .sort((x, y) => String(y.at).localeCompare(String(x.at)))
-          .slice(0, 300),
+        paginateList(
+          items.sort((x, y) => String(y.at).localeCompare(String(x.at))),
+          e.queryStringParameters,
+        ),
       );
     }
     if (route === "GET /settings") {
@@ -7589,8 +7674,11 @@ exports.handler = async (e) => {
         items = items.filter((t) => t.createdBy === a.userId);
       return reply(
         200,
-        items.sort((x, y) =>
-          String(y.createdAt).localeCompare(String(x.createdAt)),
+        paginateList(
+          items.sort((x, y) =>
+            String(y.createdAt).localeCompare(String(x.createdAt)),
+          ),
+          e.queryStringParameters,
         ),
       );
     }
@@ -7609,7 +7697,7 @@ exports.handler = async (e) => {
     }
     if (route === "GET /connections/browser") {
       try {
-        return reply(200, await listBrowserConnections(a));
+        return reply(200, await listBrowserConnections(a, e.queryStringParameters));
       } catch (err) {
         if (err && err.status) return reply(err.status, { error: err.message });
         throw err;
@@ -7662,7 +7750,7 @@ exports.handler = async (e) => {
     }
     if (route === "GET /secrets") {
       try {
-        return reply(200, await listSecrets(a));
+        return reply(200, await listSecrets(a, e.queryStringParameters));
       } catch (err) {
         if (err && err.status) return reply(err.status, { error: err.message });
         throw err;
@@ -7967,7 +8055,7 @@ exports.handler = async (e) => {
       }
       const username = a.email || a.userId;
       const items = await notificationsFor(p, username);
-      return reply(200, items);
+      return reply(200, paginateList(items, e.queryStringParameters));
     }
     if (route === "POST /notifications/{id}/read") {
       {
