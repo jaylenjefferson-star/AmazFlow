@@ -92,7 +92,7 @@ export function HomeScreen({
             <p className="console-stat-caption">{runsThisMonthCaption}</p>
           </div>
           <div className="console-stat">
-            <p className="console-stat-label">Hours saved</p>
+            <p className="console-stat-label">Estimated time saved</p>
             {stats.hoursSaved === null ? (
               <>
                 <p className="console-stat-value">—</p>

@@ -13,6 +13,7 @@ const workflows = read("app", "ops", "views", "workflows.tsx");
 for (const source of [home, copy, operations]) {
   assert.doesNotMatch(source, /Value saved|Estimated value|dollarEstimate|BLENDED_HOURLY_RATE|\$35\/hr/);
 }
+assert.match(home, /Estimated time saved/);
 assert.doesNotMatch(runDetail, /max \$\{entry\.maxAttempts\} attempts configured/);
 assert.doesNotMatch(workflows, /max \{step\.retry\.maxAttempts\} attempts/);
 assert.match(runDetail, /per-attempt retry counters, browser session recordings/);
