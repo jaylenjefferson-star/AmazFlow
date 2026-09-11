@@ -132,6 +132,17 @@ export const revokeBrowserConnection = (id: string): Endpoint => ({
   path: `/connections/browser/${e(id)}`,
 });
 
+/** Managed secrets (tasks 20.2, 20.3). The value never crosses this boundary a second time. */
+export const createSecret = (): Endpoint => ({ route: "POST /secrets", path: "/secrets" });
+export const rotateSecret = (id: string): Endpoint => ({
+  route: "POST /secrets/{id}/rotate",
+  path: `/secrets/${e(id)}/rotate`,
+});
+export const deleteSecret = (id: string): Endpoint => ({
+  route: "DELETE /secrets/{id}",
+  path: `/secrets/${e(id)}`,
+});
+
 /** Personal settings (task 11.14). The target account always comes from the verified session. */
 export const saveOwnProfile = (): Endpoint => ({ route: "PUT /me/profile", path: "/me/profile" });
 export const saveOwnPreferences = (): Endpoint => ({
@@ -208,6 +219,9 @@ export const ALL_ENDPOINTS: readonly Endpoint[] = [
   startBrowserConnectionLogin("connection_1"),
   completeBrowserConnectionLogin("connection_1"),
   revokeBrowserConnection("connection_1"),
+  createSecret(),
+  rotateSecret("secret_1"),
+  deleteSecret("secret_1"),
   saveOwnProfile(),
   saveOwnPreferences(),
   ownPasswordChanged(),

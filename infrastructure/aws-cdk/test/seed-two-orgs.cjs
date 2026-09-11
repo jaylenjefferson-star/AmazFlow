@@ -296,8 +296,13 @@ function seedOrg({ tenantId, label }) {
     id: `secret_${label}`,
     tenantId,
     name: `${label} api key`,
-    reference: `arn:aws:secretsmanager:us-east-1:000000000000:secret:${label}`,
+    kind: "api_key",
+    ref: { provider: "aws_secretsmanager", arn: `arn:aws:secretsmanager:us-east-1:000000000000:secret:amazflow/customer-secret/${tenantId}/secret_${label}` },
+    hint: "wxyz",
+    createdBy: principals.ORG_ADMIN.userId,
     createdAt: iso(-86400000),
+    rotatedAt: null,
+    lastUsedAt: null,
   };
   putTenant(tenantId, "SECRET", secret);
 

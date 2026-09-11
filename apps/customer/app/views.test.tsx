@@ -69,6 +69,7 @@ const slotsIn = (state: ResourceSlot<unknown>["state"], error: string | null = n
     "users",
     "teams",
     "securityFacts",
+    "secrets",
     "audit",
     "profile",
     "preferences",
@@ -337,14 +338,17 @@ test("planned identity capabilities are explained without fake controls", () => 
     directoryProvisioningAvailable: false,
   });
   slots.agents = slot("ready", []);
-  const html = renderToStaticMarkup(views.SecurityView({
-    principal: principal("ORG_OWNER"),
-    slots,
-    navigate: () => {},
-    client: fakeClient,
-    session: storedSession,
-    refresh: async () => {},
-  }) as never);
+  slots.secrets = slot("ready", []);
+  const html = renderToStaticMarkup(
+    createElement(views.SecurityView, {
+      principal: principal("ORG_OWNER"),
+      slots,
+      navigate: () => {},
+      client: fakeClient,
+      session: storedSession,
+      refresh: async () => {},
+    }),
+  );
   // The real session lifetime, rendered through the shared metric primitive: the value and its unit
   // are separate elements, so this asserts both rather than a string that only held while the panel
   // hand-rolled its own markup.

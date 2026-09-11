@@ -149,6 +149,7 @@ export const customerResourceSpecs = (orgId: string) => [
   { key: "users", route: "GET /tenants/{tenantId}/users", path: `/tenants/${encodeURIComponent(orgId)}/users`, permission: "user:read", empty: [] },
   { key: "teams", route: "GET /teams", path: "/teams", permission: "team:read", empty: null },
   { key: "securityFacts", route: "GET /security/facts", path: "/security/facts", permission: null, empty: null },
+  { key: "secrets", route: "GET /secrets", path: "/secrets", permission: "secret:manage", empty: [] },
   { key: "audit", route: "GET /audit", path: "/audit", permission: "audit:read", empty: [] },
   { key: "profile", route: "GET /me/profile", path: "/me/profile", permission: null, empty: null },
   { key: "preferences", route: "GET /me/preferences", path: "/me/preferences", permission: null, empty: null },

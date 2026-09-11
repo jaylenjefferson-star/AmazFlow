@@ -1256,9 +1256,47 @@ function DisabledCapability({ title, reason }: { title: string; reason: string }
   );
 }
 
-export function SecurityView({ slots }: ViewProps) {
+type SecretRecord = {
+  id: string;
+  name: string;
+  kind: string;
+  hint?: string;
+  createdAt?: string;
+  rotatedAt?: string | null;
+  lastUsedAt?: string | null;
+};
+
+const SECRET_KINDS: { value: string; label: string }[] = [
+  { value: "api_key", label: "API key" },
+  { value: "bearer_token", label: "Bearer token" },
+  { value: "basic_auth", label: "Basic auth" },
+  { value: "oauth_refresh", label: "OAuth refresh token" },
+  { value: "webhook_secret", label: "Webhook secret" },
+];
+const SECRET_KIND_LABEL: Record<string, string> = Object.fromEntries(SECRET_KINDS.map((k) => [k.value, k.label]));
+
+export function SecurityView({ slots, principal, client, refresh }: ViewProps) {
   const facts = one<SecurityFacts | null>(slots, "securityFacts", null);
   const agents = list<{ id: string; name?: string; agentType?: string; connectionStatus?: string; status?: string; createdAt?: string; lastHeartbeatAt?: string }>(slots, "agents");
+  const secrets = list<SecretRecord>(slots, "secrets");
+  const mayManageSecrets = can(principal, "secret:manage", { orgId: principal.orgId }).allow;
+  const action = useAction(refresh);
+  const busy = action.pending !== null;
+  const [secretName, setSecretName] = useState("");
+  const [secretKind, setSecretKind] = useState("api_key");
+  const [secretValue, setSecretValue] = useState("");
+  const [rotateValues, setRotateValues] = useState<Record<string, string>>({});
+
+  const createSecretRecord = (event: FormEvent) => {
+    event.preventDefault();
+    void action.run("secret-create", `Created the secret "${secretName.trim()}".`, async () => {
+      await client.post(endpoints.createSecret().path, { name: secretName.trim(), kind: secretKind, value: secretValue });
+      setSecretName("");
+      setSecretValue("");
+      setSecretKind("api_key");
+    });
+  };
+
   return (
     <Page title="Security" lead="The session, password, and registered agent facts the platform actually enforces.">
       <div className="ops-col ops-gap-md">
@@ -1269,6 +1307,50 @@ export function SecurityView({ slots }: ViewProps) {
           <Resource slot={agents} emptyTitle="No registered agents" emptyBody="No browser extension or desktop agent credential is registered for this organization.">
             {(value) => <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Agent</th><th>Type</th><th>Status</th><th>Registered</th><th>Last heartbeat</th></tr></thead><tbody>{value.map((agent) => <tr key={agent.id}><td>{agent.name ?? agent.id}</td><td>{agent.agentType ?? "Not recorded"}</td><td><Pill tone={agent.connectionStatus === "connected" ? "good" : "muted"}>{agent.connectionStatus ?? agent.status ?? "Not recorded"}</Pill></td><td>{agent.createdAt ? relativeTime(agent.createdAt) : "Not recorded"}</td><td>{agent.lastHeartbeatAt ? relativeTime(agent.lastHeartbeatAt) : "Not recorded"}</td></tr>)}</tbody></table></div>}
           </Resource>
+        </Panel>
+        <Panel title="Managed secrets" sub="A value is accepted once, held only in the external secret store, and never returned or displayed again.">
+          <div className="ops-col ops-gap-sm">
+            {mayManageSecrets && (
+              <form className="ops-col ops-gap-sm" onSubmit={createSecretRecord}>
+                <div className="ops-grid-2">
+                  <Field label="Secret name"><input className="ops-input" value={secretName} onChange={(event) => setSecretName(event.target.value)} disabled={busy} required /></Field>
+                  <Select value={secretKind} onChange={setSecretKind} label="Kind" options={SECRET_KINDS} />
+                </div>
+                <Field label="Value" hint="Stored only in the external secret store; it cannot be viewed again after this."><input className="ops-input" type="password" value={secretValue} onChange={(event) => setSecretValue(event.target.value)} disabled={busy} required autoComplete="off" /></Field>
+                <div><Btn type="submit" variant="primary" disabled={busy || !secretName.trim() || !secretValue.trim()}>{action.pending === "secret-create" ? "Creating…" : "Create secret"}</Btn></div>
+              </form>
+            )}
+            <ActionFeedback value={action.feedback} />
+            <Resource slot={secrets} emptyTitle="No managed secrets" emptyBody="Create a secret to reference from a workflow step without exposing its value.">
+              {(value) => (
+                <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Name</th><th>Kind</th><th>Ends in</th><th>Created</th><th>Last used</th>{mayManageSecrets && <th>Actions</th>}</tr></thead><tbody>
+                  {value.map((secret) => (
+                    <tr key={secret.id}>
+                      <td><strong>{secret.name}</strong></td>
+                      <td>{SECRET_KIND_LABEL[secret.kind] ?? secret.kind}</td>
+                      <td>•••• {secret.hint ?? "----"}</td>
+                      <td>{secret.createdAt ? relativeTime(secret.createdAt) : "Not recorded"}{secret.rotatedAt ? ` · rotated ${relativeTime(secret.rotatedAt)}` : ""}</td>
+                      <td>{secret.lastUsedAt ? relativeTime(secret.lastUsedAt) : "Never used"}</td>
+                      {mayManageSecrets && (
+                        <td>
+                          <span className="ops-col ops-gap-sm">
+                            <span className="ops-row ops-gap-sm">
+                              <input className="ops-input" type="password" autoComplete="off" aria-label={`New value for ${secret.name}`} value={rotateValues[secret.id] ?? ""} onChange={(event) => setRotateValues((current) => ({ ...current, [secret.id]: event.target.value }))} disabled={busy} placeholder="New value" />
+                              <Btn size="sm" disabled={busy || !rotateValues[secret.id]?.trim()} onClick={() => void action.run(`secret-rotate-${secret.id}`, `Rotated the secret "${secret.name}".`, async () => {
+                                await client.post(endpoints.rotateSecret(secret.id).path, { value: rotateValues[secret.id].trim() });
+                                setRotateValues((current) => { const next = { ...current }; delete next[secret.id]; return next; });
+                              })}>{action.pending === `secret-rotate-${secret.id}` ? "Rotating…" : "Rotate"}</Btn>
+                            </span>
+                            <Btn size="sm" variant="danger" disabled={busy} onClick={() => void action.run(`secret-delete-${secret.id}`, `Deleted the secret "${secret.name}".`, () => client.del(endpoints.deleteSecret(secret.id).path))}>Delete</Btn>
+                          </span>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody></table></div>
+              )}
+            </Resource>
+          </div>
         </Panel>
         <DisabledCapability title="Multi-factor authentication" reason="The identity provider already supports software-token authentication, but AmazFlow has not shipped the complete enrolment and recovery flow. No setup control is shown." />
         <DisabledCapability title="Single sign-on" reason="Federated sign-in cannot be enabled safely until first sign-in assigns the organization claim and coarse group. That assignment flow is not available in this release." />

@@ -11,6 +11,15 @@
       "orgScope": "entity-identifier-scoped"
     },
     {
+      "route": "DELETE /secrets/{id}",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
       "route": "DELETE /teams/{id}",
       "copies": [
         "deployed",
@@ -210,6 +219,15 @@
     },
     {
       "route": "GET /runs",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "GET /secrets",
       "copies": [
         "deployed",
         "canonical"
@@ -552,6 +570,24 @@
     },
     {
       "route": "POST /runs/{id}/executor/invoke",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "entity-identifier-scoped"
+    },
+    {
+      "route": "POST /secrets",
+      "copies": [
+        "deployed",
+        "canonical"
+      ],
+      "authMode": "cognito-session",
+      "orgScope": "session-scoped"
+    },
+    {
+      "route": "POST /secrets/{id}/rotate",
       "copies": [
         "deployed",
         "canonical"

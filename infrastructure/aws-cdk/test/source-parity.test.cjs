@@ -132,6 +132,19 @@ const invariants = [
   ["an unconfigured managed browser is reported plainly", /Managed browser is not configured/, /Managed browser is not configured/],
   ["revoking a browser connection is audited", /BROWSER_CONNECTION_REVOKED/, /BROWSER_CONNECTION_REVOKED/],
 
+  // Customer-managed secrets (20.2/20.3).
+  ["the secrets list route is exposed", /GET \/secrets'/, /GET \/secrets"/],
+  ["the secret create route is exposed", /POST \/secrets'/, /POST \/secrets"/],
+  ["the secret rotate route is exposed", /POST \/secrets\/\{id\}\/rotate/, /POST \/secrets\/\{id\}\/rotate/],
+  ["the secret delete route is exposed", /DELETE \/secrets\/\{id\}/, /DELETE \/secrets\/\{id\}/],
+  ["a secret name is required", /A secret name is required/, /A secret name is required/],
+  ["a secret kind must be one of the recognized kinds", /is not a secret kind \(available:/, /is not a secret kind \(available:/],
+  ["the external store pointer never leaves the server", /const \{ref,\.\.\.safe\}=secret/, /const \{ ref, \.\.\.safe \} = secret/],
+  ["managing a secret needs the manage permission", /authorizeIn\(asPrincipal\(a\),'secret:manage'/, /authorizeIn\(asPrincipal\(a\), "secret:manage"/],
+  ["creating a secret is audited", /SECRET_CREATED/, /SECRET_CREATED/],
+  ["rotating a secret is audited", /SECRET_ROTATED/, /SECRET_ROTATED/],
+  ["deleting a secret is audited", /SECRET_DELETED/, /SECRET_DELETED/],
+
   // Phase 1 -- authentication and session lifecycle. Same standing rule as above: each
   // security-relevant behaviour gets an invariant in both copies.
   //

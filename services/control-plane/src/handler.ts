@@ -51,6 +51,9 @@ const { SESv2Client, SendEmailCommand } = require("@aws-sdk/client-sesv2");
 const {
   SecretsManagerClient,
   GetSecretValueCommand,
+  CreateSecretCommand,
+  PutSecretValueCommand,
+  DeleteSecretCommand,
 } = require("@aws-sdk/client-secrets-manager");
 const {
   CognitoIdentityProviderClient,
@@ -175,6 +178,9 @@ const RESPONSE_FIELD_GROUPS = {
   // seen" from. Omitting them turned a working agent list into one that reported "never connected".
   agent: ["id", "tenantId", "organizationId", "name", "status", "connectionStatus", "agentType", "capabilities", "allowedDomains", "platform", "version", "permissions", "lastSeenAt", "lastHeartbeatAt", "createdBy", "createdAt", "updatedAt", "code", "expiresAt", "installationId", "agent", "token", "agentId", "agentName", "userId", "userRole", "ok"],
   connection: ["id", "tenantId", "name", "baseUrl", "allowedOrigins", "preferredMode", "status", "createdBy", "createdAt", "updatedAt", "loginSessionId", "expiresAt", "ready", "message"],
+  // Never `ref` (the Secrets Manager pointer) and never a value -- requirement 20.8. `deleted` is
+  // present only in the delete route's ack, matching the `team` group's convention below.
+  secret: ["id", "tenantId", "name", "kind", "hint", "createdBy", "createdAt", "rotatedAt", "lastUsedAt", "deleted"],
   audit: ["id", "tenantId", "at", "actor", "actorLabel", "action", "summary", "details"],
   ticket: ["id", "tenantId", "subject", "message", "status", "createdBy", "createdAt", "updatedAt", "category", "priority"],
   lead: ["id", "tenantId", "name", "email", "company", "role", "workflow", "volume", "message", "source", "status", "createdAt"],
@@ -212,6 +218,7 @@ allowResponseFields(["GET /agent-tasks", "GET /agent/tasks"], "task");
 allowResponseFields(["POST /agent/tasks/{id}/claim"], "claim");
 allowResponseFields(["GET /agents", "POST /agent-authorizations", "POST /agent-authorizations/{code}/exchange", "POST /agents/{id}/revoke", "POST /agent/heartbeat"], "agent");
 allowResponseFields(["GET /connections/browser", "POST /connections/browser", "POST /connections/browser/{id}/login-session", "POST /connections/browser/{id}/login-session/complete", "DELETE /connections/browser/{id}"], "connection");
+allowResponseFields(["GET /secrets", "POST /secrets", "POST /secrets/{id}/rotate", "DELETE /secrets/{id}"], "secret");
 allowResponseFields(["GET /audit", "GET /activity"], "audit");
 allowResponseFields(["GET /support/tickets", "POST /support/tickets", "POST /support/tickets/{id}/status"], "ticket");
 allowResponseFields(["GET /leads"], "lead");
@@ -4817,6 +4824,125 @@ const revokeBrowserConnection = async (a, id) => {
   return publicBrowserConnection(connection);
 };
 
+// ---------- Managed secrets (task 20.2 / 20.3) ----------
+// Requirement 20.6-20.10: the record carries name, kind, an external store pointer, a recognition
+// hint, and usage timestamps -- never the value. The value is accepted once on write and passed
+// straight to Secrets Manager; it never enters this table, a response, a log line, or an audit
+// event.
+const SECRET_KINDS = ["api_key", "bearer_token", "basic_auth", "oauth_refresh", "webhook_secret"];
+const secretHint = (value) => value.slice(-4);
+const externalSecretName = (tenantId, id) => `amazflow/customer-secret/${tenantId}/${id}`;
+const publicSecret = (secret) => {
+  const { ref, ...safe } = secret;
+  return safe;
+};
+const validateSecretInput = (body) => {
+  const name = String(body?.name ?? "").trim().slice(0, 120);
+  if (!name) throw { status: 400, message: "A secret name is required" };
+  const kind = String(body?.kind ?? "");
+  if (!SECRET_KINDS.includes(kind))
+    throw {
+      status: 400,
+      message: `"${kind}" is not a secret kind (available: ${SECRET_KINDS.join(", ")})`,
+    };
+  const value = String(body?.value ?? "");
+  if (!value) throw { status: 400, message: "A secret value is required" };
+  return { name, kind, value };
+};
+const listSecrets = async (a) => {
+  await authorizeIn(asPrincipal(a), "secret:manage", { orgId: a.tenantId });
+  return (await scanType("SECRET#", a)).map(publicSecret);
+};
+const requireSecret = async (a, id) => {
+  const secret = await resolveEntity("SECRET#", id, a, "staff resolving a secret by id");
+  if (!secret) throw { status: 404, message: "Secret not found" };
+  return secret;
+};
+const createSecret = async (a, body) => {
+  await authorizeIn(asPrincipal(a), "secret:manage", { orgId: a.tenantId });
+  const valid = validateSecretInput(body);
+  const id = `secret_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  let created;
+  try {
+    created = await secrets.send(
+      new CreateSecretCommand({
+        Name: externalSecretName(a.tenantId, id),
+        SecretString: valid.value,
+      }),
+    );
+  } catch {
+    throw { status: 502, message: "The secret store did not accept this secret" };
+  }
+  const record = {
+    id,
+    tenantId: a.tenantId,
+    name: valid.name,
+    kind: valid.kind,
+    ref: { provider: "aws_secretsmanager", arn: created.ARN },
+    hint: secretHint(valid.value),
+    createdBy: a.userId,
+    createdAt: now(),
+    rotatedAt: null,
+    lastUsedAt: null,
+  };
+  await save("SECRET", record);
+  // Requirement 20.12: the identifier and name only -- never the value, never the store pointer.
+  await logActivity(a.tenantId, {
+    actor: a.userId,
+    actorLabel: actorLabelFor(asPrincipal(a)),
+    action: "SECRET_CREATED",
+    summary: `Created secret "${record.name}"`,
+    details: { secretId: record.id, name: record.name },
+  });
+  return publicSecret(record);
+};
+const rotateSecret = async (a, id, body) => {
+  await authorizeIn(asPrincipal(a), "secret:manage", { orgId: a.tenantId });
+  const secret = await requireSecret(a, id);
+  const value = String(body?.value ?? "");
+  if (!value) throw { status: 400, message: "A secret value is required" };
+  try {
+    await secrets.send(new PutSecretValueCommand({ SecretId: secret.ref.arn, SecretString: value }));
+  } catch {
+    throw { status: 502, message: "The secret store did not accept this rotation" };
+  }
+  secret.hint = secretHint(value);
+  secret.rotatedAt = now();
+  await save("SECRET", secret);
+  await logActivity(secret.tenantId, {
+    actor: a.userId,
+    actorLabel: actorLabelFor(asPrincipal(a)),
+    action: "SECRET_ROTATED",
+    summary: `Rotated secret "${secret.name}"`,
+    details: { secretId: secret.id, name: secret.name },
+  });
+  return publicSecret(secret);
+};
+const deleteSecret = async (a, id) => {
+  await authorizeIn(asPrincipal(a), "secret:manage", { orgId: a.tenantId });
+  const secret = await requireSecret(a, id);
+  try {
+    await secrets.send(new DeleteSecretCommand({ SecretId: secret.ref.arn }));
+  } catch (err) {
+    // A store that has already forgotten this secret must not block removing our own pointer to it.
+    if (!(err && err.name === "ResourceNotFoundException"))
+      throw { status: 502, message: "The secret store could not delete this secret" };
+  }
+  await db.send(
+    new DeleteItemCommand({
+      TableName: table,
+      Key: { pk: { S: `TENANT#${secret.tenantId}` }, sk: { S: `SECRET#${secret.id}` } },
+    }),
+  );
+  await logActivity(secret.tenantId, {
+    actor: a.userId,
+    actorLabel: actorLabelFor(asPrincipal(a)),
+    action: "SECRET_DELETED",
+    summary: `Deleted secret "${secret.name}"`,
+    details: { secretId: secret.id, name: secret.name },
+  });
+  return { id: secret.id, deleted: true };
+};
 
 /* ============================ Phase 4: organization, users, teams, invitations, notifications = */
 
@@ -7347,6 +7473,41 @@ exports.handler = async (e) => {
           200,
           await revokeBrowserConnection(a, e.pathParameters?.id),
         );
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+    }
+    if (route === "GET /secrets") {
+      try {
+        return reply(200, await listSecrets(a));
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+    }
+    if (route === "POST /secrets") {
+      try {
+        return reply(201, await createSecret(a, JSON.parse(e.body || "{}")));
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+    }
+    if (route === "POST /secrets/{id}/rotate") {
+      try {
+        return reply(
+          200,
+          await rotateSecret(a, e.pathParameters?.id, JSON.parse(e.body || "{}")),
+        );
+      } catch (err) {
+        if (err && err.status) return reply(err.status, { error: err.message });
+        throw err;
+      }
+    }
+    if (route === "DELETE /secrets/{id}") {
+      try {
+        return reply(200, await deleteSecret(a, e.pathParameters?.id));
       } catch (err) {
         if (err && err.status) return reply(err.status, { error: err.message });
         throw err;

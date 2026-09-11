@@ -176,6 +176,19 @@ const idScoped = () => [
     own: { id: A.connection.id },
     foreign: { id: B.connection.id },
   },
+  // Rotate before delete, for the same reason as the connection probes above: delete is destructive
+  // and would make a later rotate probe fail for a reason unrelated to isolation.
+  {
+    route: "POST /secrets/{id}/rotate",
+    own: { id: A.secret.id },
+    foreign: { id: B.secret.id },
+    body: { value: "isolation-probe-rotated-value" },
+  },
+  {
+    route: "DELETE /secrets/{id}",
+    own: { id: A.secret.id },
+    foreign: { id: B.secret.id },
+  },
 ];
 
 /* ------------------------------------------------------------------------- staff-only routes ---- */

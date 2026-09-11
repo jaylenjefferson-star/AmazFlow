@@ -14,6 +14,9 @@ class QueryCommand extends Cmd {}
 class TransactWriteItemsCommand extends Cmd {}
 class DeleteItemCommand extends Cmd {}
 class GetSecretValueCommand extends Cmd {}
+class CreateSecretCommand extends Cmd {}
+class PutSecretValueCommand extends Cmd {}
+class DeleteSecretCommand extends Cmd {}
 
 class CondFail extends Error { constructor() { super("cond"); this.name = "ConditionalCheckFailedException"; } }
 
@@ -247,8 +250,21 @@ const stubs = {
   "@aws-sdk/client-secrets-manager": {
     // Tests can remove the direct environment value and prove that the deployed handler uses the
     // runtime identifier path without reaching a real account or persisting a secret in a fixture.
-    SecretsManagerClient: class { async send() { return { SecretString: process.env.HARNESS_EXECUTION_GRANT_SECRET || "harness-secret-not-a-real-key" }; } },
+    SecretsManagerClient: class {
+      async send(cmd) {
+        // Customer-secret create/rotate/delete (task 20.2/20.3): a real ARN-shaped response so
+        // `publicSecret`'s `ref` stripping and `rotateSecret`/`deleteSecret`'s `SecretId: secret.ref.arn`
+        // lookups exercise the real code path rather than a shortcut only the harness takes.
+        if (cmd instanceof CreateSecretCommand)
+          return { ARN: `arn:aws:secretsmanager:us-east-1:000000000000:secret:${cmd.input.Name}` };
+        if (cmd instanceof PutSecretValueCommand || cmd instanceof DeleteSecretCommand) return {};
+        return { SecretString: process.env.HARNESS_EXECUTION_GRANT_SECRET || "harness-secret-not-a-real-key" };
+      }
+    },
     GetSecretValueCommand,
+    CreateSecretCommand,
+    PutSecretValueCommand,
+    DeleteSecretCommand,
   },
   "@aws-sdk/client-cognito-identity-provider": {
     // A working in-memory user pool rather than a stub that always answers "no users".

@@ -1173,14 +1173,26 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       that no separate test API exists rather than offering a non-functional test control.
     - _Requirements: 20.1, 20.2, 20.3, 20.4, 20.5, 30.9_
 
-  - [ ] 20.2 Add secret metadata records backed by the external secret store
+  - [x] 20.2 Add secret metadata records backed by the external secret store
     - Name, kind, external store reference, recognition hint, usage timestamps; the value is accepted once on
       write and passed straight to the store; never stored in the database, never returned by any route,
       never written to a log line, run context, audit entry, or evidence record; never-used secrets display
       that last use is not recorded
+    - Implemented as `SECRET#` records in both control-plane copies (`services/control-plane/src/handler.ts`,
+      `infrastructure/aws-cdk/amazflow-dev.yaml`). `GET /secrets` returns metadata plus `hint` (the value's
+      last four characters); `ref` (the Secrets Manager pointer) is stripped from every response the same
+      way `managedProfileId` is for connections. `lastUsedAt` stays `null` until something records use.
     - _Requirements: 20.6, 20.7, 20.8, 20.9, 20.10, 20.11_
 
-  - [ ] 20.3 Add secret create, rotate, and delete routes with identifier-and-name-only audit events
+  - [x] 20.3 Add secret create, rotate, and delete routes with identifier-and-name-only audit events
+    - `POST /secrets`, `POST /secrets/{id}/rotate`, `DELETE /secrets/{id}`, gated on `secret:manage` in both
+      copies. Each writes `SECRET_CREATED`/`_ROTATED`/`_DELETED` with `{ secretId, name }` only. The Lambda
+      role can create/rotate/delete under the `amazflow/customer-secret/*` name prefix but was deliberately
+      never granted `GetSecretValue` there, since no route reads a value back.
+    - Added to the route inventory, both API Gateway route tables (`amazflow-dev.yaml` and `src/app.ts`),
+      `isolation-api.test.cjs`, `source-parity.test.cjs`, `secret-non-leakage.test.cjs`, and a new
+      `test/secrets.test.cjs` behavioural suite. Customer UI: a "Managed secrets" panel on `/admin/security`
+      (create/rotate/delete, gated on `secret:manage`).
     - _Requirements: 20.12_
 
   - [x] 20.4 Move the execution grant signing secret out of the deployment template into the external secret store (security work, H-6)
