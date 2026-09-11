@@ -20,20 +20,19 @@ version: 1
 applications:
   - appRoot: apps/web
     frontend:
+      buildPath: /
       phases:
         preBuild:
           commands:
-            - cd ../..
             - corepack enable
             - corepack prepare pnpm@11.26.0 --activate
             - pnpm install --no-frozen-lockfile
         build:
           commands:
-            - cd apps/web
-            - pnpm run build
-            - test -f out/index.html
+            - pnpm --filter @amazflow/web build
+            - test -f apps/web/out/index.html
       artifacts:
-        baseDirectory: out
+        baseDirectory: apps/web/out
         files:
           - '**/*'
       cache:
@@ -43,20 +42,19 @@ applications:
 
   - appRoot: apps/customer
     frontend:
+      buildPath: /
       phases:
         preBuild:
           commands:
-            - cd ../..
             - corepack enable
             - corepack prepare pnpm@11.26.0 --activate
             - pnpm install --no-frozen-lockfile
         build:
           commands:
-            - cd apps/customer
-            - pnpm run build
-            - test -f out/index.html
+            - pnpm --filter @amazflow/customer build
+            - test -f apps/customer/out/index.html
       artifacts:
-        baseDirectory: out
+        baseDirectory: apps/customer/out
         files:
           - '**/*'
       cache:
@@ -66,20 +64,19 @@ applications:
 
   - appRoot: apps/internal
     frontend:
+      buildPath: /
       phases:
         preBuild:
           commands:
-            - cd ../..
             - corepack enable
             - corepack prepare pnpm@11.26.0 --activate
             - pnpm install --no-frozen-lockfile
         build:
           commands:
-            - cd apps/internal
-            - pnpm run build
-            - test -f out/index.html
+            - pnpm --filter @amazflow/internal build
+            - test -f apps/internal/out/index.html
       artifacts:
-        baseDirectory: out
+        baseDirectory: apps/internal/out
         files:
           - '**/*'
       cache:
