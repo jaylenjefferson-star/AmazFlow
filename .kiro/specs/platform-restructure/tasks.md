@@ -1190,10 +1190,13 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       agents, audit, support, leads, platform settings — all remain functional
     - _Requirements: 23.1_
 
-  - [ ] 21.2 Build the organizations view covering both status fields
+  - [x] 21.2 Build the organizations view covering both status fields
     - List, create, and update organizations including execution status and commercial lifecycle status;
       label the plan field as reporting-only for as long as no runtime behaviour reads it; audit lifecycle
       changes
+    - The staff organizations view now uses the real create and update routes, presents execution and
+      commercial lifecycle controls independently, explains the explicit churn decision, and labels plan
+      as reporting-only. The control plane records lifecycle changes in the organization audit trail.
     - _Requirements: 23.2, 8.13, 8.16, 33.5_
 
   - [ ] 21.3 Build the cross-organization staff views

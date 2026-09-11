@@ -5,11 +5,17 @@
 // tests, and the untested one here would be the access-denied shell — the single most important thing
 // on this surface to get right.
 
+import { useState, type FormEvent } from "react";
+import type { ApiClient } from "@amazflow/api-client";
 import {
   Alert,
+  Btn,
   EmptyState,
+  Field,
   Metrics,
+  Panel,
   Pill,
+  Select,
   SkeletonPanel,
 } from "@amazflow/ui";
 import type { ResourceSlot } from "@amazflow/domain-ui";
@@ -46,9 +52,13 @@ export const SECTION_RESOURCE: Record<string, string> = {
 export function StaffSection({
   routeId,
   slots,
+  client,
+  refresh,
 }: {
   routeId: string;
   slots: Record<string, ResourceSlot<unknown>>;
+  client?: ApiClient;
+  refresh?: () => Promise<void>;
 }) {
   // There is deliberately no feature-flag write or list endpoint. Runtime behaviour currently reads
   // no flags, and presenting a proposal form or a list of decorative switches would claim a control
@@ -91,6 +101,8 @@ export function StaffSection({
     return <RunQueue rows={rows.filter((row) => row.status === "FAILED" || row.status === "TIMED_OUT")} empty="No runs need attention across organizations." />;
   if (routeId === "health" || routeId === "settings")
     return <Facts value={(slot.value ?? {}) as Record<string, unknown>} />;
+  if (routeId === "organizations" && client && refresh)
+    return <OrganizationsManager rows={rows} client={client} refresh={refresh} />;
   return <Table routeId={routeId} rows={rows} />;
 }
 
@@ -118,6 +130,76 @@ function Facts({ value }: { value: Record<string, unknown> }) {
   const entries = Object.entries(value).filter(([, item]) => typeof item !== "object" || item === null);
   if (!entries.length) return <EmptyState title="Nothing recorded" body="The control plane returned no displayable facts for this section." />;
   return <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Setting</th><th>Value</th></tr></thead><tbody>{entries.map(([key, item]) => <tr key={key}><th scope="row">{key}</th><td>{typeof item === "boolean" ? (item ? "Yes" : "No") : label(item)}</td></tr>)}</tbody></table></div>;
+}
+
+type Organization = {
+  id: string;
+  name: string;
+  slug: string;
+  status?: string;
+  lifecycleStatus?: string;
+  plan?: string;
+  activatedAt?: string | null;
+};
+
+function OrganizationsManager({ rows, client, refresh }: { rows: Record<string, unknown>[]; client: ApiClient; refresh: () => Promise<void> }) {
+  const organizations = rows as Organization[];
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [pending, setPending] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ tone: "good" | "bad"; text: string } | null>(null);
+  const busy = pending !== null;
+  const mutate = async (key: string, success: string, operation: () => Promise<unknown>) => {
+    if (busy) return;
+    setPending(key);
+    setMessage(null);
+    try {
+      await operation();
+      await refresh();
+      setMessage({ tone: "good", text: success });
+    } catch (error) {
+      setMessage({ tone: "bad", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
+  };
+  const create = (event: FormEvent) => {
+    event.preventDefault();
+    void mutate("create", `Created ${name.trim()}.`, async () => {
+      await client.post("/organizations", { name: name.trim(), ...(slug.trim() ? { slug: slug.trim() } : {}) });
+      setName("");
+      setSlug("");
+    });
+  };
+  return <div className="ops-col ops-gap-md">
+    <Panel title="Create organization" sub="The tenant slug is permanent once created.">
+      <form className="ops-toolbar" onSubmit={create}>
+        <input className="ops-input" aria-label="Organization name" value={name} onChange={(event) => setName(event.target.value)} disabled={busy} placeholder="Organization name" required />
+        <input className="ops-input" aria-label="Tenant slug" value={slug} onChange={(event) => setSlug(event.target.value)} disabled={busy} placeholder="Optional permanent slug" />
+        <Btn type="submit" variant="primary" disabled={busy || !name.trim()}>{pending === "create" ? "Creating…" : "Create organization"}</Btn>
+      </form>
+    </Panel>
+    {message && <Alert tone={message.tone} title={message.tone === "good" ? "Saved" : "This did not work"}>{message.text}</Alert>}
+    <Alert title="Execution and commercial state are separate">Changing a commercial lifecycle never stops execution. When handling a churned customer, set the execution status explicitly after deciding what should happen to live work.</Alert>
+    {organizations.length === 0 ? <EmptyState title="Nothing here yet" body="Create the first organization when a customer is ready to be configured." /> : <div className="ops-col ops-gap-sm">{organizations.map((organization) => <OrganizationEditor key={organization.id} organization={organization} client={client} busy={busy} pending={pending} save={mutate} />)}</div>}
+  </div>;
+}
+
+function OrganizationEditor({ organization, client, busy, pending, save }: { organization: Organization; client: ApiClient; busy: boolean; pending: string | null; save: (key: string, success: string, operation: () => Promise<unknown>) => Promise<void> }) {
+  const [status, setStatus] = useState(organization.status ?? "active");
+  const [lifecycleStatus, setLifecycleStatus] = useState(organization.lifecycleStatus ?? "active");
+  const [plan, setPlan] = useState(organization.plan ?? "");
+  const key = `organization-${organization.id}`;
+  return <Panel title={organization.name} sub={`Tenant: ${organization.slug}`}>
+    <form className="ops-col ops-gap-sm" onSubmit={(event) => { event.preventDefault(); void save(key, `Updated ${organization.name}.`, () => client.put(`/organizations/${encodeURIComponent(organization.slug)}`, { status, lifecycleStatus, plan })); }}>
+      <div className="ops-grid-2">
+        <Select value={status} onChange={setStatus} label="Execution status" options={[{ value: "active", label: "Active" }, { value: "paused", label: "Paused" }, { value: "suspended", label: "Suspended" }]} />
+        <Select value={lifecycleStatus} onChange={setLifecycleStatus} label="Commercial lifecycle" options={[{ value: "prospect", label: "Prospect" }, { value: "onboarding", label: "Onboarding" }, { value: "trial", label: "Trial" }, { value: "active", label: "Active" }, { value: "suspended", label: "Suspended" }, { value: "canceled", label: "Canceled / churned" }]} />
+      </div>
+      <Field label="Plan" hint="Reporting-only: this field does not enforce runtime limits."><input className="ops-input" value={plan} onChange={(event) => setPlan(event.target.value)} disabled={busy} /></Field>
+      <div><Btn type="submit" variant="primary" disabled={busy}>{pending === key ? "Saving…" : "Save organization"}</Btn></div>
+    </form>
+  </Panel>;
 }
 
 function Table({ routeId, rows }: { routeId: string; rows: Record<string, unknown>[] }) {

@@ -11,6 +11,7 @@ import "./jsx-global";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { ApiClient } from "@amazflow/api-client";
 import { navigation, pathToView, type ResourceSlot } from "@amazflow/domain-ui";
 import { can, type PlatformRole, type Principal } from "@amazflow/permissions";
 import { INTERNAL_ALIASES, INTERNAL_ROUTES, INTERNAL_ROUTE_TABLE } from "./routes";
@@ -95,6 +96,27 @@ test("the staff organization table labels the plan as reporting-only", () => {
     activatedAt: null,
   }]);
   assert.match(html, /pilot \(reporting-only\)/);
+});
+
+test("staff organization management exposes separate execution and commercial state", () => {
+  const client = {
+    post: async () => null,
+    put: async () => null,
+  } as unknown as ApiClient;
+  const html = renderToStaticMarkup(StaffSection({
+    routeId: "organizations",
+    slots: slots("ready", [{
+      id: "org_1", name: "Northwind", slug: "northwind", status: "active",
+      lifecycleStatus: "trial", plan: "pilot",
+    }]),
+    client,
+    refresh: async () => {},
+  }) as never);
+  assert.match(html, /Create organization/);
+  assert.match(html, /Execution status/);
+  assert.match(html, /Commercial lifecycle/);
+  assert.match(html, /Reporting-only/);
+  assert.match(html, /never stops execution/);
 });
 
 test("the access-denied shell contains no organization data from any tenant", () => {

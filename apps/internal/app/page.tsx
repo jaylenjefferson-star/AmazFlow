@@ -163,7 +163,7 @@ function StaffData({
             {route.disabledDetail && <p className="ops-muted">{route.disabledDetail}</p>}
           </>
         ) : (
-          <StaffSection routeId={view.routeId} slots={slots} />
+          <StaffSection routeId={view.routeId} slots={slots} client={client} refresh={resources.refresh} />
         )}
       </section>
     </StaffShell>
