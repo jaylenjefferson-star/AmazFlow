@@ -1206,17 +1206,19 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
     - The control plane's health response and the platform's published operational metrics
     - _Requirements: 23.8_
 
-  - [ ] 21.5 Build the feature flags view limited to flags read by runtime behaviour
+  - [x] 21.5 Build the feature flags view limited to flags read by runtime behaviour
     - A proposed flag that no runtime behaviour reads is not presented
+    - The staff console states that no runtime-backed feature flags exist in this release and offers no
+      decorative toggle or write control.
     - _Requirements: 23.9, 23.10, 30.4, 30.5_
 
-  - [ ] 21.6 Ship the impersonation view as intentionally disabled with its stated reason
+  - [x] 21.6 Ship the impersonation view as intentionally disabled with its stated reason
     - Applies Q-6's conservative assumption: not shipped, because safe impersonation requires scoped
       attribution not built in this release; the principal type already reserves the impersonating-user field
       added in task 7.2
     - _Requirements: 23.14, 23.16, 30.3, 30.4, 30.9_
 
-  - [ ] 21.7 Ship the internal billing view as intentionally disabled with its stated reason
+  - [x] 21.7 Ship the internal billing view as intentionally disabled with its stated reason
     - _Requirements: 23.15, 30.3, 30.9_
 
   - [ ] 21.8 Confine vendor, model, trace, harness, and token detail to opened technical disclosures

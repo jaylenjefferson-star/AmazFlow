@@ -50,6 +50,11 @@ export function StaffSection({
   routeId: string;
   slots: Record<string, ResourceSlot<unknown>>;
 }) {
+  // There is deliberately no feature-flag write or list endpoint. Runtime behaviour currently reads
+  // no flags, and presenting a proposal form or a list of decorative switches would claim a control
+  // plane behaviour that does not exist.
+  if (routeId === "flags")
+    return <EmptyState title="No runtime feature flags" body="This release has no feature flags read by runtime behaviour, so there are no switches to configure." />;
   const key = SECTION_RESOURCE[routeId];
   if (!key)
     return (

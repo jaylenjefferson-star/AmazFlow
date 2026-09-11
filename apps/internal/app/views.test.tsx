@@ -73,10 +73,16 @@ test("every staff section renders the failure rather than an empty list", () => 
   }
 });
 
-test("a section with no read yet says so instead of rendering an empty list", () => {
-  // `flags` has no backing read. An empty list here would claim AmazFlow looked and found no feature
-  // flags, which is a different statement from "this section has not moved here yet".
-  assert.match(renderSection("flags", "ready", []), /moves here in a later phase/);
+test("a section with no backing read says why it has no controls", () => {
+  // `flags` has no backing read because no runtime behaviour consumes a flag. An empty list here
+  // would claim AmazFlow looked and found no flags, which is a different statement.
+  assert.match(renderSection("flags", "ready", []), /No runtime feature flags/);
+});
+
+test("feature flags do not invent switches when no runtime behaviour reads one", () => {
+  const html = renderSection("flags", "ready", []);
+  assert.match(html, /No runtime feature flags/);
+  assert.doesNotMatch(html, /<(input|select|textarea)/);
 });
 
 test("the staff organization table labels the plan as reporting-only", () => {
