@@ -23,13 +23,13 @@ applications:
       phases:
         preBuild:
           commands:
-            - cd "$CODEBUILD_SRC_DIR"
+            - cd ../..
             - corepack enable
             - corepack prepare pnpm@11.26.0 --activate
             - pnpm install --no-frozen-lockfile
         build:
           commands:
-            - cd "$CODEBUILD_SRC_DIR/apps/web"
+            - cd apps/web
             - pnpm run build
             - test -f out/index.html
       artifacts:
@@ -46,13 +46,13 @@ applications:
       phases:
         preBuild:
           commands:
-            - cd "$CODEBUILD_SRC_DIR"
+            - cd ../..
             - corepack enable
             - corepack prepare pnpm@11.26.0 --activate
             - pnpm install --no-frozen-lockfile
         build:
           commands:
-            - cd "$CODEBUILD_SRC_DIR/apps/customer"
+            - cd apps/customer
             - pnpm run build
             - test -f out/index.html
       artifacts:
@@ -69,13 +69,13 @@ applications:
       phases:
         preBuild:
           commands:
-            - cd "$CODEBUILD_SRC_DIR"
+            - cd ../..
             - corepack enable
             - corepack prepare pnpm@11.26.0 --activate
             - pnpm install --no-frozen-lockfile
         build:
           commands:
-            - cd "$CODEBUILD_SRC_DIR/apps/internal"
+            - cd apps/internal
             - pnpm run build
             - test -f out/index.html
       artifacts:
