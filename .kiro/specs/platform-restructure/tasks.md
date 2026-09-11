@@ -1278,9 +1278,12 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
   - [ ] 22.6 Render the same onboarding record at staff depth with notes and internal owner
     - _Requirements: 24.21, 23.11_
 
-  - [ ] 22.7 Keep commercial onboarding states decoupled from execution
+  - [x] 22.7 Keep commercial onboarding states decoupled from execution
     - Paused and churned do not by themselves change execution status; setting churned prompts staff to set
       the execution status explicitly rather than changing it implicitly
+    - The staff organization editor presents commercial lifecycle and execution status as independent
+      fields, labels canceled as churned, and states that staff must choose the execution state explicitly.
+      The existing server-side lifecycle write records commercial changes without modifying execution.
     - _Requirements: 24.22, 24.23, 8.4_
 
   - [ ] 22.8* Onboarding milestone and checklist tests
