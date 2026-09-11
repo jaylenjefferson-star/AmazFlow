@@ -370,14 +370,17 @@ export function TasksView({ slots }: ViewProps) {
   );
 }
 
-export function ApprovalsView({ slots, navigate }: ViewProps) {
-  const runs = list<{ id: string; status: string }>(slots, "runs");
+export function ApprovalsView({ slots, navigate, client, principal, refresh }: ViewProps) {
+  const runs = list<{ id: string; status: string; currentStepId?: string }>(slots, "runs");
   const waiting = {
     ...runs,
     value: runs.value.filter((run) => run.status === "WAITING_APPROVAL"),
   };
+  const mayDecide = can(principal, "approval:decide", { orgId: principal.orgId }).allow;
+  const { pending, feedback, run: act } = useAction(refresh);
   return (
     <Page title="Approvals" lead="Runs paused until somebody decides.">
+      <ActionFeedback value={feedback} />
       <Resource
         slot={waiting}
         emptyTitle="No approvals waiting"
@@ -390,6 +393,7 @@ export function ApprovalsView({ slots, navigate }: ViewProps) {
                 <button type="button" onClick={() => navigate({ routeId: "runs", entityId: run.id })}>
                   {run.id}
                 </button>
+                {mayDecide && run.currentStepId && <span className="ops-row ops-gap-sm"><Btn variant="primary" size="sm" disabled={pending !== null} onClick={() => void act(`approve-${run.id}`, "Approved and continued.", () => client.post(endpoints.decideRunApproval(run.id, run.currentStepId!).path, { approved: true }))}>Approve</Btn><Btn variant="danger" size="sm" disabled={pending !== null} onClick={() => void act(`reject-${run.id}`, "Rejected and recorded.", () => client.post(endpoints.decideRunApproval(run.id, run.currentStepId!).path, { approved: false }))}>Reject</Btn></span>}
               </li>
             ))}
           </ul>

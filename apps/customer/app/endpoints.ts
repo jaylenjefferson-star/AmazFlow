@@ -105,6 +105,10 @@ export const confirmRunAction = (id: string, stepId: string): Endpoint => ({
   route: "POST /runs/{id}/confirmations/{stepId}/confirm",
   path: `/runs/${e(id)}/confirmations/${e(stepId)}/confirm`,
 });
+export const decideRunApproval = (id: string, stepId: string): Endpoint => ({
+  route: "POST /runs/{id}/approvals/{stepId}",
+  path: `/runs/${e(id)}/approvals/${e(stepId)}`,
+});
 
 /** Personal settings (task 11.14). The target account always comes from the verified session. */
 export const saveOwnProfile = (): Endpoint => ({ route: "PUT /me/profile", path: "/me/profile" });
@@ -176,6 +180,7 @@ export const ALL_ENDPOINTS: readonly Endpoint[] = [
   generateWorkflow(),
   cancelRun("run_1"),
   confirmRunAction("run_1", "step_1"),
+  decideRunApproval("run_1", "step_1"),
   saveOwnProfile(),
   saveOwnPreferences(),
   ownPasswordChanged(),

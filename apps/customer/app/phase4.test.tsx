@@ -584,6 +584,16 @@ test("agents show derived connectivity and the two execution surfaces without in
   assert.match(html, /Not recorded/, "a missing heartbeat or capability must not become a fake value");
 });
 
+test("only an approver is offered the server-verified approval controls", () => {
+  const runs = slot([{ id: "run_waiting", status: "WAITING_APPROVAL", currentStepId: "approval_step" }]);
+  const approver = render(views.ApprovalsView, props({ runs }, "APPROVER"));
+  assert.match(approver, />Approve</);
+  assert.match(approver, />Reject</);
+  const operator = render(views.ApprovalsView, props({ runs }, "OPERATOR"));
+  assert.doesNotMatch(operator, />Approve</);
+  assert.doesNotMatch(operator, />Reject</);
+});
+
 /* ======================================================= 4. the markup is styled, not invented = */
 
 test("every class name the customer surface renders has a rule in the shared stylesheet", () => {

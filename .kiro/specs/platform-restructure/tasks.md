@@ -1113,12 +1113,15 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
       audit entry
     - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.6_
 
-  - [ ] 18.2 Build the approvals view and the server-verified decision path
+  - [x] 18.2 Build the approvals view and the server-verified decision path
     - List runs awaiting approval the principal may read; approve and reject advance the correct branch;
       verify authority server-side on every request; 403 without the decision permission, 404 from another
       organization, refusal when the role is absent from the step's permitted roles, state conflict when the
       run is not awaiting approval or the step is already decided; record the deciding user and role in both
       audit records
+    - The customer queue now offers approve/reject only to a principal granted approval:decide and sends
+      the current recorded step to the existing server-verified route. A rendering test asserts that an
+      operator is shown the queue but never controls the API would refuse.
     - _Requirements: 18.1, 18.2, 18.3, 18.4, 18.5, 18.6, 18.7, 18.8, 18.9, 18.10_
 
   - [ ] 18.3 Derive the exception cause classification from recorded data
