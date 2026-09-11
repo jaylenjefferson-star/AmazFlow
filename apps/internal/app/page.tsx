@@ -31,7 +31,7 @@ import {
   type ResourceSpec,
 } from "@amazflow/domain-ui";
 import { PrincipalError, type Principal } from "@amazflow/permissions";
-import { Pill, ToastProvider } from "@amazflow/ui";
+import { PageHead, Pill, ToastProvider } from "@amazflow/ui";
 import { INTERNAL_ROUTE_TABLE, internalRoute } from "./routes";
 import { StaffShell } from "./shell";
 import { clientFor, principalOf, readStoredSession, toLogin, type StoredSession } from "./session";
@@ -48,10 +48,12 @@ const RESOURCES = [
   { key: "runs", path: "/runs", permission: "run:read", live: true, empty: [] },
   { key: "workflows", path: "/workflows", permission: "workflow:read", empty: [] },
   { key: "agents", path: "/agents", permission: "agent:read", empty: [] },
+  { key: "connections", path: "/connections/browser", permission: "connection:read", empty: [] },
   { key: "activity", path: "/activity", permission: "internal:audit_read_all", empty: [] },
   { key: "leads", path: "/leads", permission: "internal:lead_read", empty: [] },
   { key: "tickets", path: "/support/tickets", permission: "internal:support_manage", empty: [] },
   { key: "health", path: "/health", permission: null, empty: null },
+  { key: "settings", path: "/settings", permission: "internal:platform_settings", empty: null },
 ] as const satisfies readonly ResourceSpec<unknown>[];
 
 type Gate =
@@ -152,8 +154,8 @@ function StaffData({
       navigate={navigate}
       lastLoadedAt={resources.lastLoadedAt}
     >
-      <section className="ops-panel">
-        <h1 className="ops-panel-title">{route?.label ?? "Overview"}</h1>
+      <section className="ops-col ops-gap-md">
+        <PageHead title={route?.label ?? "Overview"} />
         {route?.disabledReason ? (
           <>
             <Pill tone="muted">Not available in this release</Pill>

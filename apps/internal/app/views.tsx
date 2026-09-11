@@ -8,6 +8,7 @@
 import {
   Alert,
   EmptyState,
+  Metrics,
   Pill,
   SkeletonPanel,
 } from "@amazflow/ui";
@@ -19,22 +20,28 @@ import type { Principal } from "@amazflow/permissions";
  * than rendering an empty list that implies AmazFlow looked and found nothing.
  */
 export const SECTION_RESOURCE: Record<string, string> = {
+  overview: "organizations",
+  approvals: "runs",
+  exceptions: "runs",
   organizations: "organizations",
   runs: "runs",
   workflows: "workflows",
+  studio: "workflows",
   agents: "agents",
+  connections: "connections",
   activity: "activity",
   leads: "leads",
   support: "tickets",
   health: "health",
+  settings: "settings",
 };
 
 /**
- * The Phase 3 body of each staff section: the real read, with all three states.
+ * The staff sections backed by the control-plane reads already available to this origin.
  *
- * Task 21.1 ports the fourteen existing `/app` sections here in full. Until it does, `/app` remains
- * the live staff console (Risk R-12), and this surface shows the same data through the shared provider
- * so that the origin, the gate, and the shell are proven before the views move.
+ * The legacy console showed these lists from a browser-local store. These tables use the staff APIs
+ * instead: a list is only a staff list if its records came from the cross-organization route the
+ * staff permission protects.
  */
 export function StaffSection({
   routeId,
@@ -69,19 +76,65 @@ export function StaffSection({
     );
 
   const rows = Array.isArray(slot.value) ? (slot.value as Record<string, unknown>[]) : [];
-  if (rows.length === 0)
+  if (Array.isArray(slot.value) && rows.length === 0)
     return <EmptyState title="Nothing here yet" body="This section is empty, not broken." />;
+  if (routeId === "overview")
+    return <Overview organizations={rows} runs={slots.runs?.value as Record<string, unknown>[] | undefined} agents={slots.agents?.value as Record<string, unknown>[] | undefined} />;
+  if (routeId === "approvals")
+    return <RunQueue rows={rows.filter((row) => row.status === "WAITING_APPROVAL")} empty="No approvals are waiting across organizations." />;
+  if (routeId === "exceptions")
+    return <RunQueue rows={rows.filter((row) => row.status === "FAILED" || row.status === "TIMED_OUT")} empty="No runs need attention across organizations." />;
+  if (routeId === "health" || routeId === "settings")
+    return <Facts value={(slot.value ?? {}) as Record<string, unknown>} />;
+  return <Table routeId={routeId} rows={rows} />;
+}
 
-  return (
-    <ul className="ops-list">
-      {rows.slice(0, 50).map((row, index) => (
-        <li key={String(row.id ?? row.slug ?? index)}>
-          <span>{String(row.name ?? row.slug ?? row.id ?? "—")}</span>
-          {row.status ? <Pill tone="neutral">{String(row.status)}</Pill> : null}
-        </li>
-      ))}
-    </ul>
-  );
+const label = (value: unknown, fallback = "Not recorded") =>
+  value === null || value === undefined || value === "" ? fallback : String(value);
+
+function Overview({ organizations, runs = [], agents = [] }: { organizations: Record<string, unknown>[]; runs?: Record<string, unknown>[]; agents?: Record<string, unknown>[] }) {
+  const live = runs.filter((run) => ["RUNNING", "WAITING_AGENT", "WAITING_APPROVAL", "WAITING_CONFIRMATION"].includes(String(run.status))).length;
+  const attention = runs.filter((run) => ["FAILED", "TIMED_OUT"].includes(String(run.status))).length;
+  const connected = agents.filter((agent) => agent.connectionStatus === "connected").length;
+  return <Metrics items={[
+    { label: "Organizations", value: organizations.length },
+    { label: "Live runs", value: live, tone: live ? "waiting" : undefined },
+    { label: "Needs attention", value: attention, tone: attention ? "bad" : "good" },
+    { label: "Connected agents", value: connected, tone: connected ? "good" : undefined },
+  ]} />;
+}
+
+function RunQueue({ rows, empty }: { rows: Record<string, unknown>[]; empty: string }) {
+  if (!rows.length) return <EmptyState title="Nothing here yet" body={empty} />;
+  return <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Run</th><th>Organization</th><th>Workflow</th><th>Status</th><th>Started</th></tr></thead><tbody>{rows.slice(0, 100).map((run, index) => <tr key={label(run.id, String(index))}><td>{label(run.id)}</td><td>{label(run.tenantId)}</td><td>{label(run.workflowName ?? run.workflowId)}</td><td><Pill tone={run.status === "FAILED" || run.status === "TIMED_OUT" ? "bad" : "waiting"}>{label(run.status)}</Pill></td><td>{label(run.startedAt ?? run.createdAt)}</td></tr>)}</tbody></table></div>;
+}
+
+function Facts({ value }: { value: Record<string, unknown> }) {
+  const entries = Object.entries(value).filter(([, item]) => typeof item !== "object" || item === null);
+  if (!entries.length) return <EmptyState title="Nothing recorded" body="The control plane returned no displayable facts for this section." />;
+  return <div className="ops-tablewrap"><table className="ops-table"><thead><tr><th>Setting</th><th>Value</th></tr></thead><tbody>{entries.map(([key, item]) => <tr key={key}><th scope="row">{key}</th><td>{typeof item === "boolean" ? (item ? "Yes" : "No") : label(item)}</td></tr>)}</tbody></table></div>;
+}
+
+function Table({ routeId, rows }: { routeId: string; rows: Record<string, unknown>[] }) {
+  const headings = routeId === "organizations" ? ["Organization", "Execution", "Commercial", "Plan", "Activated"] :
+    routeId === "runs" ? ["Run", "Organization", "Workflow", "Status", "Started"] :
+    routeId === "workflows" || routeId === "studio" ? ["Workflow", "Organization", "Status", "Version", "Updated"] :
+    routeId === "connections" ? ["Connection", "Organization", "Location", "Status", "Mode"] :
+    routeId === "agents" ? ["Agent", "Organization", "Surface", "Connectivity", "Last seen"] :
+    routeId === "activity" ? ["When", "Organization", "Action", "Summary", "Actor"] :
+    routeId === "leads" ? ["Lead", "Company", "Status", "Submitted"] :
+    ["Ticket", "Organization", "Status", "Subject", "Updated"];
+  const cells = (row: Record<string, unknown>) => {
+    if (routeId === "organizations") return [label(row.name ?? row.slug), label(row.status), label(row.lifecycleStatus), `${label(row.plan)} (reporting-only)`, label(row.activatedAt)];
+    if (routeId === "runs") return [label(row.id), label(row.tenantId), label(row.workflowName ?? row.workflowId), label(row.status), label(row.startedAt ?? row.createdAt)];
+    if (routeId === "workflows" || routeId === "studio") return [label(row.name ?? row.id), label(row.tenantId), label(row.status), label(row.version), label(row.updatedAt)];
+    if (routeId === "connections") return [label(row.name ?? row.id), label(row.tenantId), label(row.baseUrl), label(row.status), label(row.preferredMode)];
+    if (routeId === "agents") return [label(row.name ?? row.id), label(row.organizationId ?? row.tenantId), label(row.agentType), label(row.connectionStatus), label(row.lastSeenAt)];
+    if (routeId === "activity") return [label(row.at), label(row.tenantId), label(row.action), label(row.summary), label(row.actorLabel ?? row.actor)];
+    if (routeId === "leads") return [label(row.name ?? row.email ?? row.id), label(row.company), label(row.status), label(row.createdAt)];
+    return [label(row.id), label(row.tenantId), label(row.status), label(row.subject), label(row.updatedAt ?? row.createdAt)];
+  };
+  return <div className="ops-tablewrap"><table className="ops-table"><thead><tr>{headings.map((heading) => <th key={heading}>{heading}</th>)}</tr></thead><tbody>{rows.slice(0, 100).map((row, index) => <tr key={label(row.id ?? row.slug, String(index))}>{cells(row).map((cell, cellIndex) => <td key={`${cellIndex}-${cell}`}>{cell}</td>)}</tr>)}</tbody></table></div>;
 }
 
 /**

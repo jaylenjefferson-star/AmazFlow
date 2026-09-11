@@ -79,6 +79,18 @@ test("a section with no read yet says so instead of rendering an empty list", ()
   assert.match(renderSection("flags", "ready", []), /moves here in a later phase/);
 });
 
+test("the staff organization table labels the plan as reporting-only", () => {
+  const html = renderSection("organizations", "ready", [{
+    id: "org_1",
+    name: "Northwind",
+    status: "active",
+    lifecycleStatus: "trial",
+    plan: "pilot",
+    activatedAt: null,
+  }]);
+  assert.match(html, /pilot \(reporting-only\)/);
+});
+
 test("the access-denied shell contains no organization data from any tenant", () => {
   const html = renderToStaticMarkup(AccessDenied({ principal: customer }) as never);
 
