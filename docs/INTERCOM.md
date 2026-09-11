@@ -29,15 +29,16 @@ Identified boots send `user_id` (the Cognito `sub`), `email`, and:
 - `amazflow_role`, `amazflow_tenant`, `amazflow_surface` as custom attributes, so whoever picks
   up a conversation already knows who they are talking to and what they can do.
 
-## Identity verification is NOT enabled yet
+## Identity verification fails closed until the endpoint is enabled
 
 Intercom cannot distinguish a real `user_id` from a forged one. Without a server-signed
 `user_hash`, someone could open the console, set another customer's id, and impersonate them.
 
-The client is already wired for it: it calls `GET /support/intercom-identity` and passes any
-`userHash` it gets back at boot time, capped at 2 seconds so an unreachable control plane cannot
-stop the messenger from loading. That endpoint **does not exist yet**, so the fetch 404s and the
-messenger boots unverified.
+The client calls `GET /support/intercom-identity` and passes `userHash` at boot time, capped at
+2 seconds so an unreachable control plane cannot stop support from loading. That endpoint **does
+not exist yet**, so the messenger intentionally clears any prior identified session and boots
+anonymous. It never sends a signed-in user's `user_id`, email, organization, role, or custom
+attributes until the hash is available.
 
 To enable it:
 
@@ -49,8 +50,8 @@ To enable it:
 4. Deploy the control plane (`docs/DEPLOYING.md`), then confirm `whoami()` in Intercom reports the
    user as verified.
 
-Until then, treat the messenger as unauthenticated: do not use it to disclose anything a customer
-could not already see, and consider restricting the workspace to verified-only once step 4 lands.
+Until then, support sees an anonymous conversation only. Do not use it to disclose anything that
+requires the customer's account context.
 
 ## Sessions
 

@@ -1398,10 +1398,12 @@ attribute, a stated-reason label) so the decision later changes a value, not a c
 
 - [ ] 26. Phase 13 — Honesty remediation, error handling, and observability hardening
 
-  - [ ] 26.1 Resolve the unverified support messenger (security work, H-1)
+  - [x] 26.1 Resolve the unverified support messenger (security work, H-1)
     - Implement the messenger identity endpoint so the messenger boots with a server-signed user verification
       value; while that endpoint is absent, do not boot the messenger with an unverified user identifier on
       authenticated surfaces
+    - The identity endpoint remains intentionally unshipped; client-side support now fails closed by
+      clearing any prior identified messenger and booting anonymous whenever no server hash is available.
     - _Requirements: 33.1, 33.2_
 
   - [ ] 26.2 Remove the fabricated monetary savings figure (H-2)

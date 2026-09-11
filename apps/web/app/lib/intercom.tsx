@@ -17,8 +17,9 @@
  *
  * Identity verification: Intercom cannot tell a real user_id from a forged one on its own, so
  * without a server-signed user_hash anyone could open the console and claim to be another
- * customer. The hash is fetched from the control plane when that endpoint exists and passed at
- * boot; until then the messenger still works, unverified. See docs/INTERCOM.md.
+ * customer. The hash is fetched from the control plane and passed at boot. If it is absent, the
+ * messenger deliberately falls back to anonymous mode rather than sending an unverified identity.
+ * See docs/INTERCOM.md.
  */
 
 import { useEffect } from "react";
@@ -106,9 +107,8 @@ async function organizationName(tenantId: string): Promise<string | undefined> {
 
 /**
  * The server-signed proof that this user_id really is this user. Absent until the control plane
- * ships the endpoint and INTERCOM_IDENTITY_SECRET is set, so a miss is expected rather than an
- * error -- but it is capped, because an unreachable control plane must not stop the messenger
- * from loading.
+ * ships the endpoint and INTERCOM_IDENTITY_SECRET is set. A miss is expected during the rollout;
+ * it is capped, because an unreachable control plane must not stop anonymous support from loading.
  */
 async function identityHash(session: Session): Promise<string | undefined> {
   const abort = new AbortController();
@@ -169,12 +169,25 @@ export function IntercomMessenger() {
       ]);
       if (cancelled) return;
 
+      // Never identify a customer session without Intercom's server-signed proof. Calling
+      // shutdown first clears a prior identified boot in a shared browser before starting the
+      // anonymous messenger, so a failed proof cannot inherit another person's conversation.
+      if (!user_hash) {
+        try {
+          if (typeof window.Intercom === "function") shutdown();
+        } catch {
+          // No existing messenger is the normal first-visit case.
+        }
+        Intercom({ app_id: INTERCOM_APP_ID });
+        return;
+      }
+
       Intercom({
         app_id: INTERCOM_APP_ID,
         user_id: session.sub,
         email: session.email,
         ...optionalProfile(session.idToken),
-        ...(user_hash ? { user_hash } : {}),
+        user_hash,
         company: {
           company_id: session.tenantId,
           ...(companyName ? { name: companyName } : {}),
