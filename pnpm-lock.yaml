@@ -44,6 +44,9 @@ importers:
       '@amazflow/workflow-schema':
         specifier: workspace:*
         version: link:../../packages/workflow-schema
+      '@amazflow/workiq':
+        specifier: workspace:*
+        version: link:../../services/workiq
       next:
         specifier: ^15.2.0
         version: 15.5.25(@types/node@22.20.1)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -375,6 +378,31 @@ importers:
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
+      tsx:
+        specifier: ^4.19.3
+        version: 4.23.13
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  services/workiq:
+    dependencies:
+      '@amazflow/permissions':
+        specifier: workspace:*
+        version: link:../../packages/permissions
+      '@amazflow/workflow-schema':
+        specifier: workspace:*
+        version: link:../../packages/workflow-schema
+      '@hono/node-server':
+        specifier: ^1.13.8
+        version: 1.19.17(hono@4.13.7)
+      hono:
+        specifier: ^4.7.2
+        version: 4.13.7
+      zod:
+        specifier: ^3.24.2
+        version: 3.25.76
+    devDependencies:
       tsx:
         specifier: ^4.19.3
         version: 4.23.13

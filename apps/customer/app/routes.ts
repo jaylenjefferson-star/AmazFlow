@@ -40,6 +40,14 @@ export const CUSTOMER_ROUTES: readonly CustomerRoute[] = [
   { id: "agents", path: "/agents/", label: "Agents", permission: "agent:read", group: "Connect", glyph: "agents", key: "b" },
   { id: "connections", path: "/connections/", label: "Connections", permission: "connection:read", entity: "connection", group: "Connect", glyph: "connections", key: "n" },
   { id: "analytics", path: "/analytics/", label: "Analytics", permission: "analytics:read", group: "Connect", glyph: "overview" },
+  {
+    id: "workiq",
+    path: "/workiq/",
+    label: "WorkIQ",
+    permission: "analytics:read",
+    group: "Work",
+    glyph: "overview",
+  },
 
   { id: "admin-organization", path: "/admin/organization/", label: "Organization", permission: "org:settings", group: "Administration", glyph: "organizations" },
   { id: "admin-users", path: "/admin/users/", label: "People", permission: "user:read", group: "Administration", glyph: "users", key: "u" },

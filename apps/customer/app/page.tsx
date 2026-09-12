@@ -55,6 +55,7 @@ import {
   TeamsView,
   UsersView,
   WorkflowsView,
+  WorkIQView,
   type ViewProps,
 } from "./views";
 import { WorkflowWorkspace } from "./workflow-workspace";
@@ -275,6 +276,8 @@ function renderRoute(view: ResolvedView, props: ViewProps) {
       return <ConnectionsView {...props} />;
     case "analytics":
       return <AnalyticsView {...props} />;
+    case "workiq":
+      return <WorkIQView {...props} />;
     case "admin-organization":
       return <OrganizationView {...props} />;
     case "admin-users":

@@ -31,6 +31,7 @@ export function SkipLink() {
 
 const NAV_LINKS = [
   { href: "/product", label: "Product" },
+  { href: "/workiq", label: "WorkIQ" },
   { href: "/solutions", label: "Solutions" },
   { href: "/security", label: "Security" },
   { href: "/pricing", label: "Pricing" },
@@ -109,6 +110,7 @@ export function MarketingFooter() {
         <div>
           <b>Platform</b>
           <Link href="/product">Product</Link>
+          <Link href="/workiq">WorkIQ</Link>
           <Link href="/solutions">Solutions</Link>
           <Link href="/pricing">Pricing</Link>
           <Link href="/demo">Try the interactive demo</Link>
