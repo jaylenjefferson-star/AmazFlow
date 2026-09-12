@@ -3,12 +3,12 @@
 // posture this package enforces (metadata-only telemetry, human-confirmed opportunities, and a
 // narrow handoff contract into AmazFlow).
 
-export * from "./departments.js";
-export * from "./relationships.js";
-export * from "./sessions.js";
-export * from "./classifications.js";
-export * from "./disputes.js";
-export * from "./opportunities.js";
-export * from "./handoff.js";
-export * from "./tenant.js";
-export * from "./principal-bridge.js";
+export * from "./departments";
+export * from "./relationships";
+export * from "./sessions";
+export * from "./classifications";
+export * from "./disputes";
+export * from "./opportunities";
+export * from "./handoff";
+export * from "./tenant";
+export * from "./principal-bridge";

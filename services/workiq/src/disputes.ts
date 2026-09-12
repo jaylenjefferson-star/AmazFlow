@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { classificationStatusSchema } from "./classifications.js";
+import { classificationStatusSchema } from "./classifications";
 
 // Disputes are persisted as classification changes rather than mutating the original record in
 // place, so a challenged classification retains its full audit trail (see WorkIQ compliance doc:

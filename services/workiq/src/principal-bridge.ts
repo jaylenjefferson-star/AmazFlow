@@ -1,5 +1,5 @@
 import type { Principal } from "@amazflow/permissions";
-import type { WorkIQIdentity } from "./tenant.js";
+import type { WorkIQIdentity } from "./tenant";
 
 // The one conversion point between the control plane's authenticated `Principal` and the
 // identity shape WorkIQ's tenant-resolution helpers require. Keeping this in one named function
