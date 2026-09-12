@@ -21,7 +21,7 @@ Those are the target architecture and are not built or deployed anywhere — see
 
 ```bash
 pnpm install
-pnpm -r test        # 108 checks, no AWS credentials needed
+pnpm -r test        # ~1,000 checks, no AWS credentials needed
 ```
 
 `pnpm --filter @amazflow/aws-cdk test` is the one that matters most before touching the control
@@ -39,9 +39,29 @@ branch. Merging is the deploy. There is nothing to run. The build commands invok
 package script rather than calling Next directly, so app-specific checks (including the customer
 bundle leak check) cannot be skipped by hosting.
 
+Three Amplify applications serve the three surfaces, all tracking `main`:
+
+| App | App ID | Root | Domain |
+|---|---|---|---|
+| `AmazFlow` | -- | `apps/web` | amazflow.com, www |
+| `AmazFlow-CX` | `d1dm0vemqmi57e` | `apps/customer` | app.amazflow.com |
+| `AmazFlow-Internal` | `dryx6sb8fynwu` | `apps/internal` | admin.amazflow.com |
+
 For separate Amplify applications backed by this monorepo, configure each app's
 `AMPLIFY_MONOREPO_APP_ROOT` environment variable to match its `appRoot`: `apps/web`,
-`apps/customer`, or `apps/internal`. Keep each app on static hosting with the artifact directory
+`apps/customer`, or `apps/internal`.
+
+Two things about creating one of these apps are not obvious:
+
+* **Leave "My app is a monorepo" unchecked.** Ticking it makes the console validate the root
+  directory through the GitHub contents API, which the current OAuth grant cannot read -- it
+  fails with "Root directory cannot be found". Setting `AMPLIFY_MONOREPO_APP_ROOT` by hand has
+  the same effect without needing a new GitHub permission grant. The wizard's auto-detected
+  build command always previews the **first** `applications:` entry (`apps/web`) regardless of
+  the app root, which is misleading but harmless.
+* **DNS for amazflow.com is at Namecheap, not Route 53.** In the add-domain flow this means
+  choosing **Manual configuration**. The default "Create hosted zone on Route 53" would build a
+  competing zone and require a nameserver cutover, taking the live marketing site down. Keep each app on static hosting with the artifact directory
 declared in `amplify.yml`; these applications use Next static export and do not produce
 `required-server-files.json`.
 
@@ -63,8 +83,11 @@ reviewed control-plane template.
 ## 2. Control plane — the one manual step
 
 The live control plane is a single hand-maintained CloudFormation template,
-`infrastructure/aws-cdk/amazflow-dev.yaml`, deployed to stack **`amazflow-dev`** in
-**us-east-1**.
+`infrastructure/aws-cdk/amazflow-dev.yaml`, deployed to stack **`amazflow-dev-control-plane`**
+in **us-east-1**.
+
+The stack name does **not** match the template filename. Passing `--stack-name amazflow-dev`
+creates a second, empty stack rather than updating the live one.
 
 ### Option A — the script (preferred)
 
@@ -97,21 +120,60 @@ Only perform the first migration or a later rotation in an approved maintenance 
 Do not rotate while a run awaits an agent. Rotation invalidates all grants issued with the prior
 key; reconciling an uncertain side effect always takes priority over retrying it.
 
+Checking the three conditions in step 2, read-only, against the live table:
+
+```bash
+REGION=us-east-1
+TABLE=$(aws cloudformation describe-stack-resource \
+  --stack-name amazflow-dev-control-plane --logical-resource-id ControlPlaneTable \
+  --region $REGION --query StackResourceDetail.PhysicalResourceId --output text)
+aws dynamodb scan --table-name "$TABLE" --region $REGION --output json > /tmp/s.json
+N=$(( $(date +%s) * 1000 )); I=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+echo "waiting: $(jq '[.Items[]|select(.document.S!=null)|.document.S|fromjson?|select(.status=="WAITING_AGENT")]|length' /tmp/s.json)"
+echo "leases:  $(jq --argjson n $N '[.Items[]|select(.pk.S=="TASKCLAIM")|select((.leaseExpiresAtMs.N//"0"|tonumber)>$n)]|length' /tmp/s.json)"
+echo "grants:  $(jq --arg n "$I" '[.Items[]|select(.document.S!=null)|.document.S|fromjson?|select(.claimExpiresAt!=null and .claimExpiresAt>$n)]|length' /tmp/s.json)"
+```
+
+All three must be `0`. The result is a point-in-time snapshot -- re-run it immediately before
+deploying, not once at the start of the window.
+
+**Step 4 needs a real agent, and nothing else substitutes for it.** `GET /health`, a CORS
+preflight, and a 401 from a protected route all pass whether or not grant signing works, because
+none of them mint or verify a grant. Confirming the migration means connecting the Chrome
+extension or desktop agent, claiming one task, and watching it poll or report progress. Until
+that has happened, the migration is deployed but unverified.
+
 ### Option B — raw AWS CLI
 
 ```bash
 cd infrastructure/aws-cdk
 aws cloudformation deploy \
   --template-file amazflow-dev.yaml \
-  --stack-name amazflow-dev \
+  --stack-name amazflow-dev-control-plane \
   --capabilities CAPABILITY_NAMED_IAM \
   --region us-east-1
 ```
 
 ### Option C — the console
 
-Upload `amazflow-dev.yaml` to the `amazflow-dev` stack and update. Works, but you lose the test
-gate and the changeset preview, so prefer A.
+Upload `amazflow-dev.yaml` to the `amazflow-dev-control-plane` stack and update. Works, but you
+lose the test gate and the changeset preview, so prefer A.
+
+**If you upload the template to CloudShell, verify the checksum before deploying.** CloudShell
+keeps its home directory between sessions and refuses to overwrite an existing file, so an
+`Upload file` that appears to succeed can leave a months-old template in place. This has already
+happened once: the stale copy was 144 KB against the real template's 333 KB, and deploying it
+would have **deleted** every resource added since, because CloudFormation removes whatever a
+template no longer declares.
+
+```bash
+shasum -a 256 infrastructure/aws-cdk/amazflow-dev.yaml   # locally
+sha256sum ~/amazflow-dev.yaml                            # in CloudShell -- must match
+```
+
+Always build the changeset with `--no-execute-changeset` first and read it. A deploy that only
+adds routes shows additions and in-place updates; any `"Replace": "True"`, or any appearance of
+`ControlPlaneTable`, means stop.
 
 ### Confirming it worked
 
@@ -177,8 +239,8 @@ exists**, which is a one-time setup in the AWS console:
    ```
 
 4. Attach permissions for CloudFormation plus the services the template manages (Lambda, API
-   Gateway, DynamoDB, IAM, Cognito, SES, EventBridge, Logs). Scope it to the `amazflow-dev`
-   stack rather than granting `*`.
+   Gateway, DynamoDB, IAM, Cognito, SES, EventBridge, Logs). Scope it to the
+   `amazflow-dev-control-plane` stack rather than granting `*`.
 5. In GitHub → Settings → Secrets and variables → Actions, add
    `AWS_DEPLOY_ROLE_ARN` with the role ARN.
 6. In GitHub → Settings → Environments, create an environment named `production` and add
