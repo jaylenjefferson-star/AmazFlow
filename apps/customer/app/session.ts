@@ -105,6 +105,8 @@ export type MeResponse = {
   /** The fine-grained membership role. Absent for a response that predates task 7.13. */
   platformRole?: string;
   teamIds?: string[];
+  departmentIds?: string[];
+  reportUserIds?: string[];
   sections?: string[];
   lastLoginAt?: string | null;
   accountStatus?: string;

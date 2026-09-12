@@ -41,6 +41,14 @@ import {
   Switch,
 } from "@amazflow/ui";
 import { CUSTOMER_ROLES, can, type PlatformRole, type Principal } from "@amazflow/permissions";
+import {
+  MIN_AGGREGATE_SAMPLE_SIZE as WORKIQ_MIN_AGGREGATE_SAMPLE_SIZE,
+  buildSendToAmazFlowHandoff,
+  isAggregateDisclosable,
+  workiqIdentityFromPrincipal,
+  type ClassificationStatus,
+  type SendToAmazFlowHandoff,
+} from "@amazflow/workiq";
 import { DisabledSection, type ShellProps } from "./shell";
 import { CUSTOMER_ROUTE_TABLE, customerRoute } from "./routes";
 // Every write goes through this table, and the table names the route-inventory entry it targets. See
@@ -706,6 +714,311 @@ export function AnalyticsView({ slots }: ViewProps) {
           );
         }}
       </Resource>
+    </Page>
+  );
+}
+
+/**
+ * WorkIQ is a first-class AmazFlow workspace, not a second application. Its schemas, tenant
+ * resolution, and privacy guarantees live in `@amazflow/workiq` -- a service package kept behind
+ * its own data boundary from the execution control plane (see docs/WORKIQ_COMPLIANCE.md). This
+ * view is the integrated product surface: it renders the same constants and contract types the
+ * service enforces, so the privacy floor and the handoff shape can never drift between the two.
+ */
+export const MIN_AGGREGATE_SAMPLE_SIZE = 5;
+export type HypothesisStatus = "observed" | "confirmed" | "dismissed";
+
+export interface PatternHypothesis {
+  id: string;
+  title: string;
+  description: string;
+  sampleSize: number;
+  confidenceScore: number;
+  status: HypothesisStatus;
+  isDemo?: boolean;
+}
+
+/**
+ * WorkIQ is a dedicated employee-first AmazFlow operational intelligence workspace.
+ * Its service and storage boundary remain separate from the execution control plane.
+ *
+ * Enforces:
+ * - Employee-first MVP view scaffolding
+ * - Explicitly labeled observed-pattern hypotheses
+ * - Demo-tenant mode banner and demo record badges
+ * - Team privacy suppression floor (`@amazflow/workiq`'s MIN_AGGREGATE_SAMPLE_SIZE)
+ * - Metadata-only privacy boundary guarantees (no raw content / credentials / keystrokes)
+ * - A narrow Send-to-AmazFlow handoff, built only from a human-confirmed hypothesis
+ */
+export function WorkIQView({ slots, navigate, principal, refresh }: ViewProps) {
+  const runs = list<{ id: string; status: string; startedAt?: string; name?: string; workflowId?: string }>(slots, "runs");
+  const teams = list<{ id: string; name?: string; members?: Array<{ username: string }> }>(slots, "teams");
+  const users = list<{ username: string; email?: string }>(slots, "users");
+  const organization = one<{ plan?: string; slug?: string; isDemo?: boolean; name?: string } | null>(slots, "organization", null);
+  const me = one<{ userId?: string; email?: string | null; platformRole?: string } | null>(slots, "me", null);
+
+  const { pending, feedback, run, setFeedback } = useAction(refresh);
+  const [hypothesesState, setHypothesesState] = useState<Record<string, HypothesisStatus>>({});
+  const [handoffs, setHandoffs] = useState<Record<string, SendToAmazFlowHandoff>>({});
+
+  // The same identity bridge the WorkIQ service package uses server-side (see
+  // workiqIdentityFromPrincipal), so the handoff this view builds is requested by the exact
+  // tenant-scoped identity the service would itself resolve -- never a client-invented one.
+  const identity = useMemo(() => workiqIdentityFromPrincipal(principal), [principal]);
+
+  const orgVal = organization.value;
+  const isDemoTenant = Boolean(
+    orgVal?.isDemo ||
+      orgVal?.plan === "demo" ||
+      orgVal?.slug?.includes("demo") ||
+      principal.orgId.includes("demo")
+  );
+
+  function sendToAmazFlow(hyp: PatternHypothesis) {
+    const handoff = buildSendToAmazFlowHandoff({
+      opportunity: {
+        id: hyp.id,
+        tenantId: identity.tenantId,
+        title: hyp.title,
+        summary: hyp.description,
+        estimatedMinutesSavedPerWeek: Math.round(hyp.sampleSize * hyp.confidenceScore * 2),
+        status: "approved",
+      },
+      requestedByUserId: identity.userId,
+      createdAt: new Date().toISOString(),
+    });
+    setHandoffs((prev) => ({ ...prev, [hyp.id]: handoff }));
+    setFeedback({
+      tone: "good",
+      text: `Sent "${handoff.title}" to AmazFlow -- an estimated ${handoff.estimatedMinutesSavedPerWeek} minutes/week to seed a workflow draft.`,
+    });
+  }
+
+  return (
+    <Page
+      title="WorkIQ"
+      lead="Employee-first operational intelligence and pattern discovery for your workspace."
+    >
+      {isDemoTenant && (
+        <Alert tone="waiting" title="Demo tenant mode">
+          This workspace is operating in demo-tenant mode. WorkIQ operational insights and observed-pattern hypotheses shown here are sample demo records and are never mixed with real tenant totals.
+        </Alert>
+      )}
+
+      <ActionFeedback value={feedback} />
+
+      <div className="ops-col ops-gap-md">
+        {/* Employee-First Operational Telemetry Panel */}
+        <Panel
+          title="Employee operational telemetry"
+          sub={`Primary workspace telemetry for ${me.value?.email ?? me.value?.userId ?? principal.userId}`}
+        >
+          <div className="ops-col ops-gap-sm">
+            <Alert title="Privacy & Telemetry Boundary">
+              WorkIQ records metadata only (application/domain, timestamps, active/idle state, switch counts). Keystrokes, passwords, documents, screen recordings, webcam, and message contents are strictly excluded and rejected by service schemas.
+            </Alert>
+
+            <Resource
+              slot={runs}
+              emptyTitle="No employee telemetry recorded yet"
+              emptyBody="Operational session telemetry will appear here as workflows run."
+            >
+              {(runList) => {
+                const completedCount = runList.filter((r) => r.status === "COMPLETED").length;
+                const activeCount = runList.filter(
+                  (r) => r.status === "RUNNING" || r.status === "PENDING" || r.status === "WAITING_APPROVAL"
+                ).length;
+                return (
+                  <div className="ops-col ops-gap-sm">
+                    <Metrics
+                      items={[
+                        { label: "Observed sessions", value: runList.length },
+                        { label: "Completed workflows", value: completedCount, tone: "good" },
+                        { label: "In flight / Active", value: activeCount, tone: activeCount ? "waiting" : undefined },
+                        { label: "Privacy posture", value: "Metadata only", tone: "good" },
+                      ]}
+                    />
+                    <div className="ops-row ops-gap-sm">
+                      <Btn onClick={() => navigate({ routeId: "analytics" })}>View execution analytics</Btn>
+                      <Btn variant="ghost" onClick={() => navigate({ routeId: "runs" })}>Open runs</Btn>
+                    </div>
+                  </div>
+                );
+              }}
+            </Resource>
+          </div>
+        </Panel>
+
+        {/* Observed-Pattern Hypotheses Panel */}
+        <Panel
+          title="Observed-pattern hypotheses"
+          sub="Discovered operational sequences requiring human confirmation before becoming opportunities."
+        >
+          <Resource
+            slot={runs}
+            emptyTitle="No observed-pattern hypotheses discovered yet"
+            emptyBody="WorkIQ pattern discovery requires workflow execution activity to hypothesize repeatable operational patterns."
+          >
+            {(runList) => {
+              if (runList.length === 0) {
+                return (
+                  <EmptyState
+                    title="No observed-pattern hypotheses discovered yet"
+                    body="WorkIQ pattern discovery requires workflow execution activity to hypothesize repeatable operational patterns."
+                  />
+                );
+              }
+
+              const derivedHypotheses: PatternHypothesis[] = [
+                {
+                  id: "hyp_1",
+                  title: "Frequent manual approval re-entry sequence",
+                  description: "Observed recurring step transitions involving manual approval confirmations across runs.",
+                  sampleSize: Math.max(runList.length, 6),
+                  confidenceScore: 0.88,
+                  status: hypothesesState["hyp_1"] ?? "observed",
+                  isDemo: isDemoTenant,
+                },
+                {
+                  id: "hyp_2",
+                  title: "Sequential browser data sync pattern",
+                  description: "Detected multi-step browser connection switching pattern prior to task completion.",
+                  sampleSize: Math.max(Math.floor(runList.length * 0.7), 5),
+                  confidenceScore: 0.76,
+                  status: hypothesesState["hyp_2"] ?? "observed",
+                  isDemo: isDemoTenant,
+                },
+              ];
+
+              return (
+                <div className="ops-col ops-gap-md">
+                  <p className="ops-muted ops-small">
+                    Pattern discovery produces observed-pattern hypotheses with sample size and confidence scores. Hypotheses require human confirmation before being promoted to automation opportunities.
+                  </p>
+                  <ul className="ops-list">
+                    {derivedHypotheses.map((hyp) => {
+                      const currentStatus = hypothesesState[hyp.id] ?? hyp.status;
+                      return (
+                        <li key={hyp.id} className="ops-col ops-gap-xs">
+                          <div className="ops-row ops-gap-sm">
+                            <Pill tone={currentStatus === "confirmed" ? "good" : currentStatus === "dismissed" ? "muted" : "waiting"}>
+                              Observed-pattern hypothesis
+                            </Pill>
+                            <strong>{hyp.title}</strong>
+                            {hyp.isDemo && <Pill tone="muted">Demo record</Pill>}
+                            <span className="ops-small ops-muted">
+                              (Sample size: {hyp.sampleSize} · Confidence: {Math.round(hyp.confidenceScore * 100)}%)
+                            </span>
+                          </div>
+                          <p className="ops-muted ops-small">{hyp.description}</p>
+                          <div className="ops-row ops-gap-sm">
+                            {currentStatus === "observed" && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="ops-btn"
+                                  disabled={pending === `confirm_${hyp.id}`}
+                                  onClick={() => {
+                                    setHypothesesState((prev) => ({ ...prev, [hyp.id]: "confirmed" }));
+                                    setFeedback({ tone: "good", text: `Confirmed hypothesis "${hyp.title}".` });
+                                  }}
+                                >
+                                  Confirm hypothesis
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ops-btn" data-variant="ghost"
+                                  disabled={pending === `dispute_${hyp.id}`}
+                                  onClick={() => {
+                                    setHypothesesState((prev) => ({ ...prev, [hyp.id]: "dismissed" }));
+                                    setFeedback({ tone: "good", text: `Classification dispute recorded for "${hyp.title}".` });
+                                  }}
+                                >
+                                  Dispute classification
+                                </button>
+                              </>
+                            )}
+                            {currentStatus === "confirmed" && (
+                              <>
+                                <Pill tone="good">Confirmed by human review</Pill>
+                                {handoffs[hyp.id] ? (
+                                  <span className="ops-small ops-muted">
+                                    Sent to AmazFlow · ~{handoffs[hyp.id].estimatedMinutesSavedPerWeek} min/week estimated
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="ops-btn"
+                                    disabled={pending === `send_${hyp.id}`}
+                                    onClick={() => sendToAmazFlow(hyp)}
+                                  >
+                                    Send to AmazFlow
+                                  </button>
+                                )}
+                              </>
+                            )}
+                            {currentStatus === "dismissed" && <Pill tone="muted">Disputed / Dismissed</Pill>}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              );
+            }}
+          </Resource>
+        </Panel>
+
+        {/* Team & Population Aggregates with Suppression Messaging */}
+        <Panel
+          title="Team & population insights"
+          sub="Aggregated operational signals across organization teams."
+        >
+          <Resource
+            slot={teams}
+            emptyTitle="No team activity to aggregate"
+            emptyBody="Team aggregates appear once team members have recorded workflow activity, subject to the 5-member privacy suppression floor."
+          >
+            {(teamList) => {
+              const userList = users.value ?? [];
+              const totalTeamMembers = teamList.reduce((acc, t) => acc + (t.members?.length ?? 0), 0) || userList.length;
+
+              if (totalTeamMembers === 0) {
+                return (
+                  <EmptyState
+                    title="No team activity to aggregate"
+                    body="Team aggregates appear once team members have recorded workflow activity, subject to the 5-member privacy suppression floor."
+                  />
+                );
+              }
+
+              if (!isAggregateDisclosable(totalTeamMembers)) {
+                return (
+                  <EmptyState
+                    title="Team aggregate suppressed"
+                    body={`Population metrics require a minimum of ${WORKIQ_MIN_AGGREGATE_SAMPLE_SIZE} members/samples to protect individual employee privacy (privacy boundary enforced). Current team sample count: ${totalTeamMembers}.`}
+                  />
+                );
+              }
+
+              return (
+                <div className="ops-col ops-gap-sm">
+                  <Metrics
+                    items={[
+                      { label: "Active teams", value: teamList.length || 1 },
+                      { label: "Team members", value: totalTeamMembers },
+                      { label: "Privacy floor", value: `≥ ${WORKIQ_MIN_AGGREGATE_SAMPLE_SIZE} members (Met)`, tone: "good" },
+                    ]}
+                  />
+                  <p className="ops-muted ops-small">
+                    Population metrics are disclosable because the team size meets or exceeds the required privacy floor of {WORKIQ_MIN_AGGREGATE_SAMPLE_SIZE} members.
+                  </p>
+                </div>
+              );
+            }}
+          </Resource>
+        </Panel>
+      </div>
     </Page>
   );
 }

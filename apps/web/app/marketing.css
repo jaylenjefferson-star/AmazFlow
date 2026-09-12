@@ -103,6 +103,43 @@
 .proof-strip{background:var(--ink);color:#e4e7df;padding:20px 0}
 .proof-strip p{font-size:12px;font-weight:700;text-align:center;letter-spacing:.02em}
 
+/* ===== WorkIQ marketing preview ===== */
+.workiq-hero-card{background:#fff;border:1.5px solid var(--ink);border-radius:26px;box-shadow:12px 12px 0 var(--accent),var(--shadow-ambient);padding:28px;margin-top:10px}
+.workiq-preview-head{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;border-bottom:1px solid var(--line);padding-bottom:22px}
+.workiq-preview-head h2{font:800 clamp(24px,3vw,38px)/1.05 var(--font-display);letter-spacing:-.04em;margin:8px 0 0}
+.workiq-live{font-size:9px;font-weight:900;letter-spacing:.1em;color:#287743;background:#e2f2e6;border:1px solid #bfe0c9;border-radius:99px;padding:8px 11px;white-space:nowrap}
+.workiq-preview-grid{display:grid;grid-template-columns:repeat(3,1fr) 1.6fr;gap:12px;padding:24px 0}
+.workiq-preview-stat{background:#f4f3fa;border:1px solid var(--line);border-radius:16px;padding:18px}
+.workiq-preview-stat strong{display:block;font:800 30px var(--font-display)}
+.workiq-preview-stat span,.workiq-preview-stat small{display:block}
+.workiq-preview-stat span{font-weight:800;font-size:12px;margin-top:5px}
+.workiq-preview-stat small{font-size:10px;color:var(--muted);margin-top:8px}
+.workiq-pattern{background:#24252e;color:#fff;border-radius:16px;padding:18px}
+.workiq-pattern-pill{font-size:8px;font-weight:900;letter-spacing:.1em;color:#a9e8bb}
+.workiq-pattern b{display:block;font:800 16px/1.25 var(--font-display);margin-top:13px}
+.workiq-pattern p{font-size:11px;color:#c9ccd7;margin:8px 0 16px}
+.workiq-pattern>div{display:flex;align-items:center;gap:10px}
+.workiq-pattern small{font-size:10px;color:#c9ccd7}
+.workiq-bar{display:block;width:70px;height:6px;background:#ffffff24;border-radius:99px;overflow:hidden}
+.workiq-bar i{display:block;width:86%;height:100%;background:#7ce798}
+.workiq-preview-foot{display:flex;justify-content:space-between;gap:18px;border-top:1px solid var(--line);padding-top:17px;color:var(--muted);font-size:11px}
+.workiq-preview-foot a{color:var(--ink);font-weight:800}
+.workiq-signal-section{background:var(--paper)}
+.workiq-signal-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.workiq-signal-card{background:#fff;border:1px solid var(--line);border-radius:20px;padding:28px;min-height:220px}
+.workiq-signal-card .number{display:block;color:var(--muted);font:800 13px var(--font-display);margin-bottom:32px}
+.workiq-signal-card h3{font:800 25px var(--font-display);margin:0 0 10px}
+.workiq-signal-card p{color:var(--muted);line-height:1.6;margin:0}
+.workiq-split-section{background:var(--cream);border-block:1px solid var(--line);padding-block:110px}
+.workiq-split{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center}
+.workiq-split h2{font:800 clamp(38px,4.6vw,66px)/1.05 var(--font-display);letter-spacing:-.045em;margin:16px 0 20px}
+.workiq-split p{font-size:17px;line-height:1.65;color:var(--muted);max-width:520px}
+.workiq-trust-list{display:grid;gap:12px}
+.workiq-trust-list div{display:flex;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);border-radius:14px;padding:17px}
+.workiq-trust-list span{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--mint);font-size:12px;font-weight:900}
+.workiq-trust-list b{font-size:13px}
+@media(max-width:800px){.workiq-preview-grid{grid-template-columns:repeat(2,1fr)}.workiq-pattern{grid-column:1/-1}.workiq-signal-grid,.workiq-split{grid-template-columns:1fr}.workiq-split{gap:35px}.workiq-preview-foot{flex-direction:column}.workiq-preview-head{flex-direction:column}}
+
 /* ===== Flagship demo section ===== */
 .flagship{background:var(--paper);border-block:1px solid var(--line)}
 .flagship-lede{max-width:760px;font-size:17px;line-height:1.6;color:var(--muted);margin:-16px 0 40px}

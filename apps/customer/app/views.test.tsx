@@ -115,6 +115,7 @@ const MODULES: Record<string, ComponentType<ViewProps>> = {
   agents: views.AgentsView,
   connections: views.ConnectionsView,
   analytics: views.AnalyticsView,
+  workiq: views.WorkIQView,
   "admin-organization": views.OrganizationView,
   "admin-users": views.UsersView,
   "admin-teams": views.TeamsView,
@@ -408,4 +409,106 @@ test("workflow statuses render through the shared label mapping, not as stored v
   // And the label is not the whole answer: what the status means for whether work can start is stated
   // alongside it, so nobody has to infer that Draft is not runnable.
   assert.match(html, /It cannot run/);
+});
+
+
+test("WorkIQ renders employee-first scaffolding and clearly labels observed-pattern hypotheses", () => {
+  const slots = slotsIn("ready");
+  slots.runs = slot("ready", [
+    { id: "run_1", status: "COMPLETED", startedAt: new Date().toISOString() },
+    { id: "run_2", status: "RUNNING", startedAt: new Date().toISOString() },
+  ]);
+  const html = renderToStaticMarkup(
+    createElement(views.WorkIQView, {
+      principal: principal("ORG_OWNER"),
+      slots,
+      navigate: () => {},
+      client: fakeClient,
+      session: storedSession,
+      refresh: async () => {},
+    }),
+  );
+  assert.match(html, /Employee operational telemetry/);
+  assert.match(html, /Privacy &amp; Telemetry Boundary|Privacy & Telemetry Boundary/);
+  assert.match(html, /Observed-pattern hypothesis/);
+  assert.match(html, /Sample size: \d+/);
+  assert.match(html, /Hypotheses require human confirmation/);
+});
+
+test("WorkIQ renders demo-tenant mode banner when organization is in demo mode", () => {
+  const slots = slotsIn("ready");
+  slots.organization = slot("ready", {
+    name: "Demo Tenant Org",
+    slug: "demo-acme",
+    plan: "demo",
+    isDemo: true,
+  });
+  slots.runs = slot("ready", [
+    { id: "run_demo_1", status: "COMPLETED" },
+  ]);
+  const html = renderToStaticMarkup(
+    createElement(views.WorkIQView, {
+      principal: principal("ORG_OWNER", "demo-acme"),
+      slots,
+      navigate: () => {},
+      client: fakeClient,
+      session: storedSession,
+      refresh: async () => {},
+    }),
+  );
+  assert.match(html, /Demo tenant mode/);
+  assert.match(html, /sample demo records/);
+  assert.match(html, /Demo record/);
+});
+
+test("WorkIQ suppresses team aggregate metrics and renders privacy floor messaging when team size < 5", () => {
+  const slots = slotsIn("ready");
+  slots.teams = slot("ready", [
+    { id: "team_1", name: "Small Team", members: [{ username: "alice" }, { username: "bob" }] },
+  ]);
+  slots.users = slot("ready", [{ username: "alice" }, { username: "bob" }]);
+  const html = renderToStaticMarkup(
+    createElement(views.WorkIQView, {
+      principal: principal("ORG_OWNER"),
+      slots,
+      navigate: () => {},
+      client: fakeClient,
+      session: storedSession,
+      refresh: async () => {},
+    }),
+  );
+  assert.match(html, /Team aggregate suppressed/);
+  assert.match(html, /Population metrics require a minimum of 5 members/);
+  assert.match(html, /privacy boundary enforced/);
+});
+
+test("WorkIQ renders population metrics when team size meets or exceeds privacy floor of 5", () => {
+  const slots = slotsIn("ready");
+  slots.teams = slot("ready", [
+    {
+      id: "team_large",
+      name: "Large Team",
+      members: [
+        { username: "u1" },
+        { username: "u2" },
+        { username: "u3" },
+        { username: "u4" },
+        { username: "u5" },
+        { username: "u6" },
+      ],
+    },
+  ]);
+  const html = renderToStaticMarkup(
+    createElement(views.WorkIQView, {
+      principal: principal("ORG_OWNER"),
+      slots,
+      navigate: () => {},
+      client: fakeClient,
+      session: storedSession,
+      refresh: async () => {},
+    }),
+  );
+  assert.match(html, /Privacy floor/);
+  assert.match(html, /≥ 5 members \(Met\)/);
+  assert.doesNotMatch(html, /Team aggregate suppressed/);
 });
