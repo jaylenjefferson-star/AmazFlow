@@ -62,6 +62,7 @@ import { WorkflowWorkspace } from "./workflow-workspace";
 import { RunWorkspace } from "./run-workspace";
 import {
   clientFor,
+  consumeSessionHandoff,
   principalOf,
   readStoredSession,
   refinePrincipal,
@@ -103,6 +104,7 @@ function CustomerAppGate() {
   // The gate. One place decides whether the person in front of this surface may be here, which is the
   // arrangement Phase 1 established after four copies of this effect had already drifted.
   useEffect(() => {
+    consumeSessionHandoff();
     const here = `${window.location.pathname}${window.location.search}`;
     const requested = pathToView(CUSTOMER_ROUTE_TABLE, window.location.pathname, window.location.search);
     const stored = readStoredSession();

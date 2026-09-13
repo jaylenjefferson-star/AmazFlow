@@ -4,7 +4,7 @@
 // first two tests are that bug. The rest are the reason the guard cannot simply be loosened.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isSafeNext } from "./safe-next";
+import { isSafeNext, withSessionHandoff } from "./safe-next";
 
 test("an absolute return to a known AmazFlow surface is honoured", () => {
   assert.equal(isSafeNext("https://app.amazflow.com/"), true);
@@ -42,4 +42,25 @@ test("absent, empty, and unparseable values are refused", () => {
   assert.equal(isSafeNext(""), false);
   assert.equal(isSafeNext("not a url"), false);
   assert.equal(isSafeNext("javascript:alert(1)"), false);
+});
+
+// The regression this section exists for: signing in on amazflow.com writes the session to THIS
+// origin's localStorage, then redirects to app.amazflow.com/admin.amazflow.com -- which cannot see
+// it, since localStorage never crosses origins. That looked like "not signed in" on arrival, which
+// bounced back to /login, which found its own copy and bounced right back: an infinite loop.
+test("a cross-origin destination carries the session in a URL fragment", () => {
+  const session = { idToken: "abc.def.ghi", tenantId: "acme" };
+  const withHandoff = withSessionHandoff("https://admin.amazflow.com/organizations/", session, "https://amazflow.com");
+  assert.ok(withHandoff.startsWith("https://admin.amazflow.com/organizations/#session="));
+  const encoded = withHandoff.split("#session=")[1];
+  assert.deepEqual(JSON.parse(decodeURIComponent(encoded)), session);
+});
+
+test("a same-origin destination is left untouched -- localStorage already covers it", () => {
+  const session = { idToken: "abc.def.ghi", tenantId: "acme" };
+  assert.equal(withSessionHandoff("/console/", session, "https://amazflow.com"), "/console/");
+  assert.equal(
+    withSessionHandoff("https://amazflow.com/console/", session, "https://amazflow.com"),
+    "https://amazflow.com/console/",
+  );
 });

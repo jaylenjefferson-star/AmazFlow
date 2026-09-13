@@ -6828,7 +6828,23 @@ exports.handler = async (e) => {
     if (route === "POST /workflows/{id}/duplicate") {
       const workflow = await resolveWorkflow(e.pathParameters?.id, p, "staff duplicating a workflow");
       if (!workflow) return reply(404, { error: "Not found" });
-      {
+      const body = JSON.parse(e.body || "{}");
+      // "Assign to organization" is this same duplicate action pointed at a DIFFERENT tenant --
+      // there is no separate cross-tenant copy primitive to keep in sync with this one. Requested
+      // by naming a destination org explicitly (`targetTenantId`) rather than inferring one, because
+      // silently guessing which org gets a customer's workflow template is not a guess to make.
+      const targetTenantId = String(body.targetTenantId || "").trim() || workflow.tenantId;
+      const crossOrg = targetTenantId !== workflow.tenantId;
+      if (crossOrg) {
+        // Handing a workflow template to a DIFFERENT organization is a staff action regardless of
+        // who could edit the source: `workflow:create` on the source org would let a customer admin
+        // plant a copy of their own workflow into someone else's tenant, which is exactly the
+        // boundary requirement 4.7 exists to hold.
+        const denied = await guardIn(p, "internal:workflow_author", { orgId: a.tenantId });
+        if (denied) return reply(denied.statusCode, { error: "Only AmazFlow staff can assign a workflow to another organization", code: "FORBIDDEN" });
+        if (!(await getOrganization(targetTenantId)))
+          return reply(404, { error: `No organization "${targetTenantId}"` });
+      } else {
         const denied = await guardIn(p, "workflow:create", { orgId: workflow.tenantId });
         if (denied) return denied;
       }
@@ -6837,7 +6853,8 @@ exports.handler = async (e) => {
       const copy = {
         ...workflow,
         id: `wf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        name: `${workflow.name} (copy)`,
+        tenantId: targetTenantId,
+        name: String(body.name || "").trim() || `${workflow.name} (copy)`,
         status: "draft",
         version: 1,
         createdAt: now(),
@@ -6852,12 +6869,14 @@ exports.handler = async (e) => {
       const shapeError = validateWorkflowShape(copy);
       if (shapeError) return reply(422, { error: shapeError });
       const saved = await saveWorkflowWithVersion(copy);
-      await logActivity(workflow.tenantId, {
+      await logActivity(targetTenantId, {
         actor: a.userId,
         actorLabel: actorLabelFor(p),
-        action: "WORKFLOW_DUPLICATED",
-        summary: `Duplicated "${workflow.name}" as a new draft`,
-        details: { workflowId: saved.id, sourceWorkflowId: workflow.id, sourceVersion: workflow.version || null },
+        action: crossOrg ? "WORKFLOW_ASSIGNED" : "WORKFLOW_DUPLICATED",
+        summary: crossOrg
+          ? `Assigned "${workflow.name}" from ${workflow.tenantId} as a new draft`
+          : `Duplicated "${workflow.name}" as a new draft`,
+        details: { workflowId: saved.id, sourceWorkflowId: workflow.id, sourceVersion: workflow.version || null, sourceTenantId: workflow.tenantId },
       });
       return reply(201, saved);
     }

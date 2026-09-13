@@ -58,6 +58,36 @@ export function writeStoredSession(session: StoredSession) {
   }
 }
 
+/**
+ * Picks up a session handed off from `amazflow.com/login` as a URL fragment and writes it into
+ * THIS origin's storage.
+ *
+ * `localStorage` does not cross origins: a session saved by `/login` on `amazflow.com` is invisible
+ * here on `admin.amazflow.com`. Without this, every sign-in looked like "not signed in" on arrival,
+ * which sent the visitor straight back to `/login`, which found its own copy of the session and sent
+ * them right back here -- an infinite redirect loop. `withSessionHandoff` (in the marketing surface's
+ * `lib/safe-next.ts`) is what attaches the fragment; this is what consumes it, exactly once, before
+ * the ordinary storage read below ever runs. The fragment is stripped from the URL immediately after
+ * so it never lingers in browser history past the first paint.
+ */
+export function consumeSessionHandoff() {
+  if (typeof window === "undefined") return;
+  const hash = window.location.hash;
+  if (!hash || !hash.includes("session=")) return;
+  const match = /(?:^#|&)session=([^&]+)/.exec(hash);
+  if (!match) return;
+  try {
+    const session = JSON.parse(decodeURIComponent(match[1])) as StoredSession;
+    if (session.idToken) writeStoredSession(session);
+  } catch {
+    /* a malformed handoff is not a reason to keep it around or to crash the boot */
+  } finally {
+    const remainingHash = hash.replace(/(?:^#|&)session=[^&]+/, "").replace(/^#&/, "#");
+    const cleanHash = remainingHash === "#" ? "" : remainingHash;
+    window.history.replaceState({}, "", `${window.location.pathname}${window.location.search}${cleanHash}`);
+  }
+}
+
 export function clearStoredSession() {
   try {
     window.localStorage.removeItem(STORAGE_KEY);

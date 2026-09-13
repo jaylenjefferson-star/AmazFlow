@@ -3,15 +3,19 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import Link from "next/link";
 import { LogoMark, WorkflowVisual } from "../site-components";
-import type { AmazFlowRole } from "@amazflow/workflow-schema";
-import { API, AuthError, completeNewPassword, guardBFCacheRestore, loadSession, loginPathFor, saveSession, signIn } from "../lib/cognito-auth";
-import { isSafeNext } from "../lib/safe-next";
+import { API, AuthError, completeNewPassword, guardBFCacheRestore, loadSession, loginPathFor, saveSession, signIn, type Session } from "../lib/cognito-auth";
+import { isSafeNext, withSessionHandoff } from "../lib/safe-next";
 import "../auth.css";
 
 type OrgBranding = { displayName?: string; logoUrl?: string; accent?: string; loginMessage?: string };
 
-function redirectAfterSignIn(role: AmazFlowRole, next: string | null) {
-  window.location.assign(isSafeNext(next) ? next : loginPathFor(role));
+function redirectAfterSignIn(session: Session, next: string | null) {
+  // `session` rides along on a cross-origin destination as a URL fragment (see
+  // `withSessionHandoff`) because `app.amazflow.com`/`admin.amazflow.com` cannot read the copy
+  // just written to this origin's `localStorage` -- without it, the destination sees nobody
+  // signed in and bounces straight back here, which is the blink loop this fixes.
+  const destination = isSafeNext(next) ? next : loginPathFor(session.role);
+  window.location.assign(withSessionHandoff(destination, session));
 }
 
 export default function LoginPage() {
@@ -41,7 +45,7 @@ export default function LoginPage() {
     }
     const existing = loadSession();
     if (existing) {
-      redirectAfterSignIn(existing.role, params.get("next"));
+      redirectAfterSignIn(existing, params.get("next"));
       return;
     }
     setChecking(false);
@@ -62,7 +66,7 @@ export default function LoginPage() {
         );
       } else {
         saveSession(result.session);
-        redirectAfterSignIn(result.session.role, nextPath);
+        redirectAfterSignIn(result.session, nextPath);
       }
     } catch (err) {
       setError(err instanceof AuthError ? err.message : "Something went wrong. Try again.");
@@ -78,7 +82,7 @@ export default function LoginPage() {
     try {
       const session = await completeNewPassword(challenge.email, newPassword, challenge.session);
       saveSession(session);
-      redirectAfterSignIn(session.role, nextPath);
+      redirectAfterSignIn(session, nextPath);
     } catch (err) {
       setError(err instanceof AuthError ? err.message : "Couldn’t set your password. Try again.");
     } finally {

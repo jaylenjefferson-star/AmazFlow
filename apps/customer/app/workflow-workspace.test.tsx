@@ -63,6 +63,22 @@ test("the customer builder covers every supported browser and desktop action voc
   assert.match(source, /ACTIONS_BY_TARGET\[target\]\.includes\(step\.operation\)/, "the builder must reject an action outside that surface vocabulary");
 });
 
+test("starting a new workflow asks only for a name, not the full builder", () => {
+  const html = renderToStaticMarkup(createElement(WorkflowWorkspace, {
+    workflowId: "new",
+    principal,
+    client,
+    navigate: () => {},
+    refresh: async () => {},
+    session: { idToken: "token", tenantId: "acme", sub: "builder", email: "builder@acme.example", expiresAt: Date.now() + 60_000 },
+    slots: { workflows: { value: [], state: "ready", error: null, loadedAt: new Date().toISOString() } },
+  }));
+  assert.match(html, /Name your workflow/i);
+  assert.match(html, /Create draft/i, "a new workflow offers a single create action, not Save draft");
+  assert.doesNotMatch(html, /Who can run this/i, "roles are deferred until the draft exists");
+  assert.doesNotMatch(html, /Starts when/i, "scheduling is deferred until the draft exists");
+});
+
 test("the customer workspace sends a structured draft, never the plain-language description", () => {
   const source = readFileSync(path.join(HERE, "workflow-workspace.tsx"), "utf8");
   assert.match(source, /saveWorkflowDraft\(workflowId\)\.path, draft/, "saving must submit the structured draft");

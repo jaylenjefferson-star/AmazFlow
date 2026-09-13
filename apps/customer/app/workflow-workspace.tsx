@@ -189,13 +189,38 @@ export function WorkflowWorkspace({
         </Panel>
       )}
 
-      <Panel
-        title="Workflow definition"
-        sub={canEdit ? "Changes save as a structured definition, never as the description above." : "Your role can view this workflow but cannot change it."}
-        actions={<Btn variant="primary" onClick={() => void save()} disabled={!canEdit || busy !== null || blocking.length > 0}>{busy === "save" ? "Saving…" : "Save draft"}</Btn>}
-      >
-        <WorkflowBuilder workflow={draft} canEdit={canEdit} onChange={setDraft} />
-      </Panel>
+      {workflowId === "new" ? (
+        // Requirement (flow-creation simplification): starting a flow needs a name and nothing
+        // else. Steps, who can run it, and scheduling are real decisions worth their own screen —
+        // they belong on the draft after it exists, not as gates in front of creating it.
+        <Panel title="Name your workflow" sub="Add steps, who can run it, and scheduling once the draft exists.">
+          <div className="ops-col ops-gap-sm">
+            <label>
+              <span className="ops-field-label">Workflow name</span>
+              <input
+                className="ops-input"
+                value={draft.name}
+                disabled={!canEdit}
+                onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                placeholder="e.g. New employee onboarding"
+              />
+            </label>
+            <div>
+              <Btn variant="primary" onClick={() => void save()} disabled={!canEdit || busy !== null || !draft.name.trim()}>
+                {busy === "save" ? "Creating…" : "Create draft"}
+              </Btn>
+            </div>
+          </div>
+        </Panel>
+      ) : (
+        <Panel
+          title="Workflow definition"
+          sub={canEdit ? "Changes save as a structured definition, never as the description above." : "Your role can view this workflow but cannot change it."}
+          actions={<Btn variant="primary" onClick={() => void save()} disabled={!canEdit || busy !== null || blocking.length > 0}>{busy === "save" ? "Saving…" : "Save draft"}</Btn>}
+        >
+          <WorkflowBuilder workflow={draft} canEdit={canEdit} onChange={setDraft} />
+        </Panel>
+      )}
 
       <Panel title="Publishing">
         <p>Your AmazFlow contact publishes this workflow after reviewing its draft and readiness. This release intentionally does not show a publish control that your role cannot use.</p>

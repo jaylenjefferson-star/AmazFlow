@@ -34,7 +34,7 @@ import { PrincipalError, type Principal } from "@amazflow/permissions";
 import { PageHead, Pill, ToastProvider } from "@amazflow/ui";
 import { INTERNAL_ROUTE_TABLE, internalRoute } from "./routes";
 import { StaffShell } from "./shell";
-import { clientFor, principalOf, readStoredSession, toLogin, type StoredSession } from "./session";
+import { clientFor, consumeSessionHandoff, principalOf, readStoredSession, toLogin, type StoredSession } from "./session";
 import { AccessDenied, NoOrganizationShell, StaffSection } from "./views";
 import "@amazflow/ui/ops.css";
 
@@ -70,6 +70,7 @@ export default function InternalConsole() {
   const [view, setView] = useState<ResolvedView>({ routeId: "overview" });
 
   useEffect(() => {
+    consumeSessionHandoff();
     const stored = readStoredSession();
     const here = `${window.location.pathname}${window.location.search}`;
     if (!stored) {
