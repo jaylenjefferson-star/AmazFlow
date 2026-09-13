@@ -245,9 +245,14 @@ export type OrgHealth = {
 
 /* ================================================================================ context = */
 
+/** The real shape `request` accepts -- a plain body it JSON-encodes itself, not a `RequestInit`
+ *  whose `body` must already be `BodyInit`. Declaring this as `RequestInit` here is exactly what
+ *  let every caller's `JSON.stringify(...)` compile as "correct" while double-encoding the body. */
+export type OpsRequestOptions = { method?: string; body?: unknown };
+
 type OpsValue = {
   session: Session;
-  request: <T = unknown>(path: string, options?: RequestInit) => Promise<T>;
+  request: <T = unknown>(path: string, options?: OpsRequestOptions) => Promise<T>;
 
   /* collections */
   workflows: WorkflowDefinition[];

@@ -35,3 +35,42 @@ export function isSafeNext(next: string | null): next is string {
     return false;
   }
 }
+
+/** True when `next` leaves this origin for one of the other AmazFlow surfaces. */
+export function isCrossOriginNext(
+  next: string,
+  currentOrigin: string = typeof window !== "undefined" ? window.location.origin : "",
+): boolean {
+  try {
+    return new URL(next).origin !== currentOrigin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Attaches the session to a cross-origin redirect as a URL fragment.
+ *
+ * `localStorage` is per-origin, so a session saved here on `amazflow.com` is invisible to
+ * `app.amazflow.com`/`admin.amazflow.com` — before this existed, redirecting a freshly signed-in
+ * person to either surface left them looking signed out there, which sent them straight back to
+ * `/login`, which found ITS OWN copy of the session and sent them right back: an infinite loop.
+ *
+ * The fragment (`#session=...`) is never sent in the HTTP request (fragments aren't transmitted to
+ * servers) and is consumed and stripped from the URL by the destination's own bootstrap on first
+ * paint (see `consumeSessionHandoff` in the customer/internal `session.ts` files), so it never
+ * lingers in server logs, browser history beyond that first entry, or a shared referrer.
+ *
+ * `currentOrigin` defaults to `window.location.origin` and only needs overriding in tests, where
+ * there is no `window`.
+ */
+export function withSessionHandoff(
+  next: string,
+  session: unknown,
+  currentOrigin: string = typeof window !== "undefined" ? window.location.origin : "",
+): string {
+  if (!isCrossOriginNext(next, currentOrigin)) return next;
+  const [path, hash] = next.split("#");
+  const payload = encodeURIComponent(JSON.stringify(session));
+  return `${path}${hash ? `#${hash}&` : "#"}session=${payload}`;
+}

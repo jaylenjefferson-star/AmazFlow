@@ -100,10 +100,10 @@ export function Copilot() {
         pendingActions?: { actionId: string }[];
       }>("/copilot/messages", {
         method: "POST",
-        body: JSON.stringify({
+        body: {
           message: text,
           context: { section: nav.view.section, entityId: nav.view.entityId },
-        }),
+        },
       });
       setMessages((current) => [
         ...current,
@@ -121,7 +121,7 @@ export function Copilot() {
     setActingOn(id);
     setError(null);
     try {
-      await ops.request(`/copilot/actions/${id}/${decision}`, { method: "POST", body: "{}" });
+      await ops.request(`/copilot/actions/${id}/${decision}`, { method: "POST", body: {} });
       setPending((current) => current.filter((action) => action.id !== id));
       if (decision === "apply") await ops.refresh();
     } catch (reason) {

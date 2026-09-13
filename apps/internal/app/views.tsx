@@ -108,6 +108,8 @@ export function StaffSection({
     return <StaffUsers organizations={rows as Organization[]} client={client} />;
   if (routeId === "organizations" && client && refresh)
     return <OrganizationsManager rows={rows} client={client} refresh={refresh} runs={(slots.runs?.value ?? []) as Record<string, unknown>[]} workflows={(slots.workflows?.value ?? []) as Record<string, unknown>[]} agents={(slots.agents?.value ?? []) as Record<string, unknown>[]} connections={(slots.connections?.value ?? []) as Record<string, unknown>[]} />;
+  if (routeId === "studio" && client && refresh)
+    return <WorkflowsManager rows={rows} client={client} refresh={refresh} organizations={(slots.organizations?.value ?? []) as Organization[]} />;
   if (routeId === "support" && client && refresh)
     return <SupportQueue rows={rows} client={client} refresh={refresh} />;
   return <Table routeId={routeId} rows={rows} />;
@@ -270,6 +272,84 @@ function OrganizationEditor({ organization, client, busy, pending, save }: { org
       <div><Btn type="submit" variant="primary" disabled={busy}>{pending === key ? "Saving…" : "Save organization"}</Btn></div>
     </form>
   </Panel>;
+}
+
+type WorkflowRow = { id: string; name: string; tenantId: string; status?: string; version?: number; updatedAt?: string };
+
+/**
+ * "Allocate a flow to an org" — a customer's request phrased in customer terms, answered here with the
+ * one primitive the control plane already had for it: duplicate-as-draft, pointed at a different
+ * tenant. Studio is a staff-only surface (`internal:workflow_author`), so this is the one place staff
+ * can hand a workflow template to another organization without going through the AI copilot.
+ */
+function WorkflowsManager({ rows, client, refresh, organizations }: { rows: Record<string, unknown>[]; client: ApiClient; refresh: () => Promise<void>; organizations: Organization[] }) {
+  const workflows = rows as WorkflowRow[];
+  const [assigningId, setAssigningId] = useState<string | null>(null);
+  const [targetSlug, setTargetSlug] = useState("");
+  const [newName, setNewName] = useState("");
+  const [pending, setPending] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ tone: "good" | "bad"; text: string } | null>(null);
+  const startAssign = (workflow: WorkflowRow) => {
+    setAssigningId(assigningId === workflow.id ? null : workflow.id);
+    setTargetSlug("");
+    setNewName("");
+    setMessage(null);
+  };
+  const assign = async (workflow: WorkflowRow) => {
+    if (!targetSlug) return;
+    setPending(workflow.id);
+    setMessage(null);
+    try {
+      await client.post(`/workflows/${encodeURIComponent(workflow.id)}/duplicate`, {
+        targetTenantId: targetSlug,
+        ...(newName.trim() ? { name: newName.trim() } : {}),
+      });
+      await refresh();
+      setMessage({ tone: "good", text: `Assigned "${workflow.name}" to ${targetSlug} as a new draft.` });
+      setAssigningId(null);
+    } catch (error) {
+      setMessage({ tone: "bad", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setPending(null);
+    }
+  };
+  if (!workflows.length) return <EmptyState title="Nothing here yet" body="No workflows are recorded across the organizations you can view." />;
+  return <div className="ops-col ops-gap-md">
+    {message && <Alert tone={message.tone} title={message.tone === "good" ? "Assigned" : "This did not work"}>{message.text}</Alert>}
+    <div className="ops-tablewrap">
+      <table className="ops-table">
+        <thead><tr><th>Workflow</th><th>Organization</th><th>Status</th><th>Version</th><th>Updated</th><th /></tr></thead>
+        <tbody>
+          {workflows.slice(0, 100).map((workflow) => <>
+            <tr key={workflow.id}>
+              <td>{label(workflow.name ?? workflow.id)}</td>
+              <td>{label(workflow.tenantId)}</td>
+              <td>{label(workflow.status)}</td>
+              <td>{label(workflow.version)}</td>
+              <td>{label(workflow.updatedAt)}</td>
+              <td><Btn onClick={() => startAssign(workflow)}>{assigningId === workflow.id ? "Cancel" : "Assign to org"}</Btn></td>
+            </tr>
+            {assigningId === workflow.id && <tr key={`${workflow.id}-assign`}>
+              <td colSpan={6}>
+                <div className="ops-toolbar">
+                  <Select
+                    label="Destination organization"
+                    value={targetSlug}
+                    onChange={setTargetSlug}
+                    options={[{ value: "", label: "Choose an organization…" }, ...organizations.filter((organization) => organization.slug !== workflow.tenantId).map((organization) => ({ value: organization.slug, label: organization.name }))]}
+                  />
+                  <Field label="New name (optional)">
+                    <input className="ops-input" aria-label="New name" value={newName} onChange={(event) => setNewName(event.target.value)} placeholder={`${workflow.name} (copy)`} />
+                  </Field>
+                  <Btn variant="primary" disabled={!targetSlug || pending === workflow.id} onClick={() => void assign(workflow)}>{pending === workflow.id ? "Assigning…" : "Create draft copy"}</Btn>
+                </div>
+              </td>
+            </tr>}
+          </>)}
+        </tbody>
+      </table>
+    </div>
+  </div>;
 }
 
 function Table({ routeId, rows }: { routeId: string; rows: Record<string, unknown>[] }) {

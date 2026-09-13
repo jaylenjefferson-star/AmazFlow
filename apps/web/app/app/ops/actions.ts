@@ -53,7 +53,7 @@ export function useOpsActions() {
         async () => {
           const updated = await ops.request<WorkflowRun>(
             `/runs/${target.id}/approvals/${target.currentStepId}`,
-            { method: "POST", body: JSON.stringify({ approved: true }) },
+            { method: "POST", body: { approved: true } },
           );
           ops.applyRun(updated);
           return updated;
@@ -70,7 +70,7 @@ export function useOpsActions() {
         async () => {
           const updated = await ops.request<WorkflowRun>(
             `/runs/${target.id}/approvals/${target.currentStepId}`,
-            { method: "POST", body: JSON.stringify({ approved: false }) },
+            { method: "POST", body: { approved: false } },
           );
           ops.applyRun(updated);
           return updated;
@@ -87,7 +87,7 @@ export function useOpsActions() {
         async () => {
           const updated = await ops.request<WorkflowRun>(
             `/runs/${target.id}/confirmations/${target.currentStepId}/confirm`,
-            { method: "POST", body: "{}" },
+            { method: "POST", body: {} },
           );
           ops.applyRun(updated);
           return updated;
@@ -104,7 +104,7 @@ export function useOpsActions() {
         async () => {
           const updated = await ops.request<WorkflowRun>(`/runs/${target.id}/cancel`, {
             method: "POST",
-            body: "{}",
+            body: {},
           });
           ops.applyRun(updated);
           return updated;
@@ -127,7 +127,7 @@ export function useOpsActions() {
           const input = (target.context as { input?: unknown } | undefined)?.input ?? {};
           const created = await ops.request<WorkflowRun>(`/workflows/${target.workflowId}/runs`, {
             method: "POST",
-            body: JSON.stringify(input),
+            body: input,
           });
           ops.applyRun(created);
           return created;
@@ -144,7 +144,7 @@ export function useOpsActions() {
         async () => {
           const created = await ops.request<WorkflowRun>(`/workflows/${workflowId}/runs`, {
             method: "POST",
-            body: JSON.stringify(input),
+            body: input,
           });
           ops.applyRun(created);
           return created;
@@ -163,7 +163,7 @@ export function useOpsActions() {
         async () => {
           const saved = await ops.request<WorkflowDefinition>("/workflows", {
             method: "POST",
-            body: JSON.stringify(workflow),
+            body: workflow,
           });
           await ops.refresh();
           return saved;
@@ -178,13 +178,13 @@ export function useOpsActions() {
       run(`generateSop`, async () => {
         const draft = await ops.request<WorkflowDefinition>("/workflows/generate", {
           method: "POST",
-          body: JSON.stringify(tenantId ? { sop, tenantId } : { sop }),
+          body: tenantId ? { sop, tenantId } : { sop },
         });
         // The control plane returns a draft; persisting it is a separate explicit save so the
         // draft survives a refresh, matching the documented Studio behaviour.
         await ops.request<WorkflowDefinition>("/workflows", {
           method: "POST",
-          body: JSON.stringify(draft),
+          body: draft,
         });
         await ops.refresh();
         return draft;
@@ -201,7 +201,7 @@ export function useOpsActions() {
         async () => {
           const org = await ops.request<Organization>("/organizations", {
             method: "POST",
-            body: JSON.stringify(plan ? { name, plan } : { name }),
+            body: plan ? { name, plan } : { name },
           });
           ops.applyOrganization(org);
           return org;
@@ -218,7 +218,7 @@ export function useOpsActions() {
         async () => {
           const org = await ops.request<Organization>(
             `/organizations/${encodeURIComponent(slug)}/branding`,
-            { method: "POST", body: JSON.stringify(branding) },
+            { method: "POST", body: branding },
           );
           ops.applyOrganization(org);
           return org;
@@ -236,7 +236,7 @@ export function useOpsActions() {
         async () => {
           const org = await ops.request<Organization>(
             `/organizations/${encodeURIComponent(slug)}`,
-            { method: "PUT", body: JSON.stringify(patch) },
+            { method: "PUT", body: patch },
           );
           ops.applyOrganization(org);
           return org;
@@ -260,7 +260,7 @@ export function useOpsActions() {
         async () => {
           const org = await ops.request<Organization>(
             `/organizations/${encodeURIComponent(slug)}/settings`,
-            { method: "POST", body: JSON.stringify(patch) },
+            { method: "POST", body: patch },
           );
           ops.applyOrganization(org);
           return org;
@@ -281,7 +281,7 @@ export function useOpsActions() {
         async () => {
           const created = await ops.request<{ email: string }>(
             `/tenants/${encodeURIComponent(tenantId)}/users`,
-            { method: "POST", body: JSON.stringify({ email, role }) },
+            { method: "POST", body: { email, role } },
           );
           await ops.loadUsers(tenantId);
           return created;
@@ -298,7 +298,7 @@ export function useOpsActions() {
         async () => {
           await ops.request(
             `/tenants/${encodeURIComponent(tenantId)}/users/${encodeURIComponent(username)}/status`,
-            { method: "POST", body: JSON.stringify({ enabled }) },
+            { method: "POST", body: { enabled } },
           );
           // The status route returns only {username, enabled}; re-read the directory so the
           // table reflects exactly what Cognito now reports.
@@ -319,7 +319,7 @@ export function useOpsActions() {
         async () => {
           const updated = await ops.request<Ticket>(`/support/tickets/${ticket.id}/status`, {
             method: "POST",
-            body: JSON.stringify({ status }),
+            body: { status },
           });
           ops.applyTicket(updated);
           return updated;
@@ -336,7 +336,7 @@ export function useOpsActions() {
         async () => {
           const updated = await ops.request<Ticket>(`/support/tickets/${ticket.id}/status`, {
             method: "POST",
-            body: JSON.stringify({ note, internal }),
+            body: { note, internal },
           });
           ops.applyTicket(updated);
           return updated;
@@ -360,7 +360,7 @@ export function useOpsActions() {
         async () => {
           const created = await ops.request<BrowserConnection>("/connections/browser", {
             method: "POST",
-            body: JSON.stringify({ preferredMode: "auto", ...input }),
+            body: { preferredMode: "auto", ...input },
           });
           await reloadConnections();
           return created;
@@ -377,7 +377,7 @@ export function useOpsActions() {
           loginSessionId: string;
           liveViewUrl?: string;
           expiresAt: string;
-        }>(`/connections/browser/${connectionId}/login-session`, { method: "POST", body: "{}" });
+        }>(`/connections/browser/${connectionId}/login-session`, { method: "POST", body: {} });
         if (session.liveViewUrl) window.open(session.liveViewUrl, "_blank", "noopener,noreferrer");
         return session;
       }),
@@ -391,7 +391,7 @@ export function useOpsActions() {
         async () => {
           const updated = await ops.request<BrowserConnection>(
             `/connections/browser/${connectionId}/login-session/complete`,
-            { method: "POST", body: JSON.stringify({ loginSessionId }) },
+            { method: "POST", body: { loginSessionId } },
           );
           await reloadConnections();
           return updated;
@@ -427,7 +427,7 @@ export function useOpsActions() {
         async () => {
           const updated = await ops.request<Agent>(`/agents/${agentId}/revoke`, {
             method: "POST",
-            body: "{}",
+            body: {},
           });
           ops.applyAgent(updated);
           return updated;
@@ -442,7 +442,7 @@ export function useOpsActions() {
       run("authorizeAgent", async () => {
         const created = await ops.request<{ agent: Agent; code: string }>("/agent-authorizations", {
           method: "POST",
-          body: JSON.stringify({ name, tenantId, allowedDomains }),
+          body: { name, tenantId, allowedDomains },
         });
         await ops.refresh();
         return created;
@@ -459,7 +459,7 @@ export function useOpsActions() {
         async () => {
           const updated = await ops.request<PlatformSettings>("/settings", {
             method: "POST",
-            body: JSON.stringify(patch),
+            body: patch,
           });
           ops.applySettings(updated);
           return updated;
