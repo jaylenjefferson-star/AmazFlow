@@ -72,14 +72,10 @@ function showWindow() {
   win.webContents.on("did-finish-load", publish);
 }
 
-// A 22x22 PNG, inlined so there is no icon asset to ship or keep in sync. It has to be a raster
-// format: macOS nativeImage does not decode SVG, so createFromDataURL on an SVG returns an EMPTY
-// image and `new Tray(empty)` throws. That threw inside app.whenReady before the window was ever
-// created, leaving the process running with no window and no tray -- an app that looked like it
-// had launched and then done nothing at all.
-const TRAY_PNG = "iVBORw0KGgoAAAANSUhEUgAAABYAAAAWCAYAAADEtGw7AAAA00lEQVR4nN2UMQ7DIAxFfYIOEQdhyIGYWHOIXAL1DllYs7Fyl+ydWlv6kRAqKIqwVPVLbzH2jzEEon/WAwzRzCxMYDYQEJvvdifFiXkxmYkgI5aQc3kXkrgyB4w8YxkDLGIROetV8wUFT5i0ZJFzoKYrmVtCNz3T0jyipjtz+bLMz1fxiXFgqtY8arpdy4nnqlsx2pk32Ctzi5rQMpUDkOskWzNF3BWmJ65YN6jZqHGIasZESqMQqR2e2nUjUvpBRGq/9Gk+/BEqNfzZ/KahD/3v6QNNKFgNkj+aSgAAAABJRU5ErkJggg==";
 function trayImage() {
-  const image = nativeImage.createFromBuffer(Buffer.from(TRAY_PNG, "base64"));
+  // Keep the tray mark in sync with the renderer and shipped app icon. macOS accepts the
+  // committed PNG directly and can apply its template treatment when the tray is rendered.
+  const image = nativeImage.createFromPath(join(__dirname, "renderer", "assets", "amazflow-icon.png"));
   image.setTemplateImage(true);
   return image;
 }

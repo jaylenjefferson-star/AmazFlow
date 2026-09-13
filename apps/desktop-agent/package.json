@@ -5,7 +5,7 @@
   "description": "AmazFlow Desktop Agent",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json && mkdir -p dist/renderer && cp src/renderer/index.html dist/renderer/",
+    "build": "tsc -p tsconfig.json && mkdir -p dist/renderer/assets && cp src/renderer/index.html src/renderer/assets/amazflow-icon.png dist/renderer/",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "pnpm build && electron .",
     "package:mac": "bash scripts/package-mac.sh",

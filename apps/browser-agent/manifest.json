@@ -19,6 +19,18 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "AmazFlow Agent"
+    "default_title": "AmazFlow Agent",
+    "default_icon": {
+      "16": "amazflow-icon.png",
+      "32": "amazflow-icon.png",
+      "48": "amazflow-icon.png",
+      "128": "amazflow-icon.png"
+    }
+  },
+  "icons": {
+    "16": "amazflow-icon.png",
+    "32": "amazflow-icon.png",
+    "48": "amazflow-icon.png",
+    "128": "amazflow-icon.png"
   }
 }

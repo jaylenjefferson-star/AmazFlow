@@ -1,41 +1,41 @@
 <!doctype html><html><head><meta charset="utf-8"><title>AmazFlow Agent</title><style>
 :root{color-scheme:light}
-body{font:13px -apple-system,system-ui;margin:0;padding:18px;background:#fffaf0;color:#1e211d}
-h1{font-size:18px;margin:0}
-.ver{font-size:10px;color:#a3a59c;margin:2px 0 14px}
-label{display:block;margin-top:10px;font-weight:600;font-size:11px;color:#74766e}
-input{width:100%;box-sizing:border-box;margin-top:4px;padding:8px;border:1px solid #dcd7c9;border-radius:7px;font:12px system-ui;background:#fff}
-button{margin-top:12px;width:100%;border:1px solid #1e211d;border-radius:8px;background:#ff765c;color:#1e211d;padding:9px;font-weight:700;font-size:12px;cursor:pointer}
+body{font:13px -apple-system,BlinkMacSystemFont,system-ui;margin:0;padding:18px;background:#f6f6fb;color:#14162b}
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:14px}.brand img{width:32px;height:32px;display:block}.brand h1{font-size:18px;line-height:1.1;margin:0}.brand h1 span{background:linear-gradient(135deg,#1ea7ff,#4f46e5 48%,#d626c9);-webkit-background-clip:text;background-clip:text;color:transparent}.eyebrow{font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:#6b6f86;font-weight:700;margin-top:3px}
+.ver{font-size:10px;color:#8b8fa5;margin:2px 0 14px}
+label{display:block;margin-top:10px;font-weight:600;font-size:11px;color:#54586b}
+input{width:100%;box-sizing:border-box;margin-top:4px;padding:8px;border:1px solid #dcdcec;border-radius:8px;font:12px system-ui;background:#fff;color:#14162b}
+button{margin-top:12px;width:100%;border:1px solid #3730a6;border-radius:8px;background:#4f46e5;color:#fff;padding:9px;font-weight:700;font-size:12px;cursor:pointer;box-shadow:0 2px 4px #3730a622}
 button.quiet{background:transparent;font-weight:600}
 button.small{width:auto;padding:5px 10px;font-size:11px;margin-top:6px}
 button:disabled{opacity:.55;cursor:default}
-.err{color:#9f2d20;font-size:11px;margin-top:10px;font-weight:600}
-.panel{border:1px solid #dcd7c9;border-radius:9px;padding:11px;margin-top:10px;background:#fff}
+.err{color:#b91c1c;background:#fdecec;border:1px solid #fecaca;border-radius:7px;padding:7px 9px;font-size:11px;margin-top:10px;font-weight:600}
+.panel{border:1px solid #dcdcec;border-radius:10px;padding:11px;margin-top:10px;background:#fff;box-shadow:0 1px 2px #14162b0a}
 .row{display:flex;justify-content:space-between;gap:10px;font-size:11px;padding:3px 0}
-.row span:first-child{color:#74766e}
+.row span:first-child{color:#6b6f86}
 .row span:last-child{font-weight:700;text-align:right;word-break:break-word}
 .state{display:flex;align-items:center;gap:7px;font-weight:800;font-size:13px}
 .dot{width:8px;height:8px;border-radius:50%;flex:none}
-.ok .dot{background:#2f7a45}.work .dot{background:#ff765c;animation:pulse 1.1s infinite}
+.ok .dot{background:#2f7a45}.work .dot{background:#4f46e5;animation:pulse 1.1s infinite}
 .bad .dot{background:#9f2d20}.off .dot{background:#a3a59c}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
-.task{border:1px solid #1e211d;border-radius:8px;padding:9px;margin-top:10px;background:#fff2ec}
-.meta{font-size:10px;color:#74766e;margin-top:3px;word-break:break-all}
-.hint{font-size:10.5px;color:#74766e;line-height:1.5;margin-top:12px}
+.task{border:1px solid #c7d2fe;border-radius:8px;padding:9px;margin-top:10px;background:#eef2ff}
+.meta{font-size:10px;color:#6b6f86;margin-top:3px;word-break:break-all}
+.hint{font-size:10.5px;color:#6b6f86;line-height:1.5;margin-top:12px}
 .result{font-size:11px;margin-top:8px;padding:8px;border-radius:7px;border:1px solid #ece7d8}
-.result.good{background:#e9f4ec}.result.bad{background:#fbecea}
-.section-label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#74766e;font-weight:700;margin-top:14px}
+.result.good{background:#eaf6ee;border-color:#bbebca}.result.bad{background:#fdecec;border-color:#fecaca}
+.section-label{display:block;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:#6b6f86;font-weight:700;margin-top:14px}
 .wf-list{margin-top:6px;display:flex;flex-direction:column;gap:5px;max-height:160px;overflow-y:auto}
-.wf-start{margin:0;width:100%;text-align:left;border:1px solid #dcd7c9;border-radius:7px;background:#fff;padding:7px 9px;cursor:pointer}
-.wf-start:hover:not(:disabled){border-color:#1e211d}
+.wf-start{margin:0;width:100%;text-align:left;border:1px solid #dcdcec;border-radius:8px;background:#fff;padding:7px 9px;cursor:pointer;color:#14162b}
+.wf-start:hover:not(:disabled){border-color:#4f46e5;background:#f8f7ff}
 .wf-start b{display:block;font-size:12px}
-.wf-start small{display:block;color:#74766e;font-size:10px;margin-top:2px;font-weight:500}
-.empty{font-size:11px;color:#a3a59c;margin:6px 0 0}
+.wf-start small{display:block;color:#6b6f86;font-size:10px;margin-top:2px;font-weight:500}
+.empty{font-size:11px;color:#8b8fa5;margin:6px 0 0}
 .perm{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:11px;padding:5px 0;border-top:1px solid #f0ece0}
 .perm:first-child{border-top:0}
 .granted{color:#2f7a45;font-weight:700}.denied{color:#9f2d20;font-weight:700}
 </style></head><body>
-<h1>AmazFlow Agent</h1>
+<header class="brand"><img src="assets/amazflow-icon.png" alt="" /><div><h1>AmazFlow <span>Agent</span></h1><div class="eyebrow">Desktop execution</div></div></header>
 <div class="ver" id="version"></div>
 
 <div id="signedOut">

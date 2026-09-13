@@ -7,7 +7,7 @@ function flashHighlight(el: HTMLElement) {
   try {
     const rect = el.getBoundingClientRect();
     const box = document.createElement("div");
-    box.style.cssText = `position:fixed;left:${rect.left - 3}px;top:${rect.top - 3}px;width:${rect.width + 6}px;height:${rect.height + 6}px;border:3px solid #ff5c3d;border-radius:6px;background:rgba(255,92,61,.12);z-index:2147483647;pointer-events:none;transition:opacity .35s ease;box-sizing:border-box`;
+    box.style.cssText = `position:fixed;left:${rect.left - 3}px;top:${rect.top - 3}px;width:${rect.width + 6}px;height:${rect.height + 6}px;border:3px solid #4f46e5;border-radius:6px;background:rgba(79,70,229,.12);z-index:2147483647;pointer-events:none;transition:opacity .35s ease;box-sizing:border-box`;
     document.documentElement.appendChild(box);
     setTimeout(() => { box.style.opacity = "0"; }, 550);
     setTimeout(() => box.remove(), 900);

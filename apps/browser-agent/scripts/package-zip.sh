@@ -33,4 +33,4 @@ find "$DIST" -exec touch -t 202001010000.00 {} +
 ( cd "$DIST" && find . -type f -not -name '.*' | LC_ALL=C sort | zip -qXD -@ "$OUT" )
 
 echo "Wrote $OUT"
-unzip -l "$OUT" | tail -n +4 | head -n -2 | awk '{ printf "  %s\n", $4 }'
+unzip -l "$OUT" | sed -n '4,${/^--------/d;p;}' | awk '{ printf "  %s\n", $4 }'
