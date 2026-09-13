@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Script from "next/script";
 import { useEffect, useState } from "react";
 
 export function LogoMark({ size = 20 }: { size?: number }) {
@@ -51,6 +52,15 @@ export function MarketingNav() {
 
   return (
     <>
+      {/* Search Atlas OTTO: shared by the public marketing pages; load once after hydration. */}
+      <Script
+        id="sa-dynamic-optimization"
+        type="text/javascript"
+        src="https://dashboard.searchatlas.com/scripts/dynamic_optimization.js"
+        data-uuid="027f3bff-f074-4286-816c-d034b63ebe6c"
+        strategy="afterInteractive"
+        {...{ nowprocket: "", "nitro-exclude": "" }}
+      />
       <header className="site-nav">
         <div className="wrap nav-inner">
           <Logo />
