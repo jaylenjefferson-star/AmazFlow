@@ -8,6 +8,7 @@ allowBuilds:
   # against, so it has to be permitted. This was left as an unfilled placeholder string,
   # which pnpm cannot read as a boolean -- it skipped the build and then failed any
   # `--frozen-lockfile` install with ERR_PNPM_IGNORED_BUILDS.
+  '@sentry/cli': true
   electron: true
   esbuild: true
 minimumReleaseAgeExclude:

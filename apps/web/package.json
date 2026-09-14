@@ -2,7 +2,31 @@
   "name": "@amazflow/web",
   "version": "0.1.0",
   "private": true,
-  "scripts": { "dev": "next dev", "build": "next build", "typecheck": "tsc --noEmit", "test": "tsx --test app/lib/*.test.ts" },
-  "dependencies": { "@amazflow/api-client": "workspace:*", "@amazflow/domain-ui": "workspace:*", "@amazflow/permissions": "workspace:*", "@amazflow/ui": "workspace:*", "@amazflow/workflow-schema": "workspace:*", "@amplitude/unified": "^1.1.32", "@intercom/messenger-js-sdk": "^0.0.20", "mammoth": "^1.12.2", "next": "^15.2.0", "pdfjs-dist": "^6.3.289", "react": "^19.0.0", "react-dom": "^19.0.0" },
-  "devDependencies": { "@types/node": "^22.13.4", "@types/react": "^19.0.8", "@types/react-dom": "^19.0.3", "typescript": "^5.7.3" }
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test app/lib/*.test.ts"
+  },
+  "dependencies": {
+    "@amazflow/api-client": "workspace:*",
+    "@amazflow/domain-ui": "workspace:*",
+    "@amazflow/permissions": "workspace:*",
+    "@amazflow/ui": "workspace:*",
+    "@amazflow/workflow-schema": "workspace:*",
+    "@amplitude/unified": "^1.1.32",
+    "@intercom/messenger-js-sdk": "^0.0.20",
+    "@sentry/nextjs": "^10.74.0",
+    "mammoth": "^1.12.2",
+    "next": "^15.2.0",
+    "pdfjs-dist": "^6.3.289",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "@types/react": "^19.0.8",
+    "@types/react-dom": "^19.0.3",
+    "typescript": "^5.7.3"
+  }
 }

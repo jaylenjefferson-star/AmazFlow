@@ -13,8 +13,9 @@
     "@amazflow/domain-ui": "workspace:*",
     "@amazflow/permissions": "workspace:*",
     "@amazflow/ui": "workspace:*",
-    "@amazflow/workiq": "workspace:*",
     "@amazflow/workflow-schema": "workspace:*",
+    "@amazflow/workiq": "workspace:*",
+    "@sentry/nextjs": "^10.74.0",
     "next": "^15.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -23,7 +24,7 @@
     "@types/node": "^22.13.4",
     "@types/react": "^19.0.8",
     "@types/react-dom": "^19.0.3",
-    "typescript": "^5.7.3",
-    "tsx": "^4.19.3"
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
   }
 }

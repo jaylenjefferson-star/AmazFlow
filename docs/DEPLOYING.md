@@ -19,6 +19,20 @@ Those are the target architecture and are not built or deployed anywhere — see
 
 ## Before any deploy
 
+### Sentry frontend monitoring
+
+The `web`, `customer`, and `internal` Next.js apps initialize Sentry in the browser and
+upload source maps during production builds when the following environment variables are
+available:
+
+- `NEXT_PUBLIC_SENTRY_DSN` — the public DSN for the Sentry project.
+- `SENTRY_ORG` and `SENTRY_PROJECT` — the Sentry organization and project slugs.
+- `SENTRY_AUTH_TOKEN` — a build-only token with permission to upload source maps; keep it
+  in CI secrets and never commit it.
+
+The three apps use the same variable names, but each deployment may provide a different
+DSN if the environments are separated into distinct Sentry projects.
+
 ```bash
 pnpm install
 pnpm -r test        # 108 checks, no AWS credentials needed
