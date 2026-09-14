@@ -24,6 +24,11 @@ const {
   AgentCoreBrowserManager,
 } = require("./agentcore");
 const { validateBrowserConnectionInput } = require("./browser-connections");
+const {
+  workflowStepExecutorAgent,
+  workflowGeneratorAgent,
+  copilotAgent,
+} = require("./amplitude-ai");
 // The permissions policy. This is the ONLY source of an authorization decision in this file: after
 // Phase 2 no route compares a role string, and the staff/tenant boundary is a single named predicate
 // rather than eleven copies of `role !== "SUPER_ADMIN" && x !== a.tenantId`.
@@ -446,13 +451,49 @@ const legacyAi = async (step, context) => {
     throw new Error("AI returned value outside allowlist");
   return { result, usage: out.usage, metadata: { executionBackend: "legacy" } };
 };
+// Amplitude Agent Analytics wraps the whole function rather than either branch individually, so
+// step-level AI execution is tracked identically regardless of backend. `run.id` groups every "ai"
+// step in one workflow run into a single Amplitude session, matching the sessionId AgentCore
+// itself already uses (agentcore.ts's AgentCoreAiProvider.run: `run?.id ?? bounded-${uuid}`); the
+// bounded-AI-request debug route (POST /ai/execute) has no run at all and gets its own one-shot id.
 const ai = async (step, context, run) => {
-  if (!useAgentCore()) return legacyAi(step, context);
-  if (!agentCoreAi)
-    throw new Error("Managed AI execution harness is not configured");
-  const out = await agentCoreAi.run(step, context, run);
-  const { metadata, raw, ...result } = out;
-  return { result, usage: raw, metadata };
+  const sessionId = run?.id || `bounded-${crypto.randomUUID()}`;
+  const session = workflowStepExecutorAgent.session({
+    userId: run?.tenantId || "unidentified-tenant",
+    sessionId,
+  });
+  return session.run(async (s) => {
+    s.trackUserMessage(`Execute "${step.operation}" workflow step`, {
+      context: { stepId: step.id, operation: step.operation },
+    });
+    const start = Date.now();
+    try {
+      if (!useAgentCore()) {
+        const out = await legacyAi(step, context);
+        s.trackAiMessage(`Step "${step.id}" resolved`, process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, {
+          inputTokens: out.usage?.inputTokens,
+          outputTokens: out.usage?.outputTokens,
+          totalTokens: out.usage?.totalTokens,
+        });
+        return out;
+      }
+      if (!agentCoreAi)
+        throw new Error("Managed AI execution harness is not configured");
+      const out = await agentCoreAi.run(step, context, run);
+      const { metadata, raw, ...result } = out;
+      // AgentCore's `raw` carries the parsed value/confidence plus latencyMs, not token counts --
+      // this path has never been deployed (see amplitude-ai.ts), so there is no live data to get
+      // wrong, but token fields are left undefined here rather than mislabeling `raw` as usage.
+      s.trackAiMessage(`Step "${step.id}" resolved`, process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, {});
+      return { result, usage: raw, metadata };
+    } catch (err) {
+      s.trackAiMessage("", process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, {
+        isError: true,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  });
 };
 // Baseline SSRF guard for autonomous api-provider actions: block obviously
 // internal/metadata targets. Not exhaustive (no DNS-rebinding protection) but a
@@ -633,7 +674,26 @@ class GenerationInvalid extends Error {
     this.status = 422;
   }
 }
+// One session per call, regardless of caller: an HTTP route calls this directly, and the Copilot
+// tool dispatcher (`generate_workflow_draft_from_sop`) also calls it as one step in a larger
+// conversation. Modelling the latter as copilot->workflow-generator delegation (runAs / a child
+// agent) would be more complete, but the Copilot tool call and the generation it triggers are each
+// individually a bounded, single-shot request/response -- treating every call as its own
+// independent one-shot session is simpler, cannot double-count, and is an honest description of
+// what actually happens rather than an idealized parent/child model this MVP doesn't need yet.
 const generateWorkflowFromSop = async (sop, tenantId) => {
+  const session = workflowGeneratorAgent.session({
+    userId: tenantId,
+    sessionId: `workflow-gen-${crypto.randomUUID()}`,
+  });
+  return session.run(async (s) => {
+    s.trackUserMessage("Draft a workflow from an SOP document", {
+      context: { tenantId, sopLength: sop.length },
+    });
+    return generateWorkflowFromSopImpl(sop, tenantId, s);
+  });
+};
+const generateWorkflowFromSopImpl = async (sop, tenantId, s) => {
   const system =
     'You design AmazFlow workflow definitions as JSON. A workflow has: id, tenantId, name, description, version, status, dataClass, assignedRoles (array of FRONTLINE/CLIENT_ADMIN/SUPER_ADMIN), startAt, allowedProviders, steps. Each step has a unique id, name, and type: "ai" (operation, prompt, outputKey, allowedValues?, confidenceThreshold?, next), "condition" (path, operator: equals|notEquals|exists|gt|lt, value, whenTrue, whenFalse), "approval" (message, roles, next, onReject?), "action" (provider: browser|api|spreadsheet|email|file|mock -- ONLY these six exact strings, never invent another provider name, next), "verify" (path, operator, value, next, onFailure?), or "end" (outcome: success|failed). Every step id referenced by next/whenTrue/whenFalse/onReject/onFailure must exist in steps, and every path traced from startAt must reach an end step. Put a human approval step before any high-impact action (access changes, financial actions, deletions, anything hard to undo). Return ONLY the JSON object -- no prose, no markdown fences.';
   const basePrompt = `Design a workflow for this standard operating procedure:\n${sop}\n\nUse tenantId "${tenantId}". Set status to "draft". Use a short kebab-case id starting with "workflow-".`;
@@ -643,6 +703,7 @@ const generateWorkflowFromSop = async (sop, tenantId) => {
         "The workflow generator is not configured in this environment, so no draft can be produced from a description. Build the workflow in the editor instead.",
       );
     let response;
+    const start = Date.now();
     try {
       response = await agentCoreRuntime.invoke({
         harnessArn: executionHarnessArn,
@@ -654,6 +715,10 @@ const generateWorkflowFromSop = async (sop, tenantId) => {
         maxTokens: 3000,
       });
     } catch (err) {
+      s.trackAiMessage("", process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, {
+        isError: true,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
       throw new GenerationUnavailable(
         "The workflow generator did not answer. Try again, or build the workflow in the editor.",
       );
@@ -662,6 +727,9 @@ const generateWorkflowFromSop = async (sop, tenantId) => {
     try {
       draft = JSON.parse(response.text);
     } catch {
+      s.trackAiMessage("Draft generated but was not valid JSON", process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, {
+        isError: true,
+      });
       throw new GenerationInvalid("The generator did not return a workflow definition");
     }
     draft.tenantId = tenantId;
@@ -669,8 +737,13 @@ const generateWorkflowFromSop = async (sop, tenantId) => {
     draft.version = 1;
     if (!draft.id) draft.id = `workflow-${Date.now().toString(36)}`;
     const shapeError = validateWorkflowShape(draft);
-    if (shapeError)
+    if (shapeError) {
+      s.trackAiMessage(`Draft "${draft.id}" failed validation`, process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, {
+        isError: true,
+      });
       throw new GenerationInvalid(`Could not generate a valid workflow: ${shapeError}`);
+    }
+    s.trackAiMessage(`Draft "${draft.id}" generated`, process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, {});
     return draft;
   }
   assertLegacyEnabled();
@@ -681,6 +754,7 @@ const generateWorkflowFromSop = async (sop, tenantId) => {
         ? basePrompt
         : `${basePrompt}\n\nYour previous attempt was invalid: ${lastError}. Fix that specific problem and return the corrected JSON object.`;
     let out;
+    const start = Date.now();
     try {
       out = await bedrock.send(
         new ConverseCommand({
@@ -691,10 +765,19 @@ const generateWorkflowFromSop = async (sop, tenantId) => {
         }),
       );
     } catch (err) {
+      s.trackAiMessage("", process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, {
+        isError: true,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
       throw new GenerationUnavailable(
         "The workflow generator did not answer. Try again, or build the workflow in the editor.",
       );
     }
+    const usageProps = {
+      inputTokens: out.usage?.inputTokens,
+      outputTokens: out.usage?.outputTokens,
+      totalTokens: out.usage?.totalTokens,
+    };
     let text = out.output?.message?.content?.find((x) => x.text)?.text || "{}";
     text = text.replace(/^```json\s*|\s*```$/g, "").trim();
     let draft;
@@ -702,6 +785,10 @@ const generateWorkflowFromSop = async (sop, tenantId) => {
       draft = JSON.parse(text);
     } catch {
       lastError = "Response was not valid JSON";
+      s.trackAiMessage("Attempt produced invalid JSON", process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, {
+        ...usageProps,
+        isError: true,
+      });
       continue;
     }
     draft.tenantId = tenantId;
@@ -709,8 +796,15 @@ const generateWorkflowFromSop = async (sop, tenantId) => {
     draft.version = 1;
     if (!draft.id) draft.id = `workflow-${Date.now().toString(36)}`;
     const shapeError = validateWorkflowShape(draft);
-    if (!shapeError) return draft;
+    if (!shapeError) {
+      s.trackAiMessage(`Draft "${draft.id}" generated`, process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, usageProps);
+      return draft;
+    }
     lastError = shapeError;
+    s.trackAiMessage(`Attempt ${attempt + 1} failed validation: ${shapeError}`, process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, {
+      ...usageProps,
+      isError: true,
+    });
   }
   throw new GenerationInvalid(`Could not generate a valid workflow: ${lastError}`);
 };
@@ -4385,13 +4479,27 @@ const stripThinking = (value) =>
   String(value || "")
     .replace(/<thinking>[\s\S]*?<\/thinking>\s*/gi, "")
     .trim();
-const runCopilotTurn = async (
+// One Amplitude session per operator, `copilot-${userId}`, matching the sessionId
+// agentCoreMemory already uses -- every turn of one operator's conversation groups together,
+// exactly as Agent Analytics expects (see the doc's "Multi-turn HTTP servers" note: session.run()
+// emitting [Agent] Session End on every request is correct here, since sessionId staying stable
+// across requests is what stitches the turns back into one conversation).
+const runCopilotTurn = async (userId, tenantId, userMessage, context, bearerToken) => {
+  const session = copilotAgent.session({ userId, sessionId: `copilot-${userId}` });
+  return session.run((s) => runCopilotTurnImpl(userId, tenantId, userMessage, context, bearerToken, s));
+};
+const runCopilotTurnImpl = async (
   userId,
   tenantId,
   userMessage,
   context,
   bearerToken,
+  s,
 ) => {
+  s.trackUserMessage("Operator sent a Copilot message", {
+    context: { tenantId, hasContext: Boolean(context) },
+  });
+  const start = Date.now();
   if (useAgentCore()) {
     if (!agentCoreCopilot)
       throw new Error("AmazFlow Copilot harness is not configured");
@@ -4443,6 +4551,7 @@ const runCopilotTurn = async (
         summary: action.summary,
         highRisk: action.kind === "WORKFLOW_STATUS",
       }));
+    s.trackAiMessage(text || "[No reply text]", process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, {});
     return { reply: text, pendingActions, traceId: response.metadata.traceId };
   }
   assertLegacyEnabled();
@@ -4462,16 +4571,35 @@ const runCopilotTurn = async (
   const system = contextNote
     ? [{ text: COPILOT_SYSTEM }, { text: contextNote }]
     : [{ text: COPILOT_SYSTEM }];
+  // Accumulated across every Converse call this turn makes -- a turn with tool calls is several
+  // Bedrock calls for one [Agent] AI Response, so per-call token counts would undercount cost.
+  const usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  const addUsage = (u) => {
+    usage.inputTokens += u?.inputTokens || 0;
+    usage.outputTokens += u?.outputTokens || 0;
+    usage.totalTokens += u?.totalTokens || 0;
+  };
   for (let guard = 0; guard < 6; guard++) {
-    const out = await bedrock.send(
-      new ConverseCommand({
-        modelId: process.env.BEDROCK_MODEL_ID,
-        system,
-        messages: working,
-        toolConfig: { tools: COPILOT_TOOLS },
-        inferenceConfig: { maxTokens: 1500, temperature: 0.2 },
-      }),
-    );
+    let out;
+    try {
+      out = await bedrock.send(
+        new ConverseCommand({
+          modelId: process.env.BEDROCK_MODEL_ID,
+          system,
+          messages: working,
+          toolConfig: { tools: COPILOT_TOOLS },
+          inferenceConfig: { maxTokens: 1500, temperature: 0.2 },
+        }),
+      );
+    } catch (err) {
+      s.trackAiMessage("", process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, {
+        ...usage,
+        isError: true,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+    addUsage(out.usage);
     const message = out.output?.message;
     if (!message) break;
     working.push(message);
@@ -4485,11 +4613,13 @@ const runCopilotTurn = async (
         { role: "assistant", content: [{ text }] },
       ];
       await saveCopilotConversation(conv);
+      s.trackAiMessage(text || "[No reply text]", process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, usage);
       return { reply: text, pendingActions };
     }
     const toolResults = [];
     for (const block of message.content || []) {
       if (!block.toolUse) continue;
+      const toolStart = Date.now();
       try {
         const result = await runCopilotTool(
           userId,
@@ -4497,6 +4627,9 @@ const runCopilotTurn = async (
           block.toolUse.input || {},
         );
         if (result && result.proposed) pendingActions.push(result);
+        s.trackToolCall(block.toolUse.name, Date.now() - toolStart, true, {
+          toolInput: block.toolUse.input,
+        });
         toolResults.push({
           toolResult: {
             toolUseId: block.toolUse.toolUseId,
@@ -4504,6 +4637,10 @@ const runCopilotTurn = async (
           },
         });
       } catch (toolErr) {
+        s.trackToolCall(block.toolUse.name, Date.now() - toolStart, false, {
+          toolInput: block.toolUse.input,
+          errorMessage: toolErr.message,
+        });
         toolResults.push({
           toolResult: {
             toolUseId: block.toolUse.toolUseId,
@@ -4523,6 +4660,11 @@ const runCopilotTurn = async (
     { role: "assistant", content: [{ text: fallback }] },
   ];
   await saveCopilotConversation(conv);
+  s.trackAiMessage(fallback, process.env.BEDROCK_MODEL_ID, "bedrock", Date.now() - start, {
+    ...usage,
+    isError: true,
+    errorMessage: "Exhausted tool-call budget (6 iterations)",
+  });
   return { reply: fallback, pendingActions };
 };
 
